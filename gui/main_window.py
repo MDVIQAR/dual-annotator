@@ -2,10 +2,14 @@
 from PyQt5.QtWidgets import (
     QMainWindow, QAction, QMenu, QToolBar, 
     QStatusBar, QLabel, QWidget, QVBoxLayout,
-    QMessageBox, QFileDialog
+    QHBoxLayout, QMessageBox, QFileDialog, QSplitter,
+    QListWidget, QListWidgetItem, QAbstractItemView
 )
 from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtGui import QIcon, QKeySequence
+import os
+
+from gui.canvas import AnnotationCanvas
 
 class MainWindow(QMainWindow):
     """Main application window"""
@@ -15,18 +19,21 @@ class MainWindow(QMainWindow):
         
         # Set window properties
         self.setWindowTitle("Dual Annotator - New Project")
-        self.setGeometry(100, 100, 1200, 800)  # x, y, width, height
-        self.setMinimumSize(800, 600)  # Minimum window size
+        self.setGeometry(100, 100, 1400, 900)
+        self.setMinimumSize(800, 600)
+        
+        # Application state
+        self.current_file = None
+        self.is_modified = False
+        self.image_folder = None
+        self.image_files = []
+        self.current_image_index = -1
         
         # Initialize UI components
         self.setup_menu_bar()
         self.setup_toolbar()
         self.setup_status_bar()
         self.setup_central_widget()
-        
-        # Application state
-        self.current_file = None
-        self.is_modified = False
         
     def setup_menu_bar(self):
         """Create the menu bar with all menus and actions"""
@@ -63,11 +70,18 @@ class MainWindow(QMainWindow):
         save_as_action.triggered.connect(self.save_project_as)
         file_menu.addAction(save_as_action)
         
-        file_menu.addSeparator()  # Line between items
+        file_menu.addSeparator()
+        
+        # Open Image Folder
+        open_folder_action = QAction('&Open Image Folder...', self)
+        open_folder_action.setShortcut('Ctrl+Shift+O')
+        open_folder_action.setStatusTip('Open a folder of images')
+        open_folder_action.triggered.connect(self.open_image_folder)
+        file_menu.addAction(open_folder_action)
         
         # Import Images
-        import_action = QAction('&Import Images...', self)
-        import_action.setStatusTip('Import images from folder')
+        import_action = QAction('&Add Images...', self)
+        import_action.setStatusTip('Add more images to current folder')
         import_action.triggered.connect(self.import_images)
         file_menu.addAction(import_action)
         
@@ -163,13 +177,23 @@ class MainWindow(QMainWindow):
         fit_action.triggered.connect(self.fit_to_window)
         view_menu.addAction(fit_action)
         
+        view_menu.addSeparator()
+        
+        # Show/Hide File Browser
+        self.toggle_browser_action = QAction('Show File Browser', self)
+        self.toggle_browser_action.setCheckable(True)
+        self.toggle_browser_action.setChecked(True)
+        self.toggle_browser_action.setStatusTip('Show/hide the file browser panel')
+        self.toggle_browser_action.triggered.connect(self.toggle_file_browser)
+        view_menu.addAction(self.toggle_browser_action)
+        
         # ===== MODE MENU =====
         mode_menu = menubar.addMenu('&Mode')
         
-        # YOLO Mode (default)
+        # YOLO Mode
         self.yolo_mode_action = QAction('&YOLO Detection', self)
         self.yolo_mode_action.setCheckable(True)
-        self.yolo_mode_action.setChecked(True)  # Default selected
+        self.yolo_mode_action.setChecked(True)
         self.yolo_mode_action.setStatusTip('Switch to YOLO bounding box mode')
         self.yolo_mode_action.triggered.connect(lambda: self.switch_mode('yolo'))
         mode_menu.addAction(self.yolo_mode_action)
@@ -196,138 +220,293 @@ class MainWindow(QMainWindow):
         toolbar.setIconSize(QSize(24, 24))
         self.addToolBar(toolbar)
         
-        # Add some basic actions (icons will be added later)
-        save_action = QAction("Save", self)
+        # Add actions (icons will be added later)
+        save_action = QAction("💾 Save", self)
         save_action.triggered.connect(self.save_project)
         toolbar.addAction(save_action)
         
         toolbar.addSeparator()
         
-        undo_action = QAction("Undo", self)
+        undo_action = QAction("↩ Undo", self)
         undo_action.triggered.connect(self.undo)
         toolbar.addAction(undo_action)
         
-        redo_action = QAction("Redo", self)
+        redo_action = QAction("↪ Redo", self)
         redo_action.triggered.connect(self.redo)
         toolbar.addAction(redo_action)
         
         toolbar.addSeparator()
         
-        zoom_in_action = QAction("Zoom In", self)
+        zoom_in_action = QAction("➕ Zoom In", self)
         zoom_in_action.triggered.connect(self.zoom_in)
         toolbar.addAction(zoom_in_action)
         
-        zoom_out_action = QAction("Zoom Out", self)
+        zoom_out_action = QAction("➖ Zoom Out", self)
         zoom_out_action.triggered.connect(self.zoom_out)
         toolbar.addAction(zoom_out_action)
+        
+        fit_action = QAction("⬜ Fit", self)
+        fit_action.triggered.connect(self.fit_to_window)
+        toolbar.addAction(fit_action)
+        
+        toolbar.addSeparator()
+        
+        # Previous/Next image buttons
+        prev_action = QAction("◀ Previous", self)
+        prev_action.setShortcut('A')
+        prev_action.triggered.connect(self.prev_image)
+        toolbar.addAction(prev_action)
+        
+        next_action = QAction("▶ Next", self)
+        next_action.setShortcut('D')
+        next_action.triggered.connect(self.next_image)
+        toolbar.addAction(next_action)
         
     def setup_status_bar(self):
         """Create the status bar"""
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         
-        # Add permanent widgets
+        # Mode label
         self.mode_label = QLabel("Mode: YOLO")
         self.status_bar.addPermanentWidget(self.mode_label)
         
-        self.position_label = QLabel("X: 0, Y: 0")
-        self.status_bar.addPermanentWidget(self.position_label)
-        
+        # Image info label
         self.image_info_label = QLabel("No image loaded")
         self.status_bar.addPermanentWidget(self.image_info_label)
         
-        # Show ready message
-        self.status_bar.showMessage("Ready", 3000)
+        # Position label
+        self.position_label = QLabel("X: 0, Y: 0")
+        self.status_bar.addPermanentWidget(self.position_label)
+        
+        # Image counter
+        self.counter_label = QLabel("0/0")
+        self.status_bar.addPermanentWidget(self.counter_label)
+        
+        self.status_bar.showMessage("Ready")
         
     def setup_central_widget(self):
-        """Create the central widget (placeholder for canvas)"""
+        """Create the central widget with splitter for file browser and canvas"""
         central = QWidget()
         self.setCentralWidget(central)
         
-        # Simple layout with placeholder text
-        layout = QVBoxLayout(central)
+        # Main layout
+        layout = QHBoxLayout(central)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         
-        placeholder = QLabel("Canvas will go here")
-        placeholder.setAlignment(Qt.AlignCenter)
-        placeholder.setStyleSheet("""
-            QLabel {
-                color: gray;
-                font-size: 18px;
-                border: 2px dashed #ccc;
-                padding: 20px;
-            }
-        """)
-        layout.addWidget(placeholder)
+        # Create splitter
+        self.splitter = QSplitter(Qt.Horizontal)
         
-    # ===== ACTION METHODS =====
-    
-    def new_project(self):
-        """Create a new annotation project"""
-        self.status_bar.showMessage("Creating new project...")
-        # We'll implement this later
-        print("New project created")
+        # ===== LEFT PANEL - FILE BROWSER =====
+        self.file_browser = QWidget()
+        self.file_browser.setMinimumWidth(250)
+        self.file_browser.setMaximumWidth(400)
         
-    def open_project(self):
-        """Open an existing project"""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, 
-            "Open Project", 
-            "", 
-            "Project Files (*.json)"
-        )
-        if file_path:
-            self.status_bar.showMessage(f"Opened: {file_path}")
-            print(f"Opening project: {file_path}")
-            
-    def save_project(self):
-        """Save the current project"""
-        if self.current_file:
-            self.status_bar.showMessage(f"Saving to: {self.current_file}")
-            print(f"Saving project to: {self.current_file}")
-        else:
-            self.save_project_as()
-            
-    def save_project_as(self):
-        """Save project with a new name"""
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save Project As",
-            "",
-            "Project Files (*.json)"
-        )
-        if file_path:
-            self.current_file = file_path
-            self.status_bar.showMessage(f"Saved to: {file_path}")
-            print(f"Saving project as: {file_path}")
-            
-    def import_images(self):
-        """Import images from a folder"""
+        browser_layout = QVBoxLayout(self.file_browser)
+        browser_layout.setContentsMargins(5, 5, 5, 5)
+        
+        # Label for file browser
+        browser_label = QLabel("📁 Image Files")
+        browser_label.setStyleSheet("font-weight: bold; padding: 5px;")
+        browser_layout.addWidget(browser_label)
+        
+        # List widget for files
+        self.file_list = QListWidget()
+        self.file_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.file_list.itemClicked.connect(self.on_file_selected)
+        browser_layout.addWidget(self.file_list)
+        
+        # ===== RIGHT PANEL - CANVAS =====
+        self.canvas = AnnotationCanvas()
+        
+        # Connect the canvas signal to update position
+        self.canvas.position_changed.connect(self.update_position)
+        
+        # Add widgets to splitter
+        self.splitter.addWidget(self.file_browser)
+        self.splitter.addWidget(self.canvas)
+        
+        # Set initial sizes (30% browser, 70% canvas)
+        self.splitter.setSizes([300, 700])
+        
+        # Add splitter to layout
+        layout.addWidget(self.splitter)
+        
+    def open_image_folder(self):
+        """Open a folder containing images"""
         folder_path = QFileDialog.getExistingDirectory(
             self,
-            "Select Image Folder"
+            "Select Image Folder",
+            "",
+            QFileDialog.ShowDirsOnly
         )
-        if folder_path:
-            self.status_bar.showMessage(f"Importing images from: {folder_path}")
-            print(f"Importing images from: {folder_path}")
-            
-    def export_data(self, format_type):
-        """Export annotations in specified format"""
-        self.status_bar.showMessage(f"Exporting in {format_type} format...")
-        print(f"Exporting in {format_type} format")
         
+        if folder_path:
+            self.image_folder = folder_path
+            self.load_images_from_folder(folder_path)
+            self.status_bar.showMessage(f"Loaded images from: {folder_path}")
+            
+    def load_images_from_folder(self, folder_path):
+        """Load all image files from the selected folder"""
+        # Clear current list
+        self.file_list.clear()
+        self.image_files = []
+        
+        # Supported image formats
+        image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.gif']
+        
+        # Get all files in folder
+        try:
+            all_files = os.listdir(folder_path)
+            
+            # Filter for image files
+            for file in sorted(all_files):
+                ext = os.path.splitext(file)[1].lower()
+                if ext in image_extensions:
+                    self.image_files.append(file)
+                    
+            # Add to list widget
+            for file in self.image_files:
+                item = QListWidgetItem(file)
+                self.file_list.addItem(item)
+                
+            # Update counter
+            self.update_image_counter()
+            
+            # Load first image if available
+            if self.image_files:
+                self.load_image(0)
+                
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load images: {str(e)}")
+            
+    def load_image(self, index):
+        """Load image at specified index"""
+        if 0 <= index < len(self.image_files):
+            self.current_image_index = index
+            image_path = os.path.join(self.image_folder, self.image_files[index])
+            
+            # Load image in canvas
+            self.canvas.load_image(image_path)
+            
+            # Update UI
+            self.file_list.setCurrentRow(index)
+            self.update_image_counter()
+            
+            # Update status bar with image info
+            self.image_info_label.setText(self.image_files[index])
+            
+            # Update window title
+            self.setWindowTitle(f"Dual Annotator - {self.image_files[index]}")
+            
+            # Show success message
+            self.status_bar.showMessage(f"Loaded: {self.image_files[index]}", 2000)
+            
+    def on_file_selected(self, item):
+        """Handle file selection from list"""
+        row = self.file_list.row(item)
+        self.load_image(row)
+        
+    def next_image(self):
+        """Load next image"""
+        if self.image_files and self.current_image_index < len(self.image_files) - 1:
+            self.load_image(self.current_image_index + 1)
+            
+    def prev_image(self):
+        """Load previous image"""
+        if self.image_files and self.current_image_index > 0:
+            self.load_image(self.current_image_index - 1)
+            
+    def update_image_counter(self):
+        """Update the image counter in status bar"""
+        if self.image_files:
+            current = self.current_image_index + 1
+            total = len(self.image_files)
+            self.counter_label.setText(f"{current}/{total}")
+        else:
+            self.counter_label.setText("0/0")
+            
+    def toggle_file_browser(self):
+        """Show or hide the file browser panel"""
+        if self.toggle_browser_action.isChecked():
+            self.file_browser.show()
+        else:
+            self.file_browser.hide()
+            
     def switch_mode(self, mode):
         """Switch between YOLO and U-Net modes"""
         if mode == 'yolo':
             self.yolo_mode_action.setChecked(True)
             self.unet_mode_action.setChecked(False)
             self.mode_label.setText("Mode: YOLO")
-            self.status_bar.showMessage("Switched to YOLO mode", 2000)
+            self.canvas.set_mode('yolo')
         else:
             self.yolo_mode_action.setChecked(False)
             self.unet_mode_action.setChecked(True)
             self.mode_label.setText("Mode: U-Net")
-            self.status_bar.showMessage("Switched to U-Net mode", 2000)
+            self.canvas.set_mode('unet')
             
+        self.status_bar.showMessage(f"Switched to {mode.upper()} mode", 2000)
+        
+    def update_position(self, x, y):
+        """Update cursor position in status bar (called from canvas)"""
+        self.position_label.setText(f"X: {x}, Y: {y}")
+        
+    # ===== CANVAS DELEGATION METHODS =====
+    def zoom_in(self):
+        """Zoom in on the canvas"""
+        self.canvas.zoom_in()
+        
+    def zoom_out(self):
+        """Zoom out of the canvas"""
+        self.canvas.zoom_out()
+        
+    def fit_to_window(self):
+        """Fit image to window"""
+        self.canvas.fit_to_window()
+        
+    # ===== OTHER METHODS =====
+    def new_project(self):
+        """Create a new project"""
+        self.status_bar.showMessage("Creating new project...")
+        print("New project created")
+        
+    def open_project(self):
+        """Open an existing project"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Open Project", "", "Project Files (*.json)"
+        )
+        if file_path:
+            self.status_bar.showMessage(f"Opened: {file_path}")
+            
+    def save_project(self):
+        """Save the current project"""
+        if self.current_file:
+            self.status_bar.showMessage(f"Saving to: {self.current_file}")
+        else:
+            self.save_project_as()
+            
+    def save_project_as(self):
+        """Save project with a new name"""
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Project As", "", "Project Files (*.json)"
+        )
+        if file_path:
+            self.current_file = file_path
+            self.status_bar.showMessage(f"Saved to: {file_path}")
+            
+    def import_images(self):
+        """Import additional images"""
+        if self.image_folder:
+            self.open_image_folder()
+        else:
+            self.open_image_folder()
+            
+    def export_data(self, format_type):
+        """Export annotations in specified format"""
+        self.status_bar.showMessage(f"Exporting in {format_type} format...")
+        
     def show_about(self):
         """Show about dialog"""
         QMessageBox.about(
@@ -335,50 +514,35 @@ class MainWindow(QMainWindow):
             "About Dual Annotator",
             "<h2>Dual Annotator v1.0.0</h2>"
             "<p>A unified annotation tool for YOLO and U-Net datasets.</p>"
-            "<p>Features:</p>"
-            "<ul>"
-            "<li>YOLO mode: Bounding box annotation</li>"
-            "<li>U-Net mode: Segmentation masks</li>"
-            "<li>Copy-paste with resize</li>"
-            "<li>Ring shapes for hollow objects</li>"
-            "</ul>"
             "<p>Built with PyQt5 and Python 3.11</p>"
         )
         
-    # ===== EDIT METHODS (Temporary placeholders) =====
     def undo(self):
+        """Undo last action"""
         print("Undo")
         self.status_bar.showMessage("Undo", 1000)
         
     def redo(self):
+        """Redo last undone action"""
         print("Redo")
         self.status_bar.showMessage("Redo", 1000)
         
     def cut(self):
+        """Cut selected item"""
         print("Cut")
         self.status_bar.showMessage("Cut", 1000)
         
     def copy(self):
+        """Copy selected item"""
         print("Copy")
         self.status_bar.showMessage("Copy", 1000)
         
     def paste(self):
+        """Paste copied item"""
         print("Paste")
         self.status_bar.showMessage("Paste", 1000)
         
     def delete(self):
+        """Delete selected item"""
         print("Delete")
         self.status_bar.showMessage("Delete", 1000)
-        
-    # ===== VIEW METHODS =====
-    def zoom_in(self):
-        print("Zoom in")
-        self.status_bar.showMessage("Zoom in", 1000)
-        
-    def zoom_out(self):
-        print("Zoom out")
-        self.status_bar.showMessage("Zoom out", 1000)
-        
-    def fit_to_window(self):
-        print("Fit to window")
-        self.status_bar.showMessage("Fit to window", 1000)
