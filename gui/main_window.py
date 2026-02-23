@@ -5,6 +5,8 @@ from PyQt5.QtWidgets import (
     QHBoxLayout, QMessageBox, QFileDialog, QSplitter,
     QListWidget, QListWidgetItem, QAbstractItemView
 )
+from gui.class_panel import ClassPanel
+from core.class_manager import ClassManager
 from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtGui import QIcon, QKeySequence
 import os
@@ -16,24 +18,43 @@ class MainWindow(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        
+
         # Set window properties
         self.setWindowTitle("Dual Annotator - New Project")
         self.setGeometry(100, 100, 1400, 900)
         self.setMinimumSize(800, 600)
         
+
         # Application state
         self.current_file = None
         self.is_modified = False
         self.image_folder = None
         self.image_files = []
         self.current_image_index = -1
+
         
+        # NEW: Initialize class manager
+        from core.class_manager import ClassManager
+        self.class_manager = ClassManager()
+    
+        # Add some default classes for testing
+        self.setup_default_classes()
+
         # Initialize UI components
         self.setup_menu_bar()
         self.setup_toolbar()
         self.setup_status_bar()
         self.setup_central_widget()
+
+    def setup_default_classes(self):
+        """Add some default classes for testing"""
+        try:
+            self.class_manager.add_class("Car", "#FF6B6B")
+            self.class_manager.add_class("Person", "#4ECDC4")
+            self.class_manager.add_class("Bicycle", "#45B7D1")
+            self.class_manager.add_class("Dog", "#96CEB4")
+        except:
+            pass  # Classes might already exist    
         
     def setup_menu_bar(self):
         """Create the menu bar with all menus and actions"""
@@ -289,49 +310,62 @@ class MainWindow(QMainWindow):
         """Create the central widget with splitter for file browser and canvas"""
         central = QWidget()
         self.setCentralWidget(central)
-        
+    
         # Main layout
         layout = QHBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        
+    
         # Create splitter
         self.splitter = QSplitter(Qt.Horizontal)
-        
+    
         # ===== LEFT PANEL - FILE BROWSER =====
         self.file_browser = QWidget()
         self.file_browser.setMinimumWidth(250)
         self.file_browser.setMaximumWidth(400)
-        
+    
         browser_layout = QVBoxLayout(self.file_browser)
         browser_layout.setContentsMargins(5, 5, 5, 5)
-        
+    
         # Label for file browser
         browser_label = QLabel("📁 Image Files")
         browser_label.setStyleSheet("font-weight: bold; padding: 5px;")
         browser_layout.addWidget(browser_label)
-        
+    
         # List widget for files
         self.file_list = QListWidget()
         self.file_list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.file_list.itemClicked.connect(self.on_file_selected)
         browser_layout.addWidget(self.file_list)
-        
-        # ===== RIGHT PANEL - CANVAS =====
+    
+        # ===== MIDDLE PANEL - CANVAS =====
         self.canvas = AnnotationCanvas()
+        self.canvas.set_class_manager(self.class_manager)  # NEW
         
         # Connect the canvas signal to update position
         self.canvas.position_changed.connect(self.update_position)
         
+        # ===== RIGHT PANEL - CLASSES =====
+        self.class_panel = ClassPanel(self.class_manager)  # NEW
+        
         # Add widgets to splitter
         self.splitter.addWidget(self.file_browser)
         self.splitter.addWidget(self.canvas)
+        self.splitter.addWidget(self.class_panel)  # NEW
         
-        # Set initial sizes (30% browser, 70% canvas)
-        self.splitter.setSizes([300, 700])
+        # Set initial sizes (20% browser, 60% canvas, 20% classes)
+        self.splitter.setSizes([250, 700, 250])
         
         # Add splitter to layout
         layout.addWidget(self.splitter)
+
+    def keyPressEvent(self, event):
+        """Handle keyboard shortcuts"""
+        if event.key() == Qt.Key_Delete or event.key() == Qt.Key_Backspace:
+            if hasattr(self, 'canvas'):
+                self.canvas.delete_selected()
+        else:
+            super().keyPressEvent(event)    
         
     def open_image_folder(self):
         """Open a folder containing images"""
