@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# Project specific
+*.json
+*.txt
+.DS_Store
+*.log
+
+# Virtual Environment
+venv/
