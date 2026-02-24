@@ -14,10 +14,10 @@ class BoundingBox:
         self.image_width, self.image_height = image_size
         self.selected = False
         self.created_at = None
+        self.type = 'box'  # Add type identifier
         
     def copy(self):
         """Create a copy of this bounding box"""
-        print(f"📋 Copying box {self.id}")  # Debug print
         new_box = BoundingBox(
             x=self.x,
             y=self.y,
@@ -26,8 +26,7 @@ class BoundingBox:
             class_id=self.class_id,
             image_size=(self.image_width, self.image_height)
         )
-        new_box.id = str(uuid.uuid4())[:8]  # New unique ID
-        print(f"✅ Created new box {new_box.id}")
+        new_box.id = str(uuid.uuid4())[:8]
         return new_box
         
     def from_pixels(self, x1, y1, x2, y2, image_width, image_height):
@@ -114,6 +113,7 @@ class BoundingBox:
         """Convert to dictionary for saving"""
         return {
             'id': self.id,
+            'type': 'box',
             'class_id': self.class_id,
             'x': self.x,
             'y': self.y,
