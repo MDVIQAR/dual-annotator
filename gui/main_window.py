@@ -282,7 +282,24 @@ class MainWindow(QMainWindow):
         next_action.setShortcut('D')
         next_action.triggered.connect(self.next_image)
         toolbar.addAction(next_action)
-        
+
+    def copy_selected(self):
+        """Copy selected box to clipboard"""
+        if hasattr(self, 'canvas'):
+            self.canvas.copy_selected()
+
+    def paste_box(self):
+        """Paste copied box"""
+        if hasattr(self, 'canvas') and self.canvas.pixmap and not self.canvas.pixmap.isNull():
+            # Trigger paste at center of view
+            center = self.canvas.rect().center()
+            self.canvas.start_paste(center)            
+
+    def delete_selected(self):
+        """Delete selected item"""
+        if hasattr(self, 'canvas'):
+            self.canvas.delete_selected()   
+             
     def setup_status_bar(self):
         """Create the status bar"""
         self.status_bar = QStatusBar()
