@@ -3,49 +3,47 @@ from PyQt5.QtWidgets import (
     QMainWindow, QAction, QMenu, QToolBar, 
     QStatusBar, QLabel, QWidget, QVBoxLayout,
     QHBoxLayout, QMessageBox, QFileDialog, QSplitter,
-    QListWidget, QListWidgetItem, QAbstractItemView
+    QListWidget, QListWidgetItem, QAbstractItemView, QComboBox
 )
-from gui.class_panel import ClassPanel
-from core.class_manager import ClassManager
 from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtGui import QIcon, QKeySequence
 import os
 
 from gui.canvas import AnnotationCanvas
+from gui.class_panel import ClassPanel
+from gui.shape_toolbar import ShapeToolbar
+from core.class_manager import ClassManager
 
 class MainWindow(QMainWindow):
     """Main application window"""
     
     def __init__(self):
         super().__init__()
-
+        
         # Set window properties
         self.setWindowTitle("Dual Annotator - New Project")
         self.setGeometry(100, 100, 1400, 900)
         self.setMinimumSize(800, 600)
         
-
         # Application state
         self.current_file = None
         self.is_modified = False
         self.image_folder = None
         self.image_files = []
         self.current_image_index = -1
-
         
-        # NEW: Initialize class manager
-        from core.class_manager import ClassManager
+        # Initialize class manager FIRST
         self.class_manager = ClassManager()
-    
+        
         # Add some default classes for testing
         self.setup_default_classes()
-
+        
         # Initialize UI components
         self.setup_menu_bar()
-        self.setup_toolbar()
+        self.setup_toolbar()  # This now includes shape toolbar setup
         self.setup_status_bar()
         self.setup_central_widget()
-
+        
     def setup_default_classes(self):
         """Add some default classes for testing"""
         try:
@@ -53,8 +51,9 @@ class MainWindow(QMainWindow):
             self.class_manager.add_class("Person", "#4ECDC4")
             self.class_manager.add_class("Bicycle", "#45B7D1")
             self.class_manager.add_class("Dog", "#96CEB4")
-        except:
-            pass  # Classes might already exist    
+            print("✅ Default classes added")
+        except Exception as e:
+            print(f"⚠️ Could not add default classes: {e}")
         
     def setup_menu_bar(self):
         """Create the menu bar with all menus and actions"""
@@ -144,25 +143,18 @@ class MainWindow(QMainWindow):
         
         edit_menu.addSeparator()
         
-        # Cut
-        cut_action = QAction('Cu&t', self)
-        cut_action.setShortcut(QKeySequence.Cut)
-        cut_action.setStatusTip('Cut selected item')
-        cut_action.triggered.connect(self.cut)
-        edit_menu.addAction(cut_action)
-        
         # Copy
         copy_action = QAction('&Copy', self)
         copy_action.setShortcut(QKeySequence.Copy)
-        copy_action.setStatusTip('Copy selected item')
-        copy_action.triggered.connect(self.copy)
+        copy_action.setStatusTip('Copy selected shape')
+        copy_action.triggered.connect(self.copy_selected)
         edit_menu.addAction(copy_action)
         
         # Paste
         paste_action = QAction('&Paste', self)
         paste_action.setShortcut(QKeySequence.Paste)
-        paste_action.setStatusTip('Paste copied item')
-        paste_action.triggered.connect(self.paste)
+        paste_action.setStatusTip('Paste copied shape')
+        paste_action.triggered.connect(self.paste_shape)
         edit_menu.addAction(paste_action)
         
         edit_menu.addSeparator()
@@ -171,7 +163,7 @@ class MainWindow(QMainWindow):
         delete_action = QAction('&Delete', self)
         delete_action.setShortcut(QKeySequence.Delete)
         delete_action.setStatusTip('Delete selected item')
-        delete_action.triggered.connect(self.delete)
+        delete_action.triggered.connect(self.delete_selected)
         edit_menu.addAction(delete_action)
         
         # ===== VIEW MENU =====
@@ -236,70 +228,79 @@ class MainWindow(QMainWindow):
         help_menu.addAction(about_action)
         
     def setup_toolbar(self):
-        """Create the main toolbar"""
-        toolbar = QToolBar("Main Toolbar")
-        toolbar.setIconSize(QSize(24, 24))
-        self.addToolBar(toolbar)
+        """Create the main toolbar and shape toolbar"""
+        # Main toolbar for common actions
+        main_toolbar = QToolBar("Main Toolbar")
+        main_toolbar.setIconSize(QSize(24, 24))
+        main_toolbar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.addToolBar(main_toolbar)
         
-        # Add actions (icons will be added later)
+        # Add mode selector to main toolbar
+        self.mode_selector = QComboBox()
+        self.mode_selector.addItems(["YOLO Detection", "U-Net Segmentation"])
+        self.mode_selector.currentIndexChanged.connect(self.on_mode_selected)
+        main_toolbar.addWidget(QLabel("Mode: "))
+        main_toolbar.addWidget(self.mode_selector)
+        
+        main_toolbar.addSeparator()
+        
+        # Add actions with icons (text only for now)
         save_action = QAction("💾 Save", self)
         save_action.triggered.connect(self.save_project)
-        toolbar.addAction(save_action)
+        main_toolbar.addAction(save_action)
         
-        toolbar.addSeparator()
+        main_toolbar.addSeparator()
         
         undo_action = QAction("↩ Undo", self)
         undo_action.triggered.connect(self.undo)
-        toolbar.addAction(undo_action)
+        main_toolbar.addAction(undo_action)
         
         redo_action = QAction("↪ Redo", self)
         redo_action.triggered.connect(self.redo)
-        toolbar.addAction(redo_action)
+        main_toolbar.addAction(redo_action)
         
-        toolbar.addSeparator()
+        main_toolbar.addSeparator()
         
         zoom_in_action = QAction("➕ Zoom In", self)
         zoom_in_action.triggered.connect(self.zoom_in)
-        toolbar.addAction(zoom_in_action)
+        main_toolbar.addAction(zoom_in_action)
         
         zoom_out_action = QAction("➖ Zoom Out", self)
         zoom_out_action.triggered.connect(self.zoom_out)
-        toolbar.addAction(zoom_out_action)
+        main_toolbar.addAction(zoom_out_action)
         
         fit_action = QAction("⬜ Fit", self)
         fit_action.triggered.connect(self.fit_to_window)
-        toolbar.addAction(fit_action)
+        main_toolbar.addAction(fit_action)
         
-        toolbar.addSeparator()
+        main_toolbar.addSeparator()
         
         # Previous/Next image buttons
-        prev_action = QAction("◀ Previous", self)
+        prev_action = QAction("◀ Prev", self)
         prev_action.setShortcut('A')
         prev_action.triggered.connect(self.prev_image)
-        toolbar.addAction(prev_action)
+        main_toolbar.addAction(prev_action)
         
         next_action = QAction("▶ Next", self)
         next_action.setShortcut('D')
         next_action.triggered.connect(self.next_image)
-        toolbar.addAction(next_action)
-
-    def copy_selected(self):
-        """Copy selected box to clipboard"""
-        if hasattr(self, 'canvas'):
-            self.canvas.copy_selected()
-
-    def paste_box(self):
-        """Paste copied box"""
-        if hasattr(self, 'canvas') and self.canvas.pixmap and not self.canvas.pixmap.isNull():
-            # Trigger paste at center of view
-            center = self.canvas.rect().center()
-            self.canvas.start_paste(center)            
-
-    def delete_selected(self):
-        """Delete selected item"""
-        if hasattr(self, 'canvas'):
-            self.canvas.delete_selected()   
-             
+        main_toolbar.addAction(next_action)
+        
+        # Create shape toolbar (visible in both modes)
+        self.setup_shape_toolbar()
+        
+    def setup_shape_toolbar(self):
+        """Create the shape toolbar for selecting shape types"""
+        self.shape_toolbar = ShapeToolbar()
+        self.addToolBar(Qt.TopToolBarArea, self.shape_toolbar)
+        
+        # Connect shape selection to canvas
+        self.shape_toolbar.shape_changed.connect(self.on_shape_selected)
+        self.shape_toolbar.shape_deselected.connect(self.on_shape_deselected)
+        
+        # Show shape toolbar in both modes
+        self.shape_toolbar.show()
+        
     def setup_status_bar(self):
         """Create the status bar"""
         self.status_bar = QStatusBar()
@@ -327,48 +328,54 @@ class MainWindow(QMainWindow):
         """Create the central widget with splitter for file browser and canvas"""
         central = QWidget()
         self.setCentralWidget(central)
-    
+        
         # Main layout
         layout = QHBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-    
+        
         # Create splitter
         self.splitter = QSplitter(Qt.Horizontal)
-    
+        
         # ===== LEFT PANEL - FILE BROWSER =====
         self.file_browser = QWidget()
         self.file_browser.setMinimumWidth(250)
         self.file_browser.setMaximumWidth(400)
-    
+        
         browser_layout = QVBoxLayout(self.file_browser)
         browser_layout.setContentsMargins(5, 5, 5, 5)
-    
+        
         # Label for file browser
         browser_label = QLabel("📁 Image Files")
         browser_label.setStyleSheet("font-weight: bold; padding: 5px;")
         browser_layout.addWidget(browser_label)
-    
+        
         # List widget for files
         self.file_list = QListWidget()
         self.file_list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.file_list.itemClicked.connect(self.on_file_selected)
         browser_layout.addWidget(self.file_list)
-    
+        
         # ===== MIDDLE PANEL - CANVAS =====
         self.canvas = AnnotationCanvas()
-        self.canvas.set_class_manager(self.class_manager)  # NEW
+        self.canvas.set_class_manager(self.class_manager)
         
         # Connect the canvas signal to update position
         self.canvas.position_changed.connect(self.update_position)
         
+        # Connect canvas shape selection to update toolbar
+        self.canvas.shape_selected.connect(self.on_canvas_shape_selected)
+        
         # ===== RIGHT PANEL - CLASSES =====
-        self.class_panel = ClassPanel(self.class_manager)  # NEW
+        self.class_panel = ClassPanel(self.class_manager)
+        
+        # Connect class selection to canvas
+        self.class_panel.class_selected.connect(self.on_class_selected)
         
         # Add widgets to splitter
         self.splitter.addWidget(self.file_browser)
         self.splitter.addWidget(self.canvas)
-        self.splitter.addWidget(self.class_panel)  # NEW
+        self.splitter.addWidget(self.class_panel)
         
         # Set initial sizes (20% browser, 60% canvas, 20% classes)
         self.splitter.setSizes([250, 700, 250])
@@ -376,13 +383,37 @@ class MainWindow(QMainWindow):
         # Add splitter to layout
         layout.addWidget(self.splitter)
 
-    def keyPressEvent(self, event):
-        """Handle keyboard shortcuts"""
-        if event.key() == Qt.Key_Delete or event.key() == Qt.Key_Backspace:
-            if hasattr(self, 'canvas'):
-                self.canvas.delete_selected()
+    def on_shape_deselected(self):
+        """Handle when no shape is selected in toolbar"""
+        if hasattr(self, 'canvas'):
+            # Tell canvas that no shape is selected
+            self.canvas.set_shape_type(None)
+            self.status_bar.showMessage("No shape selected - click on shapes to select them", 2000)
+
+    def on_canvas_shape_selected(self, shape_type):
+        """Handle shape selection from canvas to update toolbar"""
+        if hasattr(self, 'shape_toolbar'):
+            if shape_type != "none":
+                self.shape_toolbar.set_selected_shape(shape_type)    
+        
+    def on_class_selected(self, class_id):
+        """Handle class selection"""
+        cls = self.class_manager.get_class(class_id)
+        if cls:
+            self.status_bar.showMessage(f"Selected class: {cls.name}", 2000)
+        
+    def on_shape_selected(self, shape_type):
+        """Handle shape selection from toolbar"""
+        if hasattr(self, 'canvas'):
+            self.canvas.set_shape_type(shape_type)
+            self.status_bar.showMessage(f"Shape: {shape_type}", 1000)
+
+    def on_mode_selected(self, index):
+        """Handle mode selection from combobox"""
+        if index == 0:
+            self.switch_mode('yolo')
         else:
-            super().keyPressEvent(event)    
+            self.switch_mode('unet')
         
     def open_image_folder(self):
         """Open a folder containing images"""
@@ -492,11 +523,19 @@ class MainWindow(QMainWindow):
             self.unet_mode_action.setChecked(False)
             self.mode_label.setText("Mode: YOLO")
             self.canvas.set_mode('yolo')
+            # Shape toolbar stays visible in both modes
+            if hasattr(self, 'shape_toolbar'):
+                self.shape_toolbar.show()
+            self.mode_selector.setCurrentIndex(0)
         else:
             self.yolo_mode_action.setChecked(False)
             self.unet_mode_action.setChecked(True)
             self.mode_label.setText("Mode: U-Net")
             self.canvas.set_mode('unet')
+            # Shape toolbar stays visible in both modes
+            if hasattr(self, 'shape_toolbar'):
+                self.shape_toolbar.show()
+            self.mode_selector.setCurrentIndex(1)
             
         self.status_bar.showMessage(f"Switched to {mode.upper()} mode", 2000)
         
@@ -507,15 +546,35 @@ class MainWindow(QMainWindow):
     # ===== CANVAS DELEGATION METHODS =====
     def zoom_in(self):
         """Zoom in on the canvas"""
-        self.canvas.zoom_in()
+        if hasattr(self, 'canvas'):
+            self.canvas.zoom_in()
         
     def zoom_out(self):
         """Zoom out of the canvas"""
-        self.canvas.zoom_out()
+        if hasattr(self, 'canvas'):
+            self.canvas.zoom_out()
         
     def fit_to_window(self):
         """Fit image to window"""
-        self.canvas.fit_to_window()
+        if hasattr(self, 'canvas'):
+            self.canvas.fit_to_window()
+    
+    def copy_selected(self):
+        """Copy selected shape to clipboard"""
+        if hasattr(self, 'canvas'):
+            self.canvas.copy_selected()
+        
+    def paste_shape(self):
+        """Paste copied shape"""
+        if hasattr(self, 'canvas') and hasattr(self.canvas, 'pixmap') and self.canvas.pixmap and not self.canvas.pixmap.isNull():
+            # Trigger paste at center of view
+            center = self.canvas.rect().center()
+            self.canvas.start_paste(center)
+        
+    def delete_selected(self):
+        """Delete selected shape"""
+        if hasattr(self, 'canvas'):
+            self.canvas.delete_selected()
         
     # ===== OTHER METHODS =====
     def new_project(self):
@@ -565,6 +624,14 @@ class MainWindow(QMainWindow):
             "About Dual Annotator",
             "<h2>Dual Annotator v1.0.0</h2>"
             "<p>A unified annotation tool for YOLO and U-Net datasets.</p>"
+            "<p>Features:</p>"
+            "<ul>"
+            "<li>YOLO mode: Bounding box annotation</li>"
+            "<li>U-Net mode: Segmentation masks</li>"
+            "<li>Copy-paste with resize</li>"
+            "<li>Polygon and circle shapes</li>"
+            "<li>Ring shapes for hollow objects</li>"
+            "</ul>"
             "<p>Built with PyQt5 and Python 3.11</p>"
         )
         
@@ -577,23 +644,3 @@ class MainWindow(QMainWindow):
         """Redo last undone action"""
         print("Redo")
         self.status_bar.showMessage("Redo", 1000)
-        
-    def cut(self):
-        """Cut selected item"""
-        print("Cut")
-        self.status_bar.showMessage("Cut", 1000)
-        
-    def copy(self):
-        """Copy selected item"""
-        print("Copy")
-        self.status_bar.showMessage("Copy", 1000)
-        
-    def paste(self):
-        """Paste copied item"""
-        print("Paste")
-        self.status_bar.showMessage("Paste", 1000)
-        
-    def delete(self):
-        """Delete selected item"""
-        print("Delete")
-        self.status_bar.showMessage("Delete", 1000)
