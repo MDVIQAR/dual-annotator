@@ -1,5 +1,6 @@
 # core/annotation.py
-import uuid
+import uuid  # Added this import
+import math
 
 class BoundingBox:
     """Represents a YOLO-style bounding box annotation"""
@@ -14,7 +15,8 @@ class BoundingBox:
         self.image_width, self.image_height = image_size
         self.selected = False
         self.created_at = None
-        self.type = 'box'  # Add type identifier
+        self.type = 'box'
+        self._resize_origin = None  # Add this line
         
     def copy(self):
         """Create a copy of this bounding box"""
@@ -76,32 +78,80 @@ class BoundingBox:
         }
         return handles
     
+    def begin_resize(self):
+        """Store original geometry before resizing starts"""
+        self._resize_origin = self.to_pixels()  # Stores (x1, y1, x2, y2)
+        print(f"📦 Box begin_resize() called, origin: {self._resize_origin}")
+        return True
+    
     def resize_from_handle(self, handle_name, dx, dy):
         """Resize the box from a specific handle"""
-        x1, y1, x2, y2 = self.to_pixels()
-        
-        if handle_name == 'top_left':
-            x1 += dx
-            y1 += dy
-        elif handle_name == 'top_right':
-            x2 += dx
-            y1 += dy
-        elif handle_name == 'bottom_left':
-            x1 += dx
-            y2 += dy
-        elif handle_name == 'bottom_right':
-            x2 += dx
-            y2 += dy
-        
-        # Ensure minimum size
-        if x2 - x1 < 10 or y2 - y1 < 10:
+        if self._resize_origin is None:
+            print("❌ Box _resize_origin is None")
             return False
         
+        orig_x1, orig_y1, orig_x2, orig_y2 = self._resize_origin
+        print(f"📐 Box original: ({orig_x1}, {orig_y1}) - ({orig_x2}, {orig_y2})")
+        print(f"📐 Delta: ({dx}, {dy})")
+        
+        # Start with original coordinates
+        left = orig_x1
+        right = orig_x2
+        top = orig_y1
+        bottom = orig_y2
+        
+        # Apply delta relative to ORIGINAL box
+        if handle_name == 'top_left':
+            left += dx
+            top += dy
+            print(f"↖️ Moving top_left: left={left}, top={top}")
+        elif handle_name == 'top_right':
+            right += dx
+            top += dy
+            print(f"↗️ Moving top_right: right={right}, top={top}")
+        elif handle_name == 'bottom_left':
+            left += dx
+            bottom += dy
+            print(f"↙️ Moving bottom_left: left={left}, bottom={bottom}")
+        elif handle_name == 'bottom_right':
+            right += dx
+            bottom += dy
+            print(f"↘️ Moving bottom_right: right={right}, bottom={bottom}")
+        else:
+            print(f"❌ Unknown handle: {handle_name}")
+            return False
+        
+        # Prevent inversion
+        if right <= left:
+            right = left + 1
+            print(f"⚠️ Fixed right inversion: {right}")
+        if bottom <= top:
+            bottom = top + 1
+            print(f"⚠️ Fixed bottom inversion: {bottom}")
+        
+        # Ensure coordinates stay within image bounds
+        left = max(0, min(left, self.image_width - 1))
+        right = max(0, min(right, self.image_width - 1))
+        top = max(0, min(top, self.image_height - 1))
+        bottom = max(0, min(bottom, self.image_height - 1))
+        
+        print(f"✨ New pixel bounds: left={left}, right={right}, top={top}, bottom={bottom}")
+        
+        # Calculate new center and dimensions
+        new_center_x = (left + right) / 2
+        new_center_y = (top + bottom) / 2
+        new_width = right - left
+        new_height = bottom - top
+        
+        print(f"✨ New values: center=({new_center_x}, {new_center_y}), size=({new_width}, {new_height})")
+        
         # Update normalized coordinates
-        self.x = ((x1 + x2) / 2) / self.image_width
-        self.y = ((y1 + y2) / 2) / self.image_height
-        self.width = (x2 - x1) / self.image_width
-        self.height = (y2 - y1) / self.image_height
+        self.x = new_center_x / self.image_width
+        self.y = new_center_y / self.image_height
+        self.width = new_width / self.image_width
+        self.height = new_height / self.image_height
+        
+        print(f"✅ Final normalized: x={self.x:.3f}, y={self.y:.3f}, w={self.width:.3f}, h={self.height:.3f}")
         
         return True
     
