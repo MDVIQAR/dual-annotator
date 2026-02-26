@@ -1,13 +1,14 @@
 # gui/canvas.py
 from PyQt5.QtWidgets import QWidget, QApplication
-from PyQt5.QtCore import Qt, QPoint, pyqtSignal, QRect, QPointF
-from PyQt5.QtGui import QPainter, QPixmap, QColor, QPen, QBrush, QFont, QPolygonF
+from PyQt5.QtCore import Qt, QPoint, pyqtSignal, QRect, QPointF, QTimer
+from PyQt5.QtGui import QPainter, QPixmap, QColor, QPen, QBrush, QFont, QPolygonF, QCursor
 import os
 import math
 
 from core.annotation import BoundingBox
 from core.polygon_shape import PolygonShape
 from core.circle_shape import CircleShape
+from core.ellipse_shape import EllipseShape
 
 class AnnotationCanvas(QWidget):
     """Canvas widget for displaying images and annotations"""
@@ -22,7 +23,7 @@ class AnnotationCanvas(QWidget):
         
         # Set canvas properties
         self.setMinimumSize(400, 300)
-        self.setStyleSheet("background-color: #2b2b2b;")
+        self.setStyleSheet("background-color: #1e1e1e;")
         
         # Image related variables
         self.image = None
@@ -33,17 +34,22 @@ class AnnotationCanvas(QWidget):
         self.image_height = 0
         
         # Shape drawing variables
-        self.current_shape_type = 'box'  # 'box', 'polygon', 'circle'
+        self.current_shape_type = 'box'  # 'box', 'polygon', 'circle', 'ellipse'
         self.polygon_points = []  # Temporary points for polygon drawing
         self.circle_center = None  # Center point for circle drawing
         self.circle_radius = 0  # Radius for circle drawing
-        
+        self.ellipse_center = None  # Center point for ellipse drawing
+        self.ellipse_radius_x = 0  # Horizontal radius for ellipse
+        self.ellipse_radius_y = 0  # Vertical radius for ellipse 
+
         # View parameters
         self.scale = 1.0
         self.offset_x = 0
         self.offset_y = 0
         self.dragging = False
         self.last_mouse_pos = None
+        self.pan_mode = False  # Whether we're in pan mode
+        self.original_cursor = None  # Store original cursor
         
         # Mode
         self.mode = 'yolo'  # 'yolo' or 'unet'
@@ -79,6 +85,11 @@ class AnnotationCanvas(QWidget):
         # Polygon drawing state
         self.drawing_polygon = False
         
+        # Undo/Redo stacks
+        self.undo_stack = []  # Stack of actions for undo
+        self.redo_stack = []  # Stack of actions for redo
+        self.max_stack_size = 50  # Maximum undo steps
+        
         # Resize handle size (pixels)
         self.handle_size = 8
         
@@ -88,6 +99,12 @@ class AnnotationCanvas(QWidget):
         # Enable keyboard focus
         self.setFocusPolicy(Qt.StrongFocus)
         self.setFocus()
+
+        # State Variabeles
+        self.moving = False  # Whether we're moving a shape
+        self.move_start_pos = None  # Starting position for move
+        self.move_original_positions = []  # Store original positions for undo
+
         
         print("✅ Canvas initialized")
         
@@ -150,11 +167,13 @@ class AnnotationCanvas(QWidget):
     def zoom_in(self):
         """Zoom in by 20%"""
         self.scale *= 1.2
+        self.scale = min(10.0, self.scale)
         self.update()
         
     def zoom_out(self):
         """Zoom out by 20%"""
         self.scale *= 0.8
+        self.scale = max(0.1, self.scale)
         self.update()
         
     def start_drawing(self, pos):
@@ -199,6 +218,7 @@ class AnnotationCanvas(QWidget):
             current_class = self.class_manager.get_current_class()
             if current_class:
                 self.current_shape.class_id = current_class.id
+                self.save_state()  # Save state before adding
                 self.shapes.append(self.current_shape)
                 shape_type = getattr(self.current_shape, 'type', 'box')
                 print(f"✅ Added new {shape_type} with class: {current_class.name}")
@@ -246,6 +266,7 @@ class AnnotationCanvas(QWidget):
     def delete_selected(self):
         """Delete the selected shape"""
         if self.selected_shape:
+            self.save_state()  # Save state before deleting
             self.shapes.remove(self.selected_shape)
             self.selected_shape = None
             self.shape_selected.emit("none")
@@ -258,7 +279,7 @@ class AnnotationCanvas(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         
         # Fill background
-        painter.fillRect(self.rect(), QColor(43, 43, 43))
+        painter.fillRect(self.rect(), QColor(30, 30, 30))
         
         # Draw image if loaded
         if self.pixmap and not self.pixmap.isNull():
@@ -294,20 +315,28 @@ class AnnotationCanvas(QWidget):
             # Draw circle preview if drawing circle
             if self.circle_center and self.circle_radius > 0:
                 self.draw_circle_preview(painter)
+
+            # Draw circle preview if drawing circle
+            if hasattr(self, 'ellipse_center') and self.ellipse_center and self.ellipse_radius_x > 0:
+                self.draw_ellipse_preview(painter)    
                 
         # Draw mode indicator
-        painter.setPen(QPen(QColor(255, 255, 255), 1))
+        painter.setPen(QPen(QColor(200, 200, 200), 1))
         mode_text = f"Mode: {self.mode.upper()}"
         painter.drawText(10, 20, mode_text)
         
-        # Draw shape type indicator (show "None" if no shape selected)
-        painter.setPen(QPen(QColor(200, 200, 200), 1))
+        # Draw shape type indicator
         if self.current_shape_type:
             shape_text = f"Shape: {self.current_shape_type.upper()}"
         else:
-            shape_text = "Shape: NONE (click 'None' to select shapes)"
-            painter.setPen(QPen(QColor(255, 100, 100), 1))  # Red color for warning
+            shape_text = "Shape: NONE"
+            painter.setPen(QPen(QColor(255, 100, 100), 1))
         painter.drawText(10, 40, shape_text)
+        
+        # Draw pan mode indicator
+        if self.pan_mode:
+            painter.setPen(QPen(QColor(100, 200, 255), 1))
+            painter.drawText(10, 60, "Pan Mode: ON (Space to toggle)")
         
         # Draw current class indicator
         if self.class_manager:
@@ -315,7 +344,7 @@ class AnnotationCanvas(QWidget):
             if current_class:
                 painter.setPen(QPen(QColor(current_class.color), 2))
                 painter.setFont(QFont("Arial", 10))
-                painter.drawText(10, 70, f"Class: {current_class.name}")
+                painter.drawText(10, 90, f"Class: {current_class.name}")
         
     def draw_shapes(self, painter):
         """Draw all shapes"""
@@ -335,6 +364,8 @@ class AnnotationCanvas(QWidget):
                     self.draw_polygon(painter, shape, color)
                 elif shape.type == 'circle':
                     self.draw_circle(painter, shape, color)
+                elif shape.type == 'ellipse':
+                    self.draw_ellipse(painter, shape, color)
             else:
                 # Default to box for backward compatibility
                 self.draw_single_box(painter, shape, color)
@@ -537,69 +568,136 @@ class AnnotationCanvas(QWidget):
         painter.setPen(QPen(QColor(0, 0, 0), 1))
         half = self.handle_size // 2
         painter.drawRect(wx - half, wy - half, self.handle_size, self.handle_size)
+
+    def draw_ellipse(self, painter, ellipse, color):
+        """Draw an ellipse shape with highlighting when selected"""
+        cx, cy, rx, ry = ellipse.to_pixels()
+        
+        # Convert to widget coordinates
+        wx = int(cx * self.scale + self.offset_x)
+        wy = int(cy * self.scale + self.offset_y)
+        wrx = int(rx * self.scale)
+        wry = int(ry * self.scale)
+        
+        # Set pen based on selection - YELLOW when selected
+        if ellipse.selected:
+            pen = QPen(QColor(255, 255, 0), 3)  # Yellow, thicker
+            painter.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 80)))
+        else:
+            pen = QPen(color, 2)
+            painter.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 50)))
+        
+        painter.setPen(pen)
+        
+        # Draw ellipse
+        painter.drawEllipse(wx - wrx, wy - wry, wrx * 2, wry * 2)
+        
+        # Draw resize handles for selected ellipse
+        if ellipse.selected:
+            painter.setBrush(QBrush(QColor(255, 255, 255)))
+            painter.setPen(QPen(QColor(0, 0, 0), 1))
+            
+            half = self.handle_size // 2
+            handles = ellipse.get_resize_handles()
+            for handle_name, (hx, hy) in handles.items():
+                whx = int(hx * self.scale + self.offset_x)
+                why = int(hy * self.scale + self.offset_y)
+                painter.drawRect(whx - half, why - half, self.handle_size, self.handle_size)
+        
+        # Draw class name if available
+        if ellipse.selected and self.class_manager and hasattr(ellipse, 'class_id') and ellipse.class_id:
+            cls = self.class_manager.get_class(ellipse.class_id)
+            if cls:
+                painter.setPen(QPen(Qt.white, 1))
+                painter.setFont(QFont("Arial", 8))
+                
+                # Draw background for text
+                text = cls.name
+                text_width = painter.fontMetrics().horizontalAdvance(text)
+                text_height = painter.fontMetrics().height()
+                painter.fillRect(wx - wrx, wy - wry - text_height - 5, text_width + 10, text_height + 5, QColor(0, 0, 0, 150))
+                
+                painter.drawText(wx - wrx + 5, wy - wry - 8, text)    
         
     def mousePressEvent(self, event):
         """Handle mouse press events"""
-        if event.button() == Qt.MiddleButton:  # Pan
+        if event.button() == Qt.MiddleButton or (event.button() == Qt.LeftButton and self.pan_mode):
+            # Pan mode
             self.dragging = True
             self.last_mouse_pos = event.pos()
             self.setCursor(Qt.ClosedHandCursor)
             
-        elif event.button() == Qt.LeftButton:
+        elif event.button() == Qt.LeftButton and not self.pan_mode:
             if self.pixmap and not self.pixmap.isNull():
                 
                 # Check if we have a selected class
                 current_class = self.class_manager.get_current_class() if self.class_manager else None
-                if not current_class:
-                    print("⚠️ Please select a class first")
-                    return
                 
-                # Allow shapes in YOLO mode too!
-                self.handle_shape_press(event)
-    
-    def handle_shape_press(self, event):
-        """Handle mouse press for shape drawing (works in any mode)"""
-        # Check if a shape type is selected
-        if not self.current_shape_type:
-            print("⚠️ Please select a shape tool from the toolbar first")
-            return
-        
-        # Check if Ctrl is pressed for drag-copy
-        modifiers = QApplication.keyboardModifiers()
-        ctrl_pressed = modifiers == Qt.ControlModifier
-        
-        # Check if we're over a resize handle of selected shape
-        if self.selected_shape:
-            handle = self.get_resize_handle_at_pos(event.pos(), self.selected_shape)
-            if handle:
-                # Start resizing
-                self.resizing = True
-                self.resizing_handle = handle
-                self.resize_start_pos = self.widget_to_image(event.pos())
-                return
-        
-        # If Ctrl is pressed and we click on a shape, start drag-copy
-        if ctrl_pressed:
-            image_x, image_y = self.widget_to_image(event.pos())
-            for shape in reversed(self.shapes):
-                if hasattr(shape, 'contains_point') and shape.contains_point(image_x, image_y):
-                    self.start_drag_copy(shape, event.pos())
-                    return
-        
-        # Handle shape-specific drawing based on current_shape_type
-        if self.current_shape_type == 'polygon':
-            self.start_polygon_drawing(event.pos())
-        elif self.current_shape_type == 'circle':
-            self.start_circle_drawing(event.pos())
-        elif self.current_shape_type == 'box':
-            # Default to box
-            # First try to select a shape
-            self.select_shape(event.pos())
-            # If we didn't select anything and not dragging, start drawing
-            if not self.selected_shape and not self.drag_copy:
-                self.start_drawing(event.pos())
-        # If current_shape_type is None, we already returned at the beginning
-    
+                # Check if Ctrl is pressed for drag-copy
+                modifiers = QApplication.keyboardModifiers()
+                ctrl_pressed = modifiers == Qt.ControlModifier
+                
+                # FIRST: Check if we're over a resize handle of selected shape
+                if self.selected_shape:
+                    handle = self.get_resize_handle_at_pos(event.pos(), self.selected_shape)
+                    print(f"🔍 Handle detection: {handle}")  # DEBUG
+                    
+                    if handle:
+                        print(f"🎯 Handle '{handle}' detected on {getattr(self.selected_shape, 'type', 'shape')}")  # DEBUG
+                        
+                        # Start resizing
+                        self.resizing = True
+                        self.resizing_handle = handle
+                        self.resize_start_pos = self.widget_to_image(event.pos())
+                        
+                        # Call begin_resize on the shape
+                        if hasattr(self.selected_shape, 'begin_resize'):
+                            print("📞 Calling begin_resize()")  # DEBUG
+                            self.selected_shape.begin_resize()
+                            print(f"✅ begin_resize() called, _resize_origin set to: {self.selected_shape._resize_origin}")  # DEBUG
+                        else:
+                            print("⚠️ Shape has no begin_resize() method")  # DEBUG
+                        
+                        return
+                
+                # SECOND: Check if we're clicking on a shape (for moving or selecting)
+                image_x, image_y = self.widget_to_image(event.pos())
+                clicked_shape = None
+                for shape in reversed(self.shapes):
+                    if hasattr(shape, 'contains_point') and shape.contains_point(image_x, image_y):
+                        clicked_shape = shape
+                        break
+                
+                if clicked_shape:
+                    # If Ctrl is pressed, start drag-copy
+                    if ctrl_pressed:
+                        self.start_drag_copy(clicked_shape, event.pos())
+                        return
+                    
+                    # If the clicked shape is already selected, start moving it
+                    if clicked_shape.selected:
+                        self.start_move(clicked_shape, event.pos())
+                        return
+                    else:
+                        # Just select the shape
+                        self.select_shape(event.pos())
+                        return
+                
+                # If no shape was clicked and we have a drawing tool selected, start drawing
+                if self.current_shape_type and self.current_shape_type != 'none':
+                    # Handle shape-specific drawing
+                    if self.current_shape_type == 'polygon':
+                        self.start_polygon_drawing(event.pos())
+                    elif self.current_shape_type == 'circle':
+                        self.start_circle_drawing(event.pos())
+                    elif self.current_shape_type == 'ellipse':
+                        self.start_ellipse_drawing(event.pos())
+                    elif self.current_shape_type == 'box':
+                        self.start_drawing(event.pos())
+                else:
+                    # No tool selected, just click on empty area (deselect)
+                    self.select_shape(event.pos())  # This will deselect
+
     def mouseMoveEvent(self, event):
         """Handle mouse move events"""
         # Convert widget coordinates to image coordinates
@@ -616,63 +714,130 @@ class AnnotationCanvas(QWidget):
             self.last_mouse_pos = event.pos()
             self.update()
             
-        # Handle drawing (works in any mode)
+        # Handle moving shapes
+        elif self.moving and not self.resizing:
+            self.update_move(event.pos())
+        
+        # Handle drawing
         elif self.drawing:
             self.update_drawing(event.pos())
+        
+        # Handle drag-copy
         elif self.drag_copy and not self.resizing:
             self.update_drag_copy(event.pos())
+        
+        # Handle circle drawing
         elif self.current_shape_type == 'circle' and self.circle_center:
             self.update_circle_drawing(event.pos())
+        
+        # Handle ellipse drawing
+        elif self.current_shape_type == 'ellipse' and hasattr(self, 'ellipse_center') and self.ellipse_center:
+            self.update_ellipse_drawing(event.pos())
+        
+        # Handle resizing
         elif self.resizing and self.resizing_handle and self.selected_shape:
+            print(f"🔄 Resizing with handle {self.resizing_handle}")  # DEBUG
+            
             current_pos = self.widget_to_image(event.pos())
             dx = current_pos[0] - self.resize_start_pos[0]
             dy = current_pos[1] - self.resize_start_pos[1]
             
+            print(f"📐 Delta: ({dx}, {dy})")  # DEBUG
+            
             if hasattr(self.selected_shape, 'resize_from_handle'):
-                self.selected_shape.resize_from_handle(self.resizing_handle, dx, dy)
-            self.resize_start_pos = current_pos
+                result = self.selected_shape.resize_from_handle(self.resizing_handle, dx, dy)
+                print(f"📊 resize_from_handle returned: {result}")  # DEBUG
+            
             self.update()
     
     def mouseReleaseEvent(self, event):
         """Handle mouse release events"""
-        if event.button() == Qt.MiddleButton:
+        if event.button() == Qt.MiddleButton or (event.button() == Qt.LeftButton and self.dragging):
             self.dragging = False
-            self.setCursor(Qt.ArrowCursor)
+            self.setCursor(Qt.OpenHandCursor if self.pan_mode else Qt.ArrowCursor)
             
         elif event.button() == Qt.LeftButton:
-            if self.drawing:
+            if self.moving:
+                self.finish_move()
+            elif self.drawing:
                 self.finish_drawing()
             elif self.drag_copy:
                 self.finish_drag_copy()
             elif self.current_shape_type == 'circle' and self.circle_center:
                 self.finish_circle()
+            elif self.current_shape_type == 'ellipse' and hasattr(self, 'ellipse_center') and self.ellipse_center:
+                self.finish_ellipse()
             elif self.resizing:
+                # Finished resizing
                 self.resizing = False
                 self.resizing_handle = None
                 self.resize_start_pos = None
-                print("✅ Resizing complete")
+                
+                # Clear the resize origin
+                if self.selected_shape and hasattr(self.selected_shape, '_resize_origin'):
+                    self.selected_shape._resize_origin = None
+                    print("✅ Resizing complete - origin cleared")
             
             # Ensure we're not stuck in any special state
             self.drag_copy = False
             self.pasting = False
                 
     def wheelEvent(self, event):
-        """Handle mouse wheel for zooming"""
+        """Handle mouse wheel for zooming - zooms to cursor position"""
+        if not self.pixmap or self.pixmap.isNull():
+            return
+        
+        # Get cursor position in widget coordinates
+        cursor_pos = event.pos()
+        
+        # Convert to image coordinates before zoom
+        image_pos = self.widget_to_image(cursor_pos)
+        
+        # Zoom factor
         zoom_factor = 1.1
         if event.angleDelta().y() > 0:
-            self.scale *= zoom_factor
+            new_scale = self.scale * zoom_factor
         else:
-            self.scale /= zoom_factor
-                
-        # Keep zoom within reasonable limits
-        self.scale = max(0.1, min(10.0, self.scale))
-        self.update()
+            new_scale = self.scale / zoom_factor
+        
+        # Keep zoom within limits
+        new_scale = max(0.1, min(10.0, new_scale))
+        
+        if new_scale != self.scale:
+            # Calculate new offset to keep cursor position fixed
+            image_x = image_pos[0] * self.scale + self.offset_x
+            image_y = image_pos[1] * self.scale + self.offset_y
+            
+            self.scale = new_scale
+            
+            # Adjust offset to keep the point under cursor at same screen position
+            self.offset_x = image_x - image_pos[0] * self.scale
+            self.offset_y = image_y - image_pos[1] * self.scale
+            
+            self.update()
             
     def keyPressEvent(self, event):
         """Handle keyboard events"""
-        # Only handle essential keys
-        if event.key() == Qt.Key_Escape:
-            if self.drag_copy:
+        # Toggle pan mode with Space bar
+        if event.key() == Qt.Key_Space:
+            self.pan_mode = not self.pan_mode
+            if self.pan_mode:
+                self.original_cursor = self.cursor()
+                self.setCursor(Qt.OpenHandCursor)
+                print("🖐️ Pan mode activated - Click and drag to pan")
+            else:
+                self.setCursor(self.original_cursor or Qt.ArrowCursor)
+                print("🖐️ Pan mode deactivated")
+        
+        # Escape to cancel operations or exit pan mode
+        elif event.key() == Qt.Key_Escape:
+            if self.pan_mode:
+                self.pan_mode = False
+                self.setCursor(self.original_cursor or Qt.ArrowCursor)
+                print("🖐️ Pan mode deactivated")
+            elif self.moving:
+                self.cancel_move()
+            elif self.drag_copy:
                 self.cancel_drag_copy()
             elif self.drawing:
                 self.drawing = False
@@ -683,15 +848,38 @@ class AnnotationCanvas(QWidget):
                 self.cancel_polygon()
             elif self.circle_center:
                 self.cancel_circle()
-                
+            elif hasattr(self, 'ellipse_center') and self.ellipse_center:
+                self.cancel_ellipse()    
+        
+        # Enter to finish polygon
         elif event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
             if self.polygon_points:
                 self.finish_polygon()
-                
+        
+        # Delete key
         elif event.key() == Qt.Key_Delete or event.key() == Qt.Key_Backspace:
-            if not self.drag_copy:
+            if not self.drag_copy and not self.pan_mode and not self.moving:
                 self.delete_selected()
-                
+        
+        # Undo: Ctrl+Z
+        elif event.key() == Qt.Key_Z and event.modifiers() == Qt.ControlModifier:
+            self.undo()
+        
+        # Redo: Ctrl+Y
+        elif event.key() == Qt.Key_Y and event.modifiers() == Qt.ControlModifier:
+            self.redo()
+        
+        # Copy: Ctrl+C
+        elif event.key() == Qt.Key_C and event.modifiers() == Qt.ControlModifier:
+            self.copy_selected()
+        
+        # Paste: Ctrl+V
+        elif event.key() == Qt.Key_V and event.modifiers() == Qt.ControlModifier:
+            if self.clipboard_shape and self.pixmap and not self.pixmap.isNull():
+                # Get current mouse position
+                cursor_pos = self.mapFromGlobal(self.cursor().pos())
+                self.start_paste(cursor_pos)
+        
         else:
             super().keyPressEvent(event)
 
@@ -709,6 +897,9 @@ class AnnotationCanvas(QWidget):
         self.circle_center = None
         self.circle_radius = 0
         self.drawing_polygon = False
+        self.ellipse_center = None
+        self.ellipse_radius_x = 0
+        self.ellipse_radius_y = 0
         # Don't clear shapes or selected_shape
         print("🔄 All states reset")       
         
@@ -733,6 +924,83 @@ class AnnotationCanvas(QWidget):
             self.fit_to_window()
         super().resizeEvent(event)
 
+    def start_move(self, shape, pos):
+        """Start moving a selected shape"""
+        if not shape or not shape.selected:
+            return False
+        
+        print(f"↔️ Starting move operation")
+        self.moving = True
+        self.selected_shape = shape
+        self.move_start_pos = self.widget_to_image(pos)
+        
+        # Store original position for undo (based on shape type)
+        if hasattr(shape, 'x') and hasattr(shape, 'y'):  # Box
+            self.move_original_positions = [(shape.x, shape.y)]
+        elif hasattr(shape, 'center_x') and hasattr(shape, 'center_y'):  # Circle
+            self.move_original_positions = [(shape.center_x, shape.center_y)]
+        elif hasattr(shape, 'points'):  # Polygon
+            self.move_original_positions = shape.points.copy()
+        
+        self.setCursor(Qt.ClosedHandCursor)
+        return True
+    
+    def update_move(self, pos):
+        """Update shape position while moving"""
+        if not self.moving or not self.selected_shape:
+            return
+        
+        current_pos = self.widget_to_image(pos)
+        dx = (current_pos[0] - self.move_start_pos[0]) / self.image_width
+        dy = (current_pos[1] - self.move_start_pos[1]) / self.image_height
+        
+        # Move shape based on type
+        if hasattr(self.selected_shape, 'x') and hasattr(self.selected_shape, 'y'):  # Box
+            self.selected_shape.x += dx
+            self.selected_shape.y += dy
+        elif hasattr(self.selected_shape, 'center_x') and hasattr(self.selected_shape, 'center_y'):  # Circle
+            self.selected_shape.center_x += dx
+            self.selected_shape.center_y += dy
+        elif hasattr(self.selected_shape, 'points'):  # Polygon
+            new_points = []
+            for nx, ny in self.selected_shape.points:
+                new_points.append((nx + dx, ny + dy))
+            self.selected_shape.points = new_points
+        
+        self.move_start_pos = current_pos
+        self.update()
+    
+    def finish_move(self):
+        """Finish moving shape"""
+        if self.moving and self.selected_shape:
+            self.save_state()  # Save state for undo
+            print("✅ Move completed")
+        
+        self.moving = False
+        self.move_start_pos = None
+        self.move_original_positions = []
+        self.setCursor(Qt.ArrowCursor)
+        self.update()
+    
+    def cancel_move(self):
+        """Cancel move operation and restore original position"""
+        if self.moving and self.selected_shape and self.move_original_positions:
+            # Restore original position based on shape type
+            if hasattr(self.selected_shape, 'x') and hasattr(self.selected_shape, 'y'):  # Box
+                self.selected_shape.x, self.selected_shape.y = self.move_original_positions[0]
+            elif hasattr(self.selected_shape, 'center_x') and hasattr(self.selected_shape, 'center_y'):  # Circle
+                self.selected_shape.center_x, self.selected_shape.center_y = self.move_original_positions[0]
+            elif hasattr(self.selected_shape, 'points'):  # Polygon
+                self.selected_shape.points = self.move_original_positions.copy()
+            
+            print("❌ Move cancelled")
+        
+        self.moving = False
+        self.move_start_pos = None
+        self.move_original_positions = []
+        self.setCursor(Qt.ArrowCursor)
+        self.update()
+
     def copy_selected(self):
         """Copy the selected shape to clipboard"""
         if self.selected_shape and hasattr(self.selected_shape, 'copy'):
@@ -745,53 +1013,88 @@ class AnnotationCanvas(QWidget):
             return False    
     
     def start_paste(self, pos):
-        """Start pasting a shape at the given position"""
+        """Start pasting a shape at cursor position"""
         if not self.clipboard_shape:
             print("⚠️ No shape in clipboard to paste")
             return False
         
-        print(f"📋 Starting paste")
+        print(f"📋 Pasting at cursor position: ({pos.x()}, {pos.y()})")
         
         # Create a copy of the clipboard shape
         self.paste_shape = self.clipboard_shape.copy()
         self.pasting = True
         self.paste_confirmed = False
         
-        # Position the shape at mouse cursor
+        # Position the shape exactly at cursor position
         image_x, image_y = self.widget_to_image(pos)
         
         # Update position based on shape type
         if hasattr(self.paste_shape, 'x') and hasattr(self.paste_shape, 'y'):
-            # For boxes
+            # For boxes - center at cursor
             self.paste_shape.x = image_x / self.image_width
             self.paste_shape.y = image_y / self.image_height
         elif hasattr(self.paste_shape, 'center_x') and hasattr(self.paste_shape, 'center_y'):
-            # For circles
+            # For circles - center at cursor
             self.paste_shape.center_x = image_x / self.image_width
             self.paste_shape.center_y = image_y / self.image_height
         elif hasattr(self.paste_shape, 'points'):
-            # For polygons - move all points
+            # For polygons - center at cursor
             if self.paste_shape.points:
-                dx = (image_x / self.image_width) - self.paste_shape.points[0][0]
-                dy = (image_y / self.image_height) - self.paste_shape.points[0][1]
+                # Calculate center offset
+                points = self.paste_shape.points
+                center_x = sum(p[0] for p in points) / len(points)
+                center_y = sum(p[1] for p in points) / len(points)
+                dx = (image_x / self.image_width) - center_x
+                dy = (image_y / self.image_height) - center_y
                 self.paste_shape.move(dx, dy)
 
         # Deselect any selected shape
         if self.selected_shape:
             self.selected_shape.selected = False
             self.selected_shape = None
-    
+
         # Select the paste shape
         self.paste_shape.selected = True
         self.selected_shape = self.paste_shape
 
-        # Add to shapes list temporarily for display
+        # Add to shapes list
         self.shapes.append(self.paste_shape)
         
         shape_type = getattr(self.paste_shape, 'type', 'box')
-        print(f"📋 Started pasting {shape_type} - drag corners to resize, Enter to confirm, Esc to cancel")
+        print(f"📋 Pasting {shape_type} - drag to position, Enter to confirm, Esc to cancel")
         self.update()
         return True
+
+    def update_paste_position(self, pos):
+        """Update the position of the box being pasted (without resizing)"""
+        if self.pasting and self.paste_box and not self.resizing_handle:
+            image_x, image_y = self.widget_to_image(pos)
+            self.paste_box.x = image_x / self.image_width
+            self.paste_box.y = image_y / self.image_height
+            self.update()
+
+    def start_resize_paste(self, pos, handle):
+        """Start resizing the pasted box"""
+        if self.pasting and self.paste_box:
+            self.resizing_handle = handle
+            self.paste_start_pos = self.widget_to_image(pos)
+            print(f"📏 Resizing from {handle} handle")  
+
+    def update_paste_resize(self, pos):
+        """Update the size while dragging a handle"""
+        if self.pasting and self.paste_box and self.resizing_handle and self.paste_start_pos:
+            current_pos = self.widget_to_image(pos)
+            
+            # Calculate delta
+            dx = current_pos[0] - self.paste_start_pos[0]
+            dy = current_pos[1] - self.paste_start_pos[1]
+            
+            # Apply resize
+            success = self.paste_box.resize_from_handle(self.resizing_handle, dx, dy)
+            
+            if success:
+                self.paste_start_pos = current_pos
+                self.update()              
 
     def confirm_paste(self):
         """Confirm the paste and add the shape to the list"""
@@ -892,28 +1195,13 @@ class AnnotationCanvas(QWidget):
     def finish_drag_copy(self):
         """Finish dragging copy"""
         if self.drag_copy and self.drag_copy_shape:
+            self.save_state()  # Save state for the new copy
             print("✅ Drag copy completed")
-            
-            # Keep the copied shape but make sure it's not selected
-            if self.drag_copy_shape:
-                self.drag_copy_shape.selected = False
-            
-            # Clear all drag-copy related states
             self.drag_copy = False
             self.drag_copy_shape = None
             self.drag_start_pos = None
             self.original_shape = None
-            
-            # Clear any lingering selection if needed
-            if self.selected_shape and not self.selected_shape.selected:
-                self.selected_shape = None
-                
-            # Reset all interaction states
             self.resizing = False
-            self.resizing_handle = None
-            self.pasting = False
-            
-            print("✅ Ready to draw new shapes")
             self.update()
             return True
         return False
@@ -969,15 +1257,15 @@ class AnnotationCanvas(QWidget):
         # Don't clear selected_shape here - let that be handled by click on empty area 
 
     def set_shape_type(self, shape_type):
-        """Set the current shape type (None means no shape selected)"""
+        """Set the current shape type"""
         self.current_shape_type = shape_type
         self.reset_all_states()
-        if shape_type:
+        if shape_type and shape_type != 'none':
             print(f"🔷 Shape type set to: {shape_type}")
         else:
-            print("⬜ Shape type cleared - no drawing tool selected")
+            print("⬜ No drawing tool selected - click on shapes to select them")
         
-        # If we were drawing a polygon, cancel it
+        # Cancel any ongoing drawing
         if self.polygon_points:
             self.cancel_polygon()
         if self.circle_center:
@@ -1020,6 +1308,7 @@ class AnnotationCanvas(QWidget):
             )
             polygon.from_pixel_points(self.polygon_points)
             polygon.close_polygon()
+            self.save_state()  # Save state before adding
             self.shapes.append(polygon)
             print(f"✅ Polygon completed with {len(self.polygon_points)} points")
         
@@ -1062,6 +1351,7 @@ class AnnotationCanvas(QWidget):
                 self.circle_center[1],
                 self.circle_radius
             )
+            self.save_state()  # Save state before adding
             self.shapes.append(circle)
             print(f"✅ Circle completed with radius {self.circle_radius}")
         
@@ -1076,3 +1366,131 @@ class AnnotationCanvas(QWidget):
         self.circle_radius = 0
         print("❌ Circle cancelled")
         self.update()
+
+    def start_ellipse_drawing(self, pos):
+        """Start drawing an ellipse"""
+        if self.class_manager and self.class_manager.get_current_class():
+            self.ellipse_center = self.widget_to_image(pos)
+            self.ellipse_radius_x = 0
+            self.ellipse_radius_y = 0
+            print(f"🟢 Started ellipse at center ({self.ellipse_center[0]}, {self.ellipse_center[1]})")
+
+    def update_ellipse_drawing(self, pos):
+        """Update ellipse while drawing"""
+        if hasattr(self, 'ellipse_center') and self.ellipse_center:
+            current_pos = self.widget_to_image(pos)
+            dx = current_pos[0] - self.ellipse_center[0]
+            dy = current_pos[1] - self.ellipse_center[1]
+            self.ellipse_radius_x = abs(dx)
+            self.ellipse_radius_y = abs(dy)
+            self.update()
+
+    def finish_ellipse(self):
+        """Finish drawing ellipse"""
+        if hasattr(self, 'ellipse_center') and self.ellipse_center and self.ellipse_radius_x > 5 and self.ellipse_radius_y > 5:
+            # Create ellipse shape
+            ellipse = EllipseShape(
+                class_id=self.class_manager.get_current_class().id,
+                image_size=(self.image_width, self.image_height)
+            )
+            ellipse.from_pixels(
+                self.ellipse_center[0],
+                self.ellipse_center[1],
+                self.ellipse_radius_x,
+                self.ellipse_radius_y
+            )
+            self.save_state()  # Save state before adding
+            self.shapes.append(ellipse)
+            print(f"✅ Ellipse completed with radii ({self.ellipse_radius_x}, {self.ellipse_radius_y})")
+        
+        # Reset ellipse drawing state
+        self.ellipse_center = None
+        self.ellipse_radius_x = 0
+        self.ellipse_radius_y = 0
+        self.update()
+
+    def cancel_ellipse(self):
+        """Cancel ellipse drawing"""
+        self.ellipse_center = None
+        self.ellipse_radius_x = 0
+        self.ellipse_radius_y = 0
+        print("❌ Ellipse cancelled")
+        self.update()
+
+    def draw_ellipse_preview(self, painter):
+        """Draw ellipse preview while drawing"""
+        if not hasattr(self, 'ellipse_center') or not self.ellipse_center:
+            return
+            
+        cx, cy = self.ellipse_center
+        wx = int(cx * self.scale + self.offset_x)
+        wy = int(cy * self.scale + self.offset_y)
+        wrx = int(self.ellipse_radius_x * self.scale)
+        wry = int(self.ellipse_radius_y * self.scale)
+        
+        painter.setPen(QPen(QColor(255, 255, 0), 2, Qt.DashLine))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawEllipse(wx - wrx, wy - wry, wrx * 2, wry * 2)
+        
+        # Draw center point
+        painter.setBrush(QBrush(QColor(255, 255, 255)))
+        painter.setPen(QPen(QColor(0, 0, 0), 1))
+        half = self.handle_size // 2
+        painter.drawRect(wx - half, wy - half, self.handle_size, self.handle_size)    
+
+    # ===== UNDO/REDO METHODS =====
+    def save_state(self):
+        """Save current state for undo"""
+        # Create a copy of current shapes
+        state = []
+        for shape in self.shapes:
+            if hasattr(shape, 'copy'):
+                state.append(shape.copy())
+        
+        self.undo_stack.append(state)
+        if len(self.undo_stack) > self.max_stack_size:
+            self.undo_stack.pop(0)
+        self.redo_stack.clear()  # Clear redo stack on new action
+        print(f"💾 State saved (undo stack: {len(self.undo_stack)})")
+
+    def undo(self):
+        """Undo last action"""
+        if not self.undo_stack:
+            print("⚠️ Nothing to undo")
+            return False
+        
+        # Save current state to redo stack
+        current_state = []
+        for shape in self.shapes:
+            if hasattr(shape, 'copy'):
+                current_state.append(shape.copy())
+        self.redo_stack.append(current_state)
+        
+        # Restore previous state
+        self.shapes = self.undo_stack.pop()
+        self.selected_shape = None
+        self.shape_selected.emit("none")
+        self.update()
+        print(f"↩ Undo completed (undo: {len(self.undo_stack)}, redo: {len(self.redo_stack)})")
+        return True
+
+    def redo(self):
+        """Redo last undone action"""
+        if not self.redo_stack:
+            print("⚠️ Nothing to redo")
+            return False
+        
+        # Save current state to undo stack
+        current_state = []
+        for shape in self.shapes:
+            if hasattr(shape, 'copy'):
+                current_state.append(shape.copy())
+        self.undo_stack.append(current_state)
+        
+        # Restore next state
+        self.shapes = self.redo_stack.pop()
+        self.selected_shape = None
+        self.shape_selected.emit("none")
+        self.update()
+        print(f"↪ Redo completed (undo: {len(self.undo_stack)}, redo: {len(self.redo_stack)})")
+        return True
