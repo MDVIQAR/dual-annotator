@@ -11,6 +11,7 @@ class PolygonShape(Shape):
         self.type = 'polygon'
         self.points = points or []  # List of (x, y) tuples (normalized)
         self.closed = False
+        self._resize_origin = None  # Store original points for resizing
         
     def add_point(self, x, y):
         """Add a point to the polygon (normalized coordinates)"""
@@ -74,17 +75,24 @@ class PolygonShape(Shape):
         return handles
     
     def resize_from_handle(self, handle_name, dx, dy):
-        """Move a vertex"""
+        """Move a vertex - dx, dy are cumulative delta from resize start"""
+        if self._resize_origin is None:
+            return False
         if handle_name.startswith('vertex_'):
             idx = int(handle_name.split('_')[1])
-            if 0 <= idx < len(self.points):
-                nx, ny = self.points[idx]
+            if 0 <= idx < len(self._resize_origin):
+                orig_nx, orig_ny = self._resize_origin[idx]
                 self.points[idx] = (
-                    nx + dx / self.image_width,
-                    ny + dy / self.image_height
+                    orig_nx + dx / self.image_width,
+                    orig_ny + dy / self.image_height
                 )
                 return True
         return False
+    
+    def begin_resize(self):
+        """Store original points before resizing starts"""
+        self._resize_origin = list(self.points)
+        return True
     
     def close_polygon(self):
         """Close the polygon"""
