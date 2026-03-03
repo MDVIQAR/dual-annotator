@@ -17,7 +17,7 @@ class BoundingBox:
         self.created_at = None
         self.type = 'box'
         self._resize_origin = None  # Add this line
-        
+
     def copy(self):
         """Create a copy of this bounding box"""
         new_box = BoundingBox(

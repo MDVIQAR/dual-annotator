@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (
     QStatusBar, QLabel, QWidget, QVBoxLayout,
     QHBoxLayout, QMessageBox, QFileDialog, QSplitter,
     QListWidget, QListWidgetItem, QAbstractItemView, 
-    QComboBox, QFrame, QPushButton, QButtonGroup, QGridLayout
+    QComboBox, QFrame, QPushButton, QShortcut
 )
 from PyQt5.QtCore import Qt, QSize, pyqtSignal
 from PyQt5.QtGui import QIcon, QKeySequence, QFont, QColor, QPalette
@@ -82,18 +82,19 @@ class ShortcutBar(QFrame):
         layout.setContentsMargins(10, 0, 10, 0)
         layout.setSpacing(5)
         
-        # Shortcuts
+        # Shortcuts - UPDATED VERSION (L/J/K/I REMOVED)
         shortcuts = [
-            ("A/D", "Prev/Next Image"),
-            ("Del", "Delete Box"),
-            ("Ctrl+C", "Copy"),
-            ("Ctrl+V", "Paste"),
-            ("Ctrl+Z", "Undo"),
-            ("Ctrl+Y", "Redo"),
-            ("Esc", "Cancel"),
-            ("Enter", "Finish Polygon"),
-            ("Space", "Pan Mode"),
-            ("+/-", "Zoom")
+            ("B", "Box Tool"),
+            ("P", "Polygon Tool"),
+            ("C", "Circle Tool"),
+            ("E", "Ellipse Tool"),
+            ("F", "Frame"),
+            ("O", "Donut"),
+            ("H", "Hollow Ellipse"),
+            ("Del", "Delete"),
+            ("Ctrl+C/V", "Copy/Paste"),
+            ("Ctrl+Z/Y", "Undo/Redo"),
+            ("Space", "Pan Mode")
         ]
         
         for key, desc in shortcuts:
@@ -140,9 +141,13 @@ class MainWindow(QMainWindow):
         
         # Initialize UI
         self.setup_menu_bar()
-        self.setup_shortcut_bar()  # New shortcut bar
+        self.setup_shortcut_bar()
         self.setup_status_bar()
         self.setup_central_widget()
+        
+        # Set keyboard shortcuts for navigation
+        QShortcut(QKeySequence('A'), self, self.prev_image)
+        QShortcut(QKeySequence('D'), self, self.next_image)
         
     def set_dark_theme(self):
         """Set dark theme for the application"""
@@ -332,6 +337,133 @@ class MainWindow(QMainWindow):
         self.unet_mode_action.triggered.connect(lambda: self.switch_mode('unet'))
         mode_menu.addAction(self.unet_mode_action)
         
+        # ===== SHORTCUTS MENU =====
+        shortcuts_menu = menubar.addMenu('&Shortcuts')
+        
+        # Navigation Section
+        nav_title = shortcuts_menu.addAction('🔍 NAVIGATION')
+        nav_title.setEnabled(False)
+        shortcuts_menu.addSeparator()
+        
+        prev_action = QAction('Previous Image', self)
+        prev_action.setShortcut('A')
+        prev_action.triggered.connect(self.prev_image)
+        shortcuts_menu.addAction(prev_action)
+        
+        next_action = QAction('Next Image', self)
+        next_action.setShortcut('D')
+        next_action.triggered.connect(self.next_image)
+        shortcuts_menu.addAction(next_action)
+        
+        pan_action = QAction('Toggle Pan Mode', self)
+        pan_action.setShortcut('Space')
+        pan_action.triggered.connect(self.toggle_pan_mode)
+        shortcuts_menu.addAction(pan_action)
+        
+        zoom_in_shortcut = QAction('Zoom In', self)
+        zoom_in_shortcut.setShortcut('+')
+        zoom_in_shortcut.triggered.connect(self.zoom_in)
+        shortcuts_menu.addAction(zoom_in_shortcut)
+        
+        zoom_out_shortcut = QAction('Zoom Out', self)
+        zoom_out_shortcut.setShortcut('-')
+        zoom_out_shortcut.triggered.connect(self.zoom_out)
+        shortcuts_menu.addAction(zoom_out_shortcut)
+        
+        fit_shortcut = QAction('Fit to Window', self)
+        fit_shortcut.setShortcut('Ctrl+F')
+        fit_shortcut.triggered.connect(self.fit_to_window)
+        shortcuts_menu.addAction(fit_shortcut)
+        
+        shortcuts_menu.addSeparator()
+        
+        # Shape Tools Section
+        shape_title = shortcuts_menu.addAction('🖌️ SHAPE TOOLS')
+        shape_title.setEnabled(False)
+        shortcuts_menu.addSeparator()
+        
+        box_shortcut = QAction('Box Tool', self)
+        box_shortcut.setShortcut('B')
+        box_shortcut.triggered.connect(lambda: self.set_shape_type('box'))
+        shortcuts_menu.addAction(box_shortcut)
+        
+        polygon_shortcut = QAction('Polygon Tool', self)
+        polygon_shortcut.setShortcut('P')
+        polygon_shortcut.triggered.connect(lambda: self.set_shape_type('polygon'))
+        shortcuts_menu.addAction(polygon_shortcut)
+        
+        circle_shortcut = QAction('Circle Tool', self)
+        circle_shortcut.setShortcut('C')
+        circle_shortcut.triggered.connect(lambda: self.set_shape_type('circle'))
+        shortcuts_menu.addAction(circle_shortcut)
+        
+        ellipse_shortcut = QAction('Ellipse Tool', self)
+        ellipse_shortcut.setShortcut('E')
+        ellipse_shortcut.triggered.connect(lambda: self.set_shape_type('ellipse'))
+        shortcuts_menu.addAction(ellipse_shortcut)
+        
+        frame_shortcut = QAction('Frame Tool', self)
+        frame_shortcut.setShortcut('F')
+        frame_shortcut.triggered.connect(lambda: self.set_shape_type('frame'))
+        shortcuts_menu.addAction(frame_shortcut)
+        
+        donut_shortcut = QAction('Donut Tool', self)
+        donut_shortcut.setShortcut('O')
+        donut_shortcut.triggered.connect(lambda: self.set_shape_type('donut'))
+        shortcuts_menu.addAction(donut_shortcut)
+        
+        hollow_ellipse_shortcut = QAction('Hollow Ellipse Tool', self)
+        hollow_ellipse_shortcut.setShortcut('H')
+        hollow_ellipse_shortcut.triggered.connect(lambda: self.set_shape_type('hollow_ellipse'))
+        shortcuts_menu.addAction(hollow_ellipse_shortcut)
+        
+        none_shortcut = QAction('None (Selection Mode)', self)
+        none_shortcut.setShortcut('N')
+        none_shortcut.triggered.connect(lambda: self.set_shape_type(None))
+        shortcuts_menu.addAction(none_shortcut)
+        
+        finish_polygon_shortcut = QAction('Finish Polygon', self)
+        finish_polygon_shortcut.setShortcut('Enter')
+        finish_polygon_shortcut.triggered.connect(lambda: self.canvas.finish_polygon() if hasattr(self, 'canvas') else None)
+        shortcuts_menu.addAction(finish_polygon_shortcut)
+        
+        shortcuts_menu.addSeparator()
+        
+        # Editing Section
+        edit_title = shortcuts_menu.addAction('✏️ EDITING')
+        edit_title.setEnabled(False)
+        shortcuts_menu.addSeparator()
+        
+        delete_shortcut = QAction('Delete Selected', self)
+        delete_shortcut.setShortcut('Del')
+        delete_shortcut.triggered.connect(self.delete_selected)
+        shortcuts_menu.addAction(delete_shortcut)
+        
+        copy_shortcut = QAction('Copy', self)
+        copy_shortcut.setShortcut('Ctrl+C')
+        copy_shortcut.triggered.connect(self.copy_selected)
+        shortcuts_menu.addAction(copy_shortcut)
+        
+        paste_shortcut = QAction('Paste', self)
+        paste_shortcut.setShortcut('Ctrl+V')
+        paste_shortcut.triggered.connect(self.paste_shape)
+        shortcuts_menu.addAction(paste_shortcut)
+        
+        undo_shortcut = QAction('Undo', self)
+        undo_shortcut.setShortcut('Ctrl+Z')
+        undo_shortcut.triggered.connect(self.undo)
+        shortcuts_menu.addAction(undo_shortcut)
+        
+        redo_shortcut = QAction('Redo', self)
+        redo_shortcut.setShortcut('Ctrl+Y')
+        redo_shortcut.triggered.connect(self.redo)
+        shortcuts_menu.addAction(redo_shortcut)
+        
+        cancel_shortcut = QAction('Cancel Operation', self)
+        cancel_shortcut.setShortcut('Esc')
+        cancel_shortcut.triggered.connect(self.cancel_operation)
+        shortcuts_menu.addAction(cancel_shortcut)
+        
         # ===== HELP MENU =====
         help_menu = menubar.addMenu('&Help')
         
@@ -342,7 +474,6 @@ class MainWindow(QMainWindow):
     def setup_shortcut_bar(self):
         """Create horizontal shortcut bar below menu"""
         self.shortcut_bar = ShortcutBar()
-        # Add to main window layout (we'll add it in setup_central_widget)
         
     def setup_status_bar(self):
         """Create the status bar"""
@@ -376,7 +507,7 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         
-        # Main vertical layout (menu bar + shortcut bar + content)
+        # Main vertical layout
         main_vertical = QVBoxLayout(central)
         main_vertical.setContentsMargins(0, 0, 0, 0)
         main_vertical.setSpacing(0)
@@ -389,19 +520,20 @@ class MainWindow(QMainWindow):
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(0)
         
-        # ===== LEFT SIDEBAR - VERTICAL TOOLBAR (ICONS ONLY) =====
+        # ===== LEFT SIDEBAR - VERTICAL TOOLBAR =====
         left_toolbar = self.create_vertical_toolbar()
         left_toolbar.setFixedWidth(70)
         content_layout.addWidget(left_toolbar)
         
-        # ===== CENTER - CANVAS (70%) =====
+        # ===== CENTER - CANVAS =====
         self.canvas = AnnotationCanvas()
+        self.canvas.set_parent_window(self)  # IMPORTANT: Set parent reference
         self.canvas.set_class_manager(self.class_manager)
         self.canvas.position_changed.connect(self.update_position)
         self.canvas.shape_selected.connect(self.on_canvas_shape_selected)
         content_layout.addWidget(self.canvas, 7)  # 70% stretch factor
         
-        # ===== RIGHT PANEL - CLASSES + FILE BROWSER (20%) =====
+        # ===== RIGHT PANEL - CLASSES + FILE BROWSER =====
         right_panel = self.create_right_panel()
         right_panel.setFixedWidth(280)
         content_layout.addWidget(right_panel)
@@ -444,7 +576,6 @@ class MainWindow(QMainWindow):
         self.mode_btn_unet.clicked.connect(lambda: self.switch_mode('unet'))
         layout.addWidget(self.mode_btn_unet)
         
-        # Separator
         layout.addWidget(self.create_separator())
         
         # Shape tools section
@@ -464,34 +595,28 @@ class MainWindow(QMainWindow):
         self.shape_btn_circle = ToolButton("⭕", "Draw circles")
         self.shape_btn_circle.clicked.connect(lambda: self.set_shape_type('circle'))
         layout.addWidget(self.shape_btn_circle)
-
+        
         self.shape_btn_ellipse = ToolButton("🟢", "Draw ellipses")
         self.shape_btn_ellipse.clicked.connect(lambda: self.set_shape_type('ellipse'))
         layout.addWidget(self.shape_btn_ellipse)
+        
+        # Ring shapes
+        self.shape_btn_frame = ToolButton("▣", "Frame (hollow rectangle)")
+        self.shape_btn_frame.clicked.connect(lambda: self.set_shape_type('frame'))
+        layout.addWidget(self.shape_btn_frame)
+        
+        self.shape_btn_donut = ToolButton("◎", "Donut (hollow circle)")
+        self.shape_btn_donut.clicked.connect(lambda: self.set_shape_type('donut'))
+        layout.addWidget(self.shape_btn_donut)
+        
+        self.shape_btn_hollow_ellipse = ToolButton("⬬", "Hollow Ellipse (H)")
+        self.shape_btn_hollow_ellipse.clicked.connect(lambda: self.set_shape_type('hollow_ellipse'))
+        layout.addWidget(self.shape_btn_hollow_ellipse)
         
         self.shape_btn_none = ToolButton("🚫", "No shape selected")
         self.shape_btn_none.clicked.connect(lambda: self.set_shape_type(None))
         layout.addWidget(self.shape_btn_none)
         
-        # Separator
-        layout.addWidget(self.create_separator())
-        
-        # Edit tools section
-        edit_label = QLabel("EDIT")
-        edit_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(edit_label)
-        
-        btn_undo = ToolButton("↩", "Undo (Ctrl+Z)")
-        btn_undo.setCheckable(False)
-        btn_undo.clicked.connect(self.undo)
-        layout.addWidget(btn_undo)
-        
-        btn_redo = ToolButton("↪", "Redo (Ctrl+Y)")
-        btn_redo.setCheckable(False)
-        btn_redo.clicked.connect(self.redo)
-        layout.addWidget(btn_redo)
-        
-        # Separator
         layout.addWidget(self.create_separator())
         
         # View tools section
@@ -514,7 +639,6 @@ class MainWindow(QMainWindow):
         btn_fit.clicked.connect(self.fit_to_window)
         layout.addWidget(btn_fit)
         
-        # Separator
         layout.addWidget(self.create_separator())
         
         # Navigation section
@@ -532,7 +656,6 @@ class MainWindow(QMainWindow):
         btn_next.clicked.connect(self.next_image)
         layout.addWidget(btn_next)
         
-        # Stretch at bottom
         layout.addStretch()
         
         return toolbar_widget
@@ -578,10 +701,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(classes_label)
         
         self.class_panel = ClassPanel(self.class_manager)
-        # Make sure ClassPanel has proper styling (we'll update it separately)
         layout.addWidget(self.class_panel)
         
-        # Separator
         layout.addWidget(self.create_separator())
         
         # ===== IMAGE FILES SECTION =====
@@ -626,6 +747,9 @@ class MainWindow(QMainWindow):
             self.shape_btn_polygon.setChecked(shape_type == 'polygon')
             self.shape_btn_circle.setChecked(shape_type == 'circle')
             self.shape_btn_ellipse.setChecked(shape_type == 'ellipse')
+            self.shape_btn_frame.setChecked(shape_type == 'frame')
+            self.shape_btn_donut.setChecked(shape_type == 'donut')
+            self.shape_btn_hollow_ellipse.setChecked(shape_type == 'hollow_ellipse')
             self.shape_btn_none.setChecked(shape_type == 'none' or shape_type is None)
             
             if shape_type and shape_type != 'none':
@@ -633,37 +757,30 @@ class MainWindow(QMainWindow):
             else:
                 self.status_bar.showMessage("Selection mode - click on shapes to select them", 1000)
     
+    def on_class_selected(self, class_id):
+        """Handle class selection"""
+        cls = self.class_manager.get_class(class_id)
+        if cls:
+            self.status_bar.showMessage(f"Selected class: {cls.name}", 2000)
+    
     def on_canvas_shape_selected(self, shape_type):
         """Handle shape selection from canvas to update toolbar"""
-        # When a shape is selected (any shape), automatically switch to 'none' mode
-        # This prevents accidental drawing when trying to select shapes
+        # Always switch to 'none' mode when any shape is selected
+        self.shape_btn_box.setChecked(False)
+        self.shape_btn_polygon.setChecked(False)
+        self.shape_btn_circle.setChecked(False)
+        self.shape_btn_ellipse.setChecked(False)
+        self.shape_btn_frame.setChecked(False)
+        self.shape_btn_donut.setChecked(False)
+        self.shape_btn_hollow_ellipse.setChecked(False)
+        self.shape_btn_none.setChecked(True)
         
-        if shape_type == "none":
-            # No shape selected - just update button states
-            self.shape_btn_box.setChecked(False)
-            self.shape_btn_polygon.setChecked(False)
-            self.shape_btn_circle.setChecked(False)
-            self.shape_btn_ellipse.setChecked(False)
-            self.shape_btn_none.setChecked(True)
-            
-            # Update canvas to 'none' mode (selection only)
-            if hasattr(self, 'canvas'):
-                self.canvas.set_shape_type('none')
-        else:
-            # A shape was selected - switch to 'none' mode automatically
-            self.shape_btn_box.setChecked(False)
-            self.shape_btn_polygon.setChecked(False)
-            self.shape_btn_circle.setChecked(False)
-            self.shape_btn_ellipse.setChecked(False)  # ← THIS WAS MISSING
-            self.shape_btn_none.setChecked(True)
-            
-            # Update canvas to 'none' mode (selection only)
-            if hasattr(self, 'canvas'):
-                self.canvas.set_shape_type('none')
-            
-            # Show message to user
-            shape_name = shape_type.capitalize() if shape_type != "none" else "No shape"
-            self.status_bar.showMessage(f"{shape_name} selected - 'None' mode activated", 2000)
+        # Update canvas to 'none' mode
+        if hasattr(self, 'canvas'):
+            self.canvas.set_shape_type('none')
+        
+        if shape_type != "none":
+            self.status_bar.showMessage(f"{shape_type} selected - 'None' mode activated", 2000)
     
     def switch_mode(self, mode):
         """Switch between YOLO and U-Net modes"""
@@ -747,11 +864,15 @@ class MainWindow(QMainWindow):
         """Load next image"""
         if self.image_files and self.current_image_index < len(self.image_files) - 1:
             self.load_image(self.current_image_index + 1)
+        else:
+            self.status_bar.showMessage("Already at last image", 1000)
     
     def prev_image(self):
         """Load previous image"""
         if self.image_files and self.current_image_index > 0:
             self.load_image(self.current_image_index - 1)
+        else:
+            self.status_bar.showMessage("Already at first image", 1000)
     
     def update_image_counter(self):
         """Update the image counter in status bar"""
@@ -794,13 +915,27 @@ class MainWindow(QMainWindow):
     
     def undo(self):
         if hasattr(self, 'canvas'):
-            self.canvas.undo()  # You'll need to implement undo in canvas
+            self.canvas.undo()
         self.status_bar.showMessage("Undo", 1000)
     
     def redo(self):
         if hasattr(self, 'canvas'):
-            self.canvas.redo()  # You'll need to implement redo in canvas
+            self.canvas.redo()
         self.status_bar.showMessage("Redo", 1000)
+    
+    def toggle_pan_mode(self):
+        """Toggle pan mode in canvas"""
+        if hasattr(self, 'canvas'):
+            from PyQt5.QtCore import QEvent, QKeyEvent
+            event = QKeyEvent(QEvent.KeyPress, Qt.Key_Space, Qt.NoModifier)
+            self.canvas.keyPressEvent(event)
+
+    def cancel_operation(self):
+        """Cancel current operation in canvas"""
+        if hasattr(self, 'canvas'):
+            from PyQt5.QtCore import QEvent, QKeyEvent
+            event = QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier)
+            self.canvas.keyPressEvent(event)
     
     # ===== PROJECT METHODS =====
     def new_project(self):
