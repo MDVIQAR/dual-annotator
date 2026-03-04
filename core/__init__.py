@@ -5,3 +5,4 @@ from .polygon_shape import PolygonShape
 from .circle_shape import CircleShape
 from .ellipse_shape import EllipseShape
 from .ring_shape import FrameShape, DonutShape, HollowEllipseShape
+from .template_manager import TemplateManager
