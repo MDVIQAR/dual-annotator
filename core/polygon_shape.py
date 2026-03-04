@@ -10,6 +10,7 @@ class PolygonShape(Shape):
         super().__init__(class_id, image_size)
         self.type = 'polygon'
         self.points = points or []  # List of (x, y) tuples (normalized)
+        self.inner_points = []  # Inner cutout polygon (normalized), empty = solid
         self.closed = False
         self._resize_origin = None  # Store original points for resizing
         
@@ -22,6 +23,16 @@ class PolygonShape(Shape):
         self.points = []
         for px, py in pixel_points:
             self.points.append((px / self.image_width, py / self.image_height))
+    
+    def set_inner_from_pixels(self, pixel_points):
+        """Set inner cutout from pixel coordinates"""
+        self.inner_points = []
+        for px, py in pixel_points:
+            self.inner_points.append((px / self.image_width, py / self.image_height))
+    
+    def get_inner_pixel_points(self):
+        """Get inner cutout as pixel coordinates"""
+        return [(int(nx * self.image_width), int(ny * self.image_height)) for nx, ny in self.inner_points]
             
     def to_pixel_points(self):
         """Convert to pixel coordinates"""
@@ -65,19 +76,34 @@ class PolygonShape(Shape):
         for nx, ny in self.points:
             new_points.append((nx + dx, ny + dy))
         self.points = new_points
+        # Also move inner cutout
+        if self.inner_points:
+            new_inner = []
+            for nx, ny in self.inner_points:
+                new_inner.append((nx + dx, ny + dy))
+            self.inner_points = new_inner
         
     def get_resize_handles(self):
-        """Get all vertices as resize handles"""
+        """Get all vertices as resize handles, plus midpoint handles between edges"""
         pixel_points = self.to_pixel_points()
         handles = {}
+        # Vertex handles
         for i, (px, py) in enumerate(pixel_points):
             handles[f'vertex_{i}'] = (px, py)
+        # Midpoint handles (between consecutive vertices, including last→first if closed)
+        if self.closed and len(pixel_points) >= 3:
+            for i in range(len(pixel_points)):
+                j = (i + 1) % len(pixel_points)
+                mx = (pixel_points[i][0] + pixel_points[j][0]) // 2
+                my = (pixel_points[i][1] + pixel_points[j][1]) // 2
+                handles[f'mid_{i}'] = (mx, my)
         return handles
     
     def resize_from_handle(self, handle_name, dx, dy):
-        """Move a vertex - dx, dy are cumulative delta from resize start"""
+        """Move a vertex or midpoint - dx, dy are cumulative delta from resize start"""
         if self._resize_origin is None:
             return False
+        
         if handle_name.startswith('vertex_'):
             idx = int(handle_name.split('_')[1])
             if 0 <= idx < len(self._resize_origin):
@@ -87,10 +113,43 @@ class PolygonShape(Shape):
                     orig_ny + dy / self.image_height
                 )
                 return True
+        
+        elif handle_name.startswith('mid_'):
+            # Midpoint handle — this was converted to a vertex in begin_resize
+            # Find the actual vertex index for this midpoint
+            mid_idx = int(handle_name.split('_')[1])
+            # The inserted vertex is at position mid_idx + 1 + number of prior insertions
+            # But since we only insert once at begin_resize, the handle maps to
+            # the inserted index stored in _mid_vertex_idx
+            actual_idx = self._mid_vertex_idx
+            if actual_idx is not None and 0 <= actual_idx < len(self._resize_origin):
+                orig_nx, orig_ny = self._resize_origin[actual_idx]
+                self.points[actual_idx] = (
+                    orig_nx + dx / self.image_width,
+                    orig_ny + dy / self.image_height
+                )
+                return True
+        
         return False
     
-    def begin_resize(self):
-        """Store original points before resizing starts"""
+    def begin_resize(self, handle_name=None):
+        """Store original points before resizing starts.
+        If handle_name is a midpoint, insert a new vertex first."""
+        self._mid_vertex_idx = None
+        
+        if handle_name and handle_name.startswith('mid_'):
+            mid_idx = int(handle_name.split('_')[1])
+            insert_at = mid_idx + 1
+            
+            # Compute the midpoint in normalized coords
+            p1 = self.points[mid_idx]
+            p2 = self.points[(mid_idx + 1) % len(self.points)]
+            mid_point = ((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2)
+            
+            # Insert the new vertex
+            self.points.insert(insert_at, mid_point)
+            self._mid_vertex_idx = insert_at
+        
         self._resize_origin = list(self.points)
         return True
     
@@ -105,6 +164,7 @@ class PolygonShape(Shape):
             'type': 'polygon',
             'class_id': self.class_id,
             'points': self.points,
+            'inner_points': self.inner_points,
             'closed': self.closed
         }
     
@@ -118,4 +178,5 @@ class PolygonShape(Shape):
         )
         polygon.id = data['id']
         polygon.closed = data['closed']
+        polygon.inner_points = data.get('inner_points', [])
         return polygon
