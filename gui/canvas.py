@@ -1,5 +1,5 @@
 # gui/canvas.py
-from PyQt5.QtWidgets import QWidget, QApplication
+from PyQt5.QtWidgets import QWidget, QApplication, QMenu, QAction
 from PyQt5.QtCore import Qt, QPoint, pyqtSignal, QRect, QPointF, QTimer
 from PyQt5.QtGui import QPainter, QPixmap, QColor, QPen, QBrush, QFont, QPolygonF, QCursor
 import os
@@ -106,6 +106,12 @@ class AnnotationCanvas(QWidget):
         
         # Polygon drawing state
         self.drawing_polygon = False
+        self.drawing_inner_cutout = False  # Whether drawing inner cutout for hollow polygon
+        self.cutout_target_shape = None  # The polygon shape to add a cutout to
+        
+        # Pan mode
+        self.pan_mode = False
+        self.original_cursor = None
         
         # Ring drawing state
         self.drawing_ring = False
@@ -477,6 +483,8 @@ class AnnotationCanvas(QWidget):
     
     def draw_polygon(self, painter, polygon, color):
         """Draw a polygon shape with highlighting when selected"""
+        from PyQt5.QtGui import QPainterPath
+        
         points = polygon.to_pixel_points()
         
         # Convert to widget coordinates
@@ -488,23 +496,64 @@ class AnnotationCanvas(QWidget):
         
         # Set pen based on selection - YELLOW when selected
         if polygon.selected:
-            pen = QPen(QColor(255, 255, 0), 3)  # Yellow, thicker for selected
-            painter.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 80)))
+            pen = QPen(QColor(255, 255, 0), 3)
         else:
             pen = QPen(color, 2)
-            painter.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 50)))
         
         painter.setPen(pen)
         
-        # Draw polygon
-        poly = QPolygonF()
-        for point in widget_points:
-            poly.append(point)
-        
-        if len(poly) >= 3:
-            painter.drawPolygon(poly)
+        # Build outer polygon
+        if len(widget_points) >= 3:
+            outer_poly = QPolygonF(widget_points)
             
-            # Draw vertices for selected polygon
+            # Check if this is a hollow polygon (has inner cutout)
+            if polygon.inner_points:
+                inner_pixel = polygon.get_inner_pixel_points()
+                inner_widget = []
+                for px, py in inner_pixel:
+                    wx = int(px * self.scale + self.offset_x)
+                    wy = int(py * self.scale + self.offset_y)
+                    inner_widget.append(QPointF(wx, wy))
+                
+                if len(inner_widget) >= 3:
+                    # Use QPainterPath subtraction for hollow effect
+                    outer_path = QPainterPath()
+                    outer_path.addPolygon(outer_poly)
+                    outer_path.closeSubpath()
+                    
+                    inner_poly = QPolygonF(inner_widget)
+                    inner_path = QPainterPath()
+                    inner_path.addPolygon(inner_poly)
+                    inner_path.closeSubpath()
+                    
+                    hollow_path = outer_path.subtracted(inner_path)
+                    
+                    if polygon.selected:
+                        painter.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 80)))
+                    else:
+                        painter.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 50)))
+                    
+                    painter.drawPath(hollow_path)
+                    
+                    # Draw inner outline
+                    painter.setBrush(Qt.NoBrush)
+                    painter.drawPolygon(inner_poly)
+                else:
+                    # Fallback: just draw outer
+                    if polygon.selected:
+                        painter.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 80)))
+                    else:
+                        painter.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 50)))
+                    painter.drawPolygon(outer_poly)
+            else:
+                # Solid polygon (no inner cutout)
+                if polygon.selected:
+                    painter.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 80)))
+                else:
+                    painter.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 50)))
+                painter.drawPolygon(outer_poly)
+            
+            # Draw vertex handles for selected polygon
             if polygon.selected:
                 painter.setBrush(QBrush(QColor(255, 255, 255)))
                 painter.setPen(QPen(QColor(0, 0, 0), 1))
@@ -512,6 +561,19 @@ class AnnotationCanvas(QWidget):
                 half = self.handle_size // 2
                 for wx, wy in [(p.x(), p.y()) for p in widget_points]:
                     painter.drawRect(int(wx - half), int(wy - half), self.handle_size, self.handle_size)
+                
+                # Draw midpoint handles (smaller circles)
+                if polygon.closed and len(points) >= 3:
+                    painter.setBrush(QBrush(QColor(180, 180, 255)))
+                    painter.setPen(QPen(QColor(0, 0, 0), 1))
+                    mid_r = max(self.handle_size // 3, 4)
+                    for i in range(len(points)):
+                        j = (i + 1) % len(points)
+                        mx = (points[i][0] + points[j][0]) / 2
+                        my = (points[i][1] + points[j][1]) / 2
+                        wmx = int(mx * self.scale + self.offset_x)
+                        wmy = int(my * self.scale + self.offset_y)
+                        painter.drawEllipse(QPointF(wmx, wmy), mid_r, mid_r)
         
         # Draw class name if available
         if polygon.selected and self.class_manager and hasattr(polygon, 'class_id') and polygon.class_id:
@@ -942,7 +1004,12 @@ class AnnotationCanvas(QWidget):
                         
                         # Call begin_resize on the shape
                         if hasattr(self.selected_shape, 'begin_resize'):
-                            self.selected_shape.begin_resize()
+                            import inspect
+                            sig = inspect.signature(self.selected_shape.begin_resize)
+                            if len(sig.parameters) > 0:
+                                self.selected_shape.begin_resize(handle)
+                            else:
+                                self.selected_shape.begin_resize()
                         
                         return
                 
@@ -969,7 +1036,12 @@ class AnnotationCanvas(QWidget):
                         self.select_shape(event.pos())
                         return
                 
-                # THIRD: Handle drawing based on current tool
+                # THIRD: Handle inner cutout drawing (priority over tool selection)
+                if self.drawing_inner_cutout:
+                    self.start_polygon_drawing(event.pos())
+                    return
+                
+                # FOURTH: Handle drawing based on current tool
                 if self.current_shape_type and self.current_shape_type != 'none':
                     if self.current_shape_type == 'polygon':
                         self.start_polygon_drawing(event.pos())
@@ -1653,6 +1725,26 @@ class AnnotationCanvas(QWidget):
             # Check if we're in template drawing mode
             if self.current_shape_type == 'template':
                 self.finish_template()
+            elif self.drawing_inner_cutout and self.cutout_target_shape:
+                # OUTER DRAWING MODE: new polygon = outer, original = inner
+                self.save_state()
+                target = self.cutout_target_shape
+                
+                # Save original points as inner (the hole)
+                original_points = list(target.points)
+                
+                # Set new outer shape from the just-drawn polygon
+                target.from_pixel_points(self.polygon_points)
+                target.closed = True
+                
+                # Set original as inner cutout
+                target.inner_points = original_points
+                
+                print(f"✅ Hollow polygon created: outer={len(self.polygon_points)} pts, inner={len(original_points)} pts")
+                self.drawing_inner_cutout = False
+                self.cutout_target_shape = None
+                self.polygon_points = []
+                self.update()
             else:
                 # Create polygon shape
                 polygon = PolygonShape(
@@ -1801,6 +1893,8 @@ class AnnotationCanvas(QWidget):
     def cancel_polygon(self):
         """Cancel polygon drawing"""
         self.polygon_points = []
+        self.drawing_inner_cutout = False
+        self.cutout_target_shape = None
         print("❌ Polygon cancelled")
         self.update()
         
@@ -2155,3 +2249,130 @@ class AnnotationCanvas(QWidget):
         self.update()
         print(f"↪ Redo completed (undo: {len(self.undo_stack)}, redo: {len(self.redo_stack)})")
         return True
+    
+    # ==========================================
+    #  Right-click context menu
+    # ==========================================
+    
+    def contextMenuEvent(self, event):
+        """Show context menu on right-click"""
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #2b2b2b;
+                color: #ffffff;
+                border: 1px solid #3a3a3a;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 6px 20px;
+            }
+            QMenu::item:selected {
+                background-color: #3a5a8a;
+            }
+            QMenu::separator {
+                height: 1px;
+                background: #3a3a3a;
+                margin: 4px 8px;
+            }
+        """)
+        
+        # --- While drawing polygon ---
+        if self.polygon_points:
+            if len(self.polygon_points) > 1:
+                undo_pt = menu.addAction("⟲ Undo Last Point")
+                undo_pt.triggered.connect(self.undo_last_polygon_point)
+            
+            if len(self.polygon_points) >= 3:
+                finish = menu.addAction("✓ Finish Polygon (Enter)")
+                finish.triggered.connect(self.finish_polygon)
+            
+            cancel = menu.addAction("✗ Cancel Drawing (Esc)")
+            cancel.triggered.connect(self.cancel_polygon)
+            
+            menu.exec_(event.globalPos())
+            return
+        
+        # --- Shape selected ---
+        if self.selected_shape:
+            delete_act = menu.addAction("🗑 Delete Shape (Del)")
+            delete_act.triggered.connect(self.delete_selected)
+            
+            copy_act = menu.addAction("📋 Copy Shape (Ctrl+C)")
+            copy_act.triggered.connect(self.copy_selected)
+            
+            # Hollow shape options for polygons
+            if self.selected_shape.type == 'polygon':
+                menu.addSeparator()
+                if not self.selected_shape.inner_points:
+                    outer_act = menu.addAction("◎ Draw Outer Shape (make hollow)")
+                    outer_act.triggered.connect(self.start_outer_drawing)
+                else:
+                    remove_hollow = menu.addAction("⊘ Remove Hollow (make solid)")
+                    remove_hollow.triggered.connect(self.remove_inner_cutout)
+            
+            menu.addSeparator()
+        
+        # --- General actions ---
+        if self.clipboard_shape:
+            paste_act = menu.addAction("📋 Paste Shape (Ctrl+V)")
+            paste_act.triggered.connect(lambda: self.paste_at_cursor(event.pos()))
+        
+        if self.undo_stack:
+            undo_act = menu.addAction("⟲ Undo (Ctrl+Z)")
+            undo_act.triggered.connect(self.undo)
+        
+        if self.redo_stack:
+            redo_act = menu.addAction("⟳ Redo (Ctrl+Y)")
+            redo_act.triggered.connect(self.redo)
+        
+        if menu.actions():
+            menu.exec_(event.globalPos())
+    
+    def undo_last_polygon_point(self):
+        """Remove the last point added during polygon drawing"""
+        if self.polygon_points and len(self.polygon_points) > 1:
+            removed = self.polygon_points.pop()
+            print(f"⟲ Undid last polygon point: {removed}")
+            self.update()
+        elif self.polygon_points and len(self.polygon_points) == 1:
+            self.cancel_polygon()
+    
+    def start_outer_drawing(self):
+        """Start drawing outer shape for the selected polygon (to make it hollow).
+        The current polygon becomes the inner, and the new drawing becomes the outer."""
+        if self.selected_shape and self.selected_shape.type == 'polygon':
+            self.drawing_inner_cutout = True  # reuse the flag name
+            self.cutout_target_shape = self.selected_shape
+            self.polygon_points = []
+            # Deselect so we can draw around it
+            self.selected_shape.selected = False
+            self.selected_shape = None
+            print("✂ Draw outer shape around the polygon, then press Enter to finish")
+            self.update()
+    
+    def start_inner_cutout(self):
+        """Alias for backward compat"""
+        self.start_outer_drawing()
+    
+    def remove_inner_cutout(self):
+        """Remove hollow effect from selected polygon (make solid)"""
+        if self.selected_shape and self.selected_shape.type == 'polygon':
+            self.save_state()
+            self.selected_shape.inner_points = []
+            print("⊘ Hollow effect removed")
+            self.update()
+    
+    def paste_at_cursor(self, pos):
+        """Paste clipboard shape at cursor position"""
+        if self.clipboard_shape and self.pixmap and not self.pixmap.isNull():
+            image_x, image_y = self.widget_to_image(pos)
+            pasted = self.clipboard_shape.copy()
+            pasted.move(
+                (image_x / self.image_width) - pasted.x if hasattr(pasted, 'x') else 0,
+                (image_y / self.image_height) - pasted.y if hasattr(pasted, 'y') else 0
+            )
+            self.save_state()
+            self.shapes.append(pasted)
+            self.update()
+            print("📋 Shape pasted")

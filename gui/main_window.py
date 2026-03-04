@@ -1127,14 +1127,20 @@ class MainWindow(QMainWindow):
     def toggle_pan_mode(self):
         """Toggle pan mode in canvas"""
         if hasattr(self, 'canvas'):
-            from PyQt5.QtCore import QEvent, QKeyEvent
-            event = QKeyEvent(QEvent.KeyPress, Qt.Key_Space, Qt.NoModifier)
-            self.canvas.keyPressEvent(event)
+            self.canvas.pan_mode = not self.canvas.pan_mode
+            if self.canvas.pan_mode:
+                self.canvas.original_cursor = self.canvas.cursor()
+                self.canvas.setCursor(Qt.OpenHandCursor)
+                self.status_bar.showMessage("Pan mode ON", 2000)
+            else:
+                self.canvas.setCursor(self.canvas.original_cursor or Qt.ArrowCursor)
+                self.status_bar.showMessage("Pan mode OFF", 2000)
 
     def cancel_operation(self):
         """Cancel current operation in canvas"""
         if hasattr(self, 'canvas'):
-            from PyQt5.QtCore import QEvent, QKeyEvent
+            from PyQt5.QtGui import QKeyEvent
+            from PyQt5.QtCore import QEvent
             event = QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier)
             self.canvas.keyPressEvent(event)
     
