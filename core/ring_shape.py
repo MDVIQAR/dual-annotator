@@ -5,7 +5,7 @@ import copy
 from .shape_base import Shape
 
 class FrameShape(Shape):
-    """Hollow rectangle (frame) with wall thickness"""
+    """Hollow rectangle (frame) with per-side wall thickness"""
     
     def __init__(self, x=0.0, y=0.0, w=0.2, h=0.15, thickness=20.0, class_id=None, image_size=(1, 1)):
         super().__init__(class_id, image_size)
@@ -15,7 +15,12 @@ class FrameShape(Shape):
         self.y = y  # top edge (normalized)
         self.w = w  # width (normalized)
         self.h = h  # height (normalized)
-        self.thickness = thickness  # wall thickness in pixels
+        # 4-directional thickness (pixels)
+        self.t_top = thickness
+        self.t_right = thickness
+        self.t_bottom = thickness
+        self.t_left = thickness
+        self.thickness = thickness  # kept for backward compat
         self.selected = False
         self._resize_origin = None
         
@@ -37,11 +42,14 @@ class FrameShape(Shape):
     def get_inner_rect(self):
         """Get inner rectangle (hole) pixel coordinates"""
         x, y, w, h = self.to_pixels()
-        t = min(self.thickness, min(w, h) // 2 - 1)
-        ix = x + t
-        iy = y + t
-        iw = w - 2 * t
-        ih = h - 2 * t
+        t_top = min(self.t_top, h - 4)
+        t_bottom = min(self.t_bottom, h - t_top - 4)
+        t_left = min(self.t_left, w - 4)
+        t_right = min(self.t_right, w - t_left - 4)
+        ix = x + t_left
+        iy = y + t_top
+        iw = max(w - t_left - t_right, 4)
+        ih = max(h - t_top - t_bottom, 4)
         return ix, iy, iw, ih
     
     def contains_point(self, px, py):
@@ -63,7 +71,7 @@ class FrameShape(Shape):
         self.y = max(0, min(1 - self.h, self.y))
     
     def get_resize_handles(self):
-        """8 outer handles for resizing - returns list of tuples for drawing"""
+        """8 outer handles for resizing"""
         x, y, w, h = self.to_pixels()
         return [
             (x, y),           # 0 TL
@@ -77,13 +85,13 @@ class FrameShape(Shape):
         ]
     
     def get_inner_handles(self):
-        """4 inner handles for thickness adjustment - returns list of tuples"""
+        """4 inner handles for thickness adjustment"""
         ix, iy, iw, ih = self.get_inner_rect()
         return [
-            (ix + iw//2, iy),      # top
-            (ix + iw, iy + ih//2), # right
-            (ix + iw//2, iy + ih), # bottom
-            (ix, iy + ih//2),      # left
+            (ix + iw//2, iy),      # 0 top
+            (ix + iw, iy + ih//2), # 1 right
+            (ix + iw//2, iy + ih), # 2 bottom
+            (ix, iy + ih//2),      # 3 left
         ]
     
     def get_handle_at_pos(self, px, py, handle_size=14):
@@ -102,65 +110,76 @@ class FrameShape(Shape):
     
     def resize_from_handle(self, handle_name, dx, dy):
         """Resize from handle - dx, dy are cumulative delta from resize start"""
-        # Must have _resize_origin set by begin_resize()
         if self._resize_origin is None:
             return False
         
         orig_x, orig_y, orig_w, orig_h = self._resize_origin
         min_size = 20
         
-        # Parse handle info
         if isinstance(handle_name, tuple):
             handle_type, idx = handle_name
         else:
             return False
         
         if handle_type == 'outer':
-            # Start from ORIGINAL geometry (not current) to prevent compounding
+            # Compute original inner rect position (before any resize)
+            orig_inner_left = orig_x + self._orig_t_left
+            orig_inner_top = orig_y + self._orig_t_top
+            orig_inner_right = orig_x + orig_w - self._orig_t_right
+            orig_inner_bottom = orig_y + orig_h - self._orig_t_bottom
+            
             new_x, new_y = orig_x, orig_y
             new_w, new_h = orig_w, orig_h
             
-            # Handle index mapping from get_resize_handles():
             # 0:TL  1:TC  2:TR  3:ML  4:MR  5:BL  6:BC  7:BR
-            if idx in [0, 3, 5]:  # left side handles (TL, ML, BL)
+            if idx in [0, 3, 5]:  # left side
                 new_x = orig_x + dx
                 new_w = orig_w - dx
-            if idx in [2, 4, 7]:  # right side handles (TR, MR, BR)
+            if idx in [2, 4, 7]:  # right side
                 new_w = orig_w + dx
-            if idx in [0, 1, 2]:  # top side handles (TL, TC, TR)
+            if idx in [0, 1, 2]:  # top side
                 new_y = orig_y + dy
                 new_h = orig_h - dy
-            if idx in [5, 6, 7]:  # bottom side handles (BL, BC, BR)
+            if idx in [5, 6, 7]:  # bottom side
                 new_h = orig_h + dy
             
             if new_w < min_size or new_h < min_size:
                 return False
             
+            # Update outer
             self.x = new_x / self.image_width
             self.y = new_y / self.image_height
             self.w = new_w / self.image_width
             self.h = new_h / self.image_height
+            
+            # Recalculate thicknesses to keep inner rect at original position
+            self.t_left = max(2, orig_inner_left - new_x)
+            self.t_top = max(2, orig_inner_top - new_y)
+            self.t_right = max(2, (new_x + new_w) - orig_inner_right)
+            self.t_bottom = max(2, (new_y + new_h) - orig_inner_bottom)
             return True
             
         elif handle_type == 'inner':
-            # Use original thickness from _resize_origin to prevent compounding
-            orig_x, orig_y, orig_w, orig_h = self._resize_origin
-            orig_thickness = self._resize_orig_thickness
-            
-            new_t = orig_thickness
-            if idx == 0:  # top handle - dragging down increases thickness
-                new_t = orig_thickness + dy
-            elif idx == 1:  # right handle - dragging left increases thickness
-                new_t = orig_thickness - dx
-            elif idx == 2:  # bottom handle - dragging up increases thickness
-                new_t = orig_thickness - dy
-            elif idx == 3:  # left handle - dragging right increases thickness
-                new_t = orig_thickness + dx
-            
-            # Use current outer dimensions for max thickness
+            # Each handle controls its own side's thickness
+            orig_t_top = self._orig_t_top
+            orig_t_right = self._orig_t_right
+            orig_t_bottom = self._orig_t_bottom
+            orig_t_left = self._orig_t_left
             x, y, w, h = self.to_pixels()
-            max_t = min(w, h) // 2 - 2
-            self.thickness = max(4, min(new_t, max_t))
+            
+            if idx == 0:  # top handle - dragging down increases top thickness
+                new_t = orig_t_top + dy
+                self.t_top = max(2, min(new_t, h - self.t_bottom - 4))
+            elif idx == 1:  # right handle - dragging left increases right thickness
+                new_t = orig_t_right - dx
+                self.t_right = max(2, min(new_t, w - self.t_left - 4))
+            elif idx == 2:  # bottom handle - dragging up increases bottom thickness
+                new_t = orig_t_bottom - dy
+                self.t_bottom = max(2, min(new_t, h - self.t_top - 4))
+            elif idx == 3:  # left handle - dragging right increases left thickness
+                new_t = orig_t_left + dx
+                self.t_left = max(2, min(new_t, w - self.t_right - 4))
+            
             return True
         
         return False
@@ -168,7 +187,10 @@ class FrameShape(Shape):
     def begin_resize(self):
         """Store original geometry before resizing starts"""
         self._resize_origin = self.to_pixels()
-        self._resize_orig_thickness = self.thickness
+        self._orig_t_top = self.t_top
+        self._orig_t_right = self.t_right
+        self._orig_t_bottom = self.t_bottom
+        self._orig_t_left = self.t_left
         return True
     
     def copy(self):
@@ -180,6 +202,10 @@ class FrameShape(Shape):
             class_id=self.class_id,
             image_size=(self.image_width, self.image_height)
         )
+        new.t_top = self.t_top
+        new.t_right = self.t_right
+        new.t_bottom = self.t_bottom
+        new.t_left = self.t_left
         new.id = str(uuid.uuid4())[:8]
         new.selected = self.selected
         return new
@@ -306,9 +332,8 @@ class DonutShape(Shape):
             # New radius = distance from center to new handle position
             new_r = math.sqrt((new_hx - orig_cx)**2 + (new_hy - orig_cy)**2)
             
-            # Get current inner radius for min constraint
-            _, _, _, current_inner_r = self.to_pixels()
-            min_r = current_inner_r + 10
+            # Use ORIGINAL inner radius for min constraint
+            min_r = orig_inner_r + 2
             if new_r >= min_r:
                 self.outer_r = new_r / d
                 return True
@@ -333,9 +358,8 @@ class DonutShape(Shape):
             # New radius = distance from center to new handle position
             new_r = math.sqrt((new_hx - orig_cx)**2 + (new_hy - orig_cy)**2)
             
-            # Get current outer radius for max constraint
-            _, _, current_outer_r, _ = self.to_pixels()
-            max_r = current_outer_r - 10
+            # Use ORIGINAL outer radius for max constraint
+            max_r = orig_outer_r - 2
             if new_r <= max_r and new_r >= 5:
                 self.inner_r = new_r / d
                 return True
@@ -484,10 +508,9 @@ class HollowEllipseShape(Shape):
             else:
                 return False
             
-            # Get current inner for min constraint
-            _, _, _, _, cur_irx, cur_iry = self.to_pixels()
-            min_rx = cur_irx + 10
-            min_ry = cur_iry + 10
+            # Use ORIGINAL inner for min constraint
+            min_rx = orig_irx + 2
+            min_ry = orig_iry + 2
             
             if new_orx >= min_rx:
                 self.outer_rx = new_orx / self.image_width
@@ -510,10 +533,9 @@ class HollowEllipseShape(Shape):
             else:
                 return False
             
-            # Get current outer for max constraint
-            _, _, cur_orx, cur_ory, _, _ = self.to_pixels()
-            max_rx = cur_orx - 10
-            max_ry = cur_ory - 10
+            # Use ORIGINAL outer for max constraint
+            max_rx = orig_orx - 2
+            max_ry = orig_ory - 2
             
             if new_irx <= max_rx and new_irx >= 5:
                 self.inner_rx = new_irx / self.image_width

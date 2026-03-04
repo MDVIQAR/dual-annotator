@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
     QComboBox, QFrame, QPushButton, QShortcut
 )
 from PyQt5.QtCore import Qt, QSize, pyqtSignal
-from PyQt5.QtGui import QIcon, QKeySequence, QFont, QColor, QPalette
+from PyQt5.QtGui import QIcon, QKeySequence, QFont, QColor, QPalette, QPolygonF
 import os
 
 from gui.canvas import AnnotationCanvas
@@ -15,9 +15,10 @@ from gui.class_panel import ClassPanel
 from core.class_manager import ClassManager
 
 class ToolButton(QPushButton):
-    """Custom tool button for vertical toolbar with icon only"""
-    def __init__(self, icon_text, tooltip=None):
-        super().__init__(icon_text)
+    """Custom tool button with QPainter-drawn icons for consistency"""
+    def __init__(self, icon_name, tooltip=None):
+        super().__init__("")
+        self.icon_name = icon_name
         self.setFixedSize(50, 50)
         self.setCheckable(True)
         self.setToolTip(tooltip or "")
@@ -27,8 +28,6 @@ class ToolButton(QPushButton):
                 color: #ffffff;
                 border: 1px solid #3a3a3a;
                 border-radius: 5px;
-                font-size: 20px;
-                font-weight: bold;
                 padding: 5px;
             }
             QPushButton:hover {
@@ -49,6 +48,135 @@ class ToolButton(QPushButton):
                 border: 1px solid #2a2a2a;
             }
         """)
+    
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        from PyQt5.QtGui import QPainter, QPen, QBrush, QPainterPath
+        from PyQt5.QtCore import QRectF, QPointF
+        
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        
+        # All icons: white lines, 2px, on the button center
+        pen = QPen(QColor(220, 220, 220), 2)
+        if self.isChecked():
+            pen = QPen(QColor(138, 180, 248), 2)  # blue when checked
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        
+        cx, cy = self.width() // 2, self.height() // 2
+        s = 12  # half-size of icon area
+        name = self.icon_name
+        
+        if name == "box":
+            painter.drawRect(cx - s, cy - s, s * 2, int(s * 1.4))
+        
+        elif name == "polygon":
+            pts = [QPointF(cx, cy - s), QPointF(cx + s, cy - 2),
+                   QPointF(cx + 7, cy + s), QPointF(cx - 7, cy + s),
+                   QPointF(cx - s, cy - 2)]
+            painter.drawPolygon(QPolygonF(pts))
+        
+        elif name == "circle":
+            painter.drawEllipse(QPointF(cx, cy), s, s)
+        
+        elif name == "ellipse":
+            painter.drawEllipse(QPointF(cx, cy), s, int(s * 0.65))
+        
+        elif name == "frame":
+            # Outer rect
+            painter.drawRect(cx - s, cy - s, s * 2, s * 2)
+            # Inner rect (smaller)
+            i = 5
+            painter.drawRect(cx - s + i, cy - s + i, s * 2 - i * 2, s * 2 - i * 2)
+        
+        elif name == "donut":
+            painter.drawEllipse(QPointF(cx, cy), s, s)
+            painter.drawEllipse(QPointF(cx, cy), s * 0.5, s * 0.5)
+        
+        elif name == "hollow_ellipse":
+            painter.drawEllipse(QPointF(cx, cy), s, int(s * 0.65))
+            painter.drawEllipse(QPointF(cx, cy), s * 0.5, int(s * 0.65 * 0.5))
+        
+        elif name == "none":
+            # Arrow cursor icon
+            path = QPainterPath()
+            path.moveTo(cx - 6, cy - s)
+            path.lineTo(cx - 6, cy + 8)
+            path.lineTo(cx - 1, cy + 3)
+            path.lineTo(cx + 5, cy + 10)
+            path.lineTo(cx + 8, cy + 7)
+            path.lineTo(cx + 2, cy + 0)
+            path.lineTo(cx + 7, cy - 3)
+            path.closeSubpath()
+            painter.setBrush(QBrush(pen.color()))
+            painter.drawPath(path)
+        
+        elif name == "template":
+            # Scissors icon — two overlapping circles + lines
+            painter.drawLine(cx - 4, cy - s, cx + 4, cy + 2)
+            painter.drawLine(cx + 4, cy - s, cx - 4, cy + 2)
+            painter.drawEllipse(QPointF(cx - 5, cy + 7), 5, 5)
+            painter.drawEllipse(QPointF(cx + 5, cy + 7), 5, 5)
+        
+        elif name == "yolo":
+            # Grid/detection icon — rectangle with crosshair
+            painter.drawRect(cx - s, cy - s + 2, s * 2, s * 2 - 4)
+            painter.drawLine(cx, cy - s + 2, cx, cy + s - 2)
+            painter.drawLine(cx - s, cy, cx + s, cy)
+        
+        elif name == "unet":
+            # Mask/segmentation icon — filled blob
+            path = QPainterPath()
+            path.addEllipse(QPointF(cx - 3, cy - 2), 8, 10)
+            path.addEllipse(QPointF(cx + 4, cy + 1), 6, 7)
+            painter.setBrush(QBrush(QColor(pen.color().red(), pen.color().green(), pen.color().blue(), 60)))
+            painter.drawPath(path)
+        
+        elif name == "zoom_in":
+            # Magnifying glass with +
+            painter.drawEllipse(QPointF(cx - 2, cy - 2), 8, 8)
+            painter.drawLine(cx + 4, cy + 4, cx + s, cy + s)
+            painter.drawLine(cx - 6, cy - 2, cx + 2, cy - 2)
+            painter.drawLine(cx - 2, cy - 6, cx - 2, cy + 2)
+        
+        elif name == "zoom_out":
+            # Magnifying glass with -
+            painter.drawEllipse(QPointF(cx - 2, cy - 2), 8, 8)
+            painter.drawLine(cx + 4, cy + 4, cx + s, cy + s)
+            painter.drawLine(cx - 6, cy - 2, cx + 2, cy - 2)
+        
+        elif name == "fit":
+            # Four corners expanding
+            c = 5
+            # Top-left corner
+            painter.drawLine(cx - s, cy - s, cx - s + c, cy - s)
+            painter.drawLine(cx - s, cy - s, cx - s, cy - s + c)
+            # Top-right
+            painter.drawLine(cx + s, cy - s, cx + s - c, cy - s)
+            painter.drawLine(cx + s, cy - s, cx + s, cy - s + c)
+            # Bottom-left
+            painter.drawLine(cx - s, cy + s, cx - s + c, cy + s)
+            painter.drawLine(cx - s, cy + s, cx - s, cy + s - c)
+            # Bottom-right
+            painter.drawLine(cx + s, cy + s, cx + s - c, cy + s)
+            painter.drawLine(cx + s, cy + s, cx + s, cy + s - c)
+        
+        elif name == "prev":
+            # Left arrow
+            painter.drawLine(cx + 5, cy - s + 2, cx - 5, cy)
+            painter.drawLine(cx - 5, cy, cx + 5, cy + s - 2)
+        
+        elif name == "next":
+            # Right arrow
+            painter.drawLine(cx - 5, cy - s + 2, cx + 5, cy)
+            painter.drawLine(cx + 5, cy, cx - 5, cy + s - 2)
+        
+        else:
+            # Fallback: draw the text
+            painter.drawText(self.rect(), Qt.AlignCenter, name)
+        
+        painter.end()
 
 class ShortcutBar(QFrame):
     """Horizontal bar showing keyboard shortcuts"""
@@ -147,7 +275,7 @@ class MainWindow(QMainWindow):
         
         # Set keyboard shortcuts for navigation
         QShortcut(QKeySequence('A'), self, self.prev_image)
-        QShortcut(QKeySequence('D'), self, self.next_image)
+        QShortcut(QKeySequence('D'), self, self.next_image)   
         
     def set_dark_theme(self):
         """Set dark theme for the application"""
@@ -417,6 +545,11 @@ class MainWindow(QMainWindow):
         hollow_ellipse_shortcut.triggered.connect(lambda: self.set_shape_type('hollow_ellipse'))
         shortcuts_menu.addAction(hollow_ellipse_shortcut)
         
+        template_shortcut = QAction('Template Tool', self)
+        template_shortcut.setShortcut('T')
+        template_shortcut.triggered.connect(lambda: self.set_shape_type('template'))
+        shortcuts_menu.addAction(template_shortcut)
+        
         none_shortcut = QAction('None (Selection Mode)', self)
         none_shortcut.setShortcut('N')
         none_shortcut.triggered.connect(lambda: self.set_shape_type(None))
@@ -567,12 +700,12 @@ class MainWindow(QMainWindow):
         mode_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(mode_label)
         
-        self.mode_btn_yolo = ToolButton("🎯", "YOLO Detection Mode")
+        self.mode_btn_yolo = ToolButton("yolo", "YOLO Detection Mode")
         self.mode_btn_yolo.setChecked(True)
         self.mode_btn_yolo.clicked.connect(lambda: self.switch_mode('yolo'))
         layout.addWidget(self.mode_btn_yolo)
         
-        self.mode_btn_unet = ToolButton("🔬", "U-Net Segmentation Mode")
+        self.mode_btn_unet = ToolButton("unet", "U-Net Segmentation Mode")
         self.mode_btn_unet.clicked.connect(lambda: self.switch_mode('unet'))
         layout.addWidget(self.mode_btn_unet)
         
@@ -583,39 +716,74 @@ class MainWindow(QMainWindow):
         shape_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(shape_label)
         
-        self.shape_btn_box = ToolButton("⬜", "Draw bounding boxes")
+        self.shape_btn_box = ToolButton("box", "Box (B)")
         self.shape_btn_box.setChecked(True)
         self.shape_btn_box.clicked.connect(lambda: self.set_shape_type('box'))
         layout.addWidget(self.shape_btn_box)
         
-        self.shape_btn_polygon = ToolButton("🔷", "Draw polygons")
+        self.shape_btn_polygon = ToolButton("polygon", "Polygon (P)")
         self.shape_btn_polygon.clicked.connect(lambda: self.set_shape_type('polygon'))
         layout.addWidget(self.shape_btn_polygon)
         
-        self.shape_btn_circle = ToolButton("⭕", "Draw circles")
+        self.shape_btn_circle = ToolButton("circle", "Circle (C)")
         self.shape_btn_circle.clicked.connect(lambda: self.set_shape_type('circle'))
         layout.addWidget(self.shape_btn_circle)
         
-        self.shape_btn_ellipse = ToolButton("🟢", "Draw ellipses")
+        self.shape_btn_ellipse = ToolButton("ellipse", "Ellipse (E)")
         self.shape_btn_ellipse.clicked.connect(lambda: self.set_shape_type('ellipse'))
         layout.addWidget(self.shape_btn_ellipse)
         
         # Ring shapes
-        self.shape_btn_frame = ToolButton("▣", "Frame (hollow rectangle)")
+        self.shape_btn_frame = ToolButton("frame", "Frame (F)")
         self.shape_btn_frame.clicked.connect(lambda: self.set_shape_type('frame'))
         layout.addWidget(self.shape_btn_frame)
         
-        self.shape_btn_donut = ToolButton("◎", "Donut (hollow circle)")
+        self.shape_btn_donut = ToolButton("donut", "Donut (O)")
         self.shape_btn_donut.clicked.connect(lambda: self.set_shape_type('donut'))
         layout.addWidget(self.shape_btn_donut)
         
-        self.shape_btn_hollow_ellipse = ToolButton("⬬", "Hollow Ellipse (H)")
+        self.shape_btn_hollow_ellipse = ToolButton("hollow_ellipse", "Hollow Ellipse (H)")
         self.shape_btn_hollow_ellipse.clicked.connect(lambda: self.set_shape_type('hollow_ellipse'))
         layout.addWidget(self.shape_btn_hollow_ellipse)
         
-        self.shape_btn_none = ToolButton("🚫", "No shape selected")
+        self.shape_btn_none = ToolButton("none", "Selection (N)")
         self.shape_btn_none.clicked.connect(lambda: self.set_shape_type(None))
         layout.addWidget(self.shape_btn_none)
+        
+        layout.addWidget(self.create_separator())
+        
+        # Template section
+        template_label = QLabel("TEMPLATE")
+        template_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(template_label)
+        
+        self.shape_btn_template = ToolButton("template", "Template (T)")
+        self.shape_btn_template.clicked.connect(lambda: self.set_shape_type('template'))
+        layout.addWidget(self.shape_btn_template)
+        
+        # Template dropdown
+        self.template_combo = QComboBox()
+        self.template_combo.setStyleSheet("""
+            QComboBox {
+                background-color: #2b2b2b;
+                color: #ffffff;
+                border: 1px solid #3a3a3a;
+                border-radius: 3px;
+                padding: 4px;
+                font-size: 11px;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #2b2b2b;
+                color: #ffffff;
+                selection-background-color: #3a5a8a;
+            }
+        """)
+        self.template_combo.addItem("-- No template --")
+        self.template_combo.currentIndexChanged.connect(self.on_template_selected)
+        layout.addWidget(self.template_combo)
         
         layout.addWidget(self.create_separator())
         
@@ -624,17 +792,17 @@ class MainWindow(QMainWindow):
         view_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(view_label)
         
-        btn_zoom_in = ToolButton("➕", "Zoom In (+)")
+        btn_zoom_in = ToolButton("zoom_in", "Zoom In (+)")
         btn_zoom_in.setCheckable(False)
         btn_zoom_in.clicked.connect(self.zoom_in)
         layout.addWidget(btn_zoom_in)
         
-        btn_zoom_out = ToolButton("➖", "Zoom Out (-)")
+        btn_zoom_out = ToolButton("zoom_out", "Zoom Out (-)")
         btn_zoom_out.setCheckable(False)
         btn_zoom_out.clicked.connect(self.zoom_out)
         layout.addWidget(btn_zoom_out)
         
-        btn_fit = ToolButton("⬜", "Fit to Window (Ctrl+F)")
+        btn_fit = ToolButton("fit", "Fit to Window (Ctrl+F)")
         btn_fit.setCheckable(False)
         btn_fit.clicked.connect(self.fit_to_window)
         layout.addWidget(btn_fit)
@@ -646,12 +814,12 @@ class MainWindow(QMainWindow):
         nav_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(nav_label)
         
-        btn_prev = ToolButton("◀", "Previous Image (A)")
+        btn_prev = ToolButton("prev", "Previous Image (A)")
         btn_prev.setCheckable(False)
         btn_prev.clicked.connect(self.prev_image)
         layout.addWidget(btn_prev)
         
-        btn_next = ToolButton("▶", "Next Image (D)")
+        btn_next = ToolButton("next", "Next Image (D)")
         btn_next.setCheckable(False)
         btn_next.clicked.connect(self.next_image)
         layout.addWidget(btn_next)
@@ -750,12 +918,44 @@ class MainWindow(QMainWindow):
             self.shape_btn_frame.setChecked(shape_type == 'frame')
             self.shape_btn_donut.setChecked(shape_type == 'donut')
             self.shape_btn_hollow_ellipse.setChecked(shape_type == 'hollow_ellipse')
+            self.shape_btn_template.setChecked(shape_type == 'template')
             self.shape_btn_none.setChecked(shape_type == 'none' or shape_type is None)
             
             if shape_type and shape_type != 'none':
                 self.status_bar.showMessage(f"Drawing tool: {shape_type}", 1000)
             else:
                 self.status_bar.showMessage("Selection mode - click on shapes to select them", 1000)
+    
+    def update_template_dropdown(self):
+        """Refresh the template dropdown from canvas template_manager"""
+        if not hasattr(self, 'canvas') or not hasattr(self.canvas, 'template_manager'):
+            return
+        
+        self.template_combo.blockSignals(True)
+        self.template_combo.clear()
+        self.template_combo.addItem("-- No template --")
+        
+        for name in self.canvas.template_manager.list_templates():
+            self.template_combo.addItem(f"📋 {name}")
+        
+        self.template_combo.blockSignals(False)
+    
+    def on_template_selected(self, index):
+        """Handle template selection from dropdown"""
+        if index <= 0:
+            # "No template" selected
+            if hasattr(self, 'canvas'):
+                self.canvas.stamp_template_name = None
+            return
+        
+        # Get template name (strip emoji prefix)
+        text = self.template_combo.currentText()
+        name = text.replace("📋 ", "")
+        
+        if hasattr(self, 'canvas'):
+            self.canvas.stamp_template_name = name
+            self.set_shape_type('stamp')
+            self.status_bar.showMessage(f"Stamp mode: '{name}' — click center + drag to scale", 3000)
     
     def on_class_selected(self, class_id):
         """Handle class selection"""
@@ -773,6 +973,7 @@ class MainWindow(QMainWindow):
         self.shape_btn_frame.setChecked(False)
         self.shape_btn_donut.setChecked(False)
         self.shape_btn_hollow_ellipse.setChecked(False)
+        self.shape_btn_template.setChecked(False)
         self.shape_btn_none.setChecked(True)
         
         # Update canvas to 'none' mode

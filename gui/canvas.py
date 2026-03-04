@@ -10,6 +10,7 @@ from core.polygon_shape import PolygonShape
 from core.circle_shape import CircleShape
 from core.ellipse_shape import EllipseShape
 from core.ring_shape import FrameShape, DonutShape, HollowEllipseShape
+from core.template_manager import TemplateManager
 
 class AnnotationCanvas(QWidget):
     """Canvas widget for displaying images and annotations"""
@@ -47,6 +48,13 @@ class AnnotationCanvas(QWidget):
         self.hollow_ellipse_center = None  # Center point for hollow ellipse drawing
         self.hollow_ellipse_rx = 0  # Horizontal radius for hollow ellipse
         self.hollow_ellipse_ry = 0  # Vertical radius for hollow ellipse
+        
+        # Template/Stamp variables
+        self.template_manager = TemplateManager()
+        self.stamping = False  # Whether we're placing a stamp
+        self.stamp_template_name = None  # Currently selected template
+        self.stamp_center = None  # Click point for stamp placement (image coords)
+        self.stamp_current_pos = None  # Current mouse pos during stamp drag
         
         # View parameters
         self.scale = 1.0
@@ -356,6 +364,10 @@ class AnnotationCanvas(QWidget):
             # Draw hollow ellipse preview if drawing
             if hasattr(self, 'hollow_ellipse_center') and self.hollow_ellipse_center and self.hollow_ellipse_rx > 0:
                 self.draw_hollow_ellipse_preview(painter)
+            
+            # Draw stamp preview if stamping
+            if hasattr(self, 'stamping') and self.stamping and self.stamp_center and self.stamp_current_pos:
+                self.draw_stamp_preview(painter)
                 
         # Draw mode indicator
         painter.setPen(QPen(QColor(200, 200, 200), 1))
@@ -973,6 +985,10 @@ class AnnotationCanvas(QWidget):
                         self.start_donut_drawing(event.pos())
                     elif self.current_shape_type == 'hollow_ellipse':
                         self.start_hollow_ellipse_drawing(event.pos())
+                    elif self.current_shape_type == 'template':
+                        self.start_polygon_drawing(event.pos())  # reuse polygon flow
+                    elif self.current_shape_type == 'stamp':
+                        self.start_stamp(event.pos())
                 else:
                     # No tool selected, just click on empty area (deselect)
                     self.select_shape(event.pos())
@@ -1021,6 +1037,11 @@ class AnnotationCanvas(QWidget):
         elif self.current_shape_type == 'hollow_ellipse' and hasattr(self, 'hollow_ellipse_center') and self.hollow_ellipse_center:
             self.update_hollow_ellipse_drawing(event.pos())
         
+        # Handle stamp placement
+        elif self.stamping and self.stamp_center:
+            self.stamp_current_pos = self.widget_to_image(event.pos())
+            self.update()
+        
         # Handle resizing - with reduced sensitivity
         elif self.resizing and self.resizing_handle and self.selected_shape:
             current_pos = self.widget_to_image(event.pos())
@@ -1056,6 +1077,8 @@ class AnnotationCanvas(QWidget):
                 self.finish_donut()
             elif self.current_shape_type == 'hollow_ellipse' and hasattr(self, 'hollow_ellipse_center') and self.hollow_ellipse_center:
                 self.finish_hollow_ellipse()
+            elif self.stamping and self.stamp_center:
+                self.finish_stamp()
             elif self.resizing:
                 self.resizing = False
                 self.resizing_handle = None
@@ -1158,6 +1181,12 @@ class AnnotationCanvas(QWidget):
             if hasattr(self, 'parent_window') and self.parent_window:
                 self.parent_window.set_shape_type('hollow_ellipse')
             print("🔷 Hollow Ellipse tool selected")
+            return
+        
+        elif key_text == 'T':
+            if hasattr(self, 'parent_window') and self.parent_window:
+                self.parent_window.set_shape_type('template')
+            print("🔷 Template drawing mode")
             return
         
         # ===== NAVIGATION =====
@@ -1264,6 +1293,9 @@ class AnnotationCanvas(QWidget):
         self.hollow_ellipse_center = None
         self.hollow_ellipse_rx = 0
         self.hollow_ellipse_ry = 0
+        self.stamping = False
+        self.stamp_center = None
+        self.stamp_current_pos = None
         self.drawing_polygon = False
         
         # Ring states
@@ -1603,15 +1635,13 @@ class AnnotationCanvas(QWidget):
                 self.polygon_points = [(image_x, image_y)]
                 print(f"🔷 Started polygon at ({image_x}, {image_y})")
             else:
-                # Check if we're clicking near the first point to close the polygon
+                # Check if clicking near the first point to close
                 first_x, first_y = self.polygon_points[0]
                 distance = math.sqrt((image_x - first_x)**2 + (image_y - first_y)**2)
                 
-                # If close to first point, finish the polygon
-                if distance < 20 and len(self.polygon_points) >= 3:
+                if distance < 10 and len(self.polygon_points) >= 3:
                     self.finish_polygon()
                 else:
-                    # Add point to existing polygon
                     self.polygon_points.append((image_x, image_y))
                     print(f"🔷 Added polygon point ({image_x}, {image_y})")
             
@@ -1620,20 +1650,153 @@ class AnnotationCanvas(QWidget):
     def finish_polygon(self):
         """Finish drawing polygon"""
         if len(self.polygon_points) >= 3:
-            # Create polygon shape
-            polygon = PolygonShape(
-                class_id=self.class_manager.get_current_class().id,
-                image_size=(self.image_width, self.image_height)
-            )
-            polygon.from_pixel_points(self.polygon_points)
-            polygon.close_polygon()
-            self.save_state()  # Save state before adding
-            self.shapes.append(polygon)
-            print(f"✅ Polygon completed with {len(self.polygon_points)} points")
+            # Check if we're in template drawing mode
+            if self.current_shape_type == 'template':
+                self.finish_template()
+            else:
+                # Create polygon shape
+                polygon = PolygonShape(
+                    class_id=self.class_manager.get_current_class().id,
+                    image_size=(self.image_width, self.image_height)
+                )
+                polygon.from_pixel_points(self.polygon_points)
+                polygon.close_polygon()
+                self.save_state()  # Save state before adding
+                self.shapes.append(polygon)
+                print(f"✅ Polygon completed with {len(self.polygon_points)} points")
         
-        # Reset polygon drawing state
+        # Reset polygon drawing state (unless template dialog is open)
+        if self.current_shape_type != 'template':
+            self.polygon_points = []
+            self.update()
+    
+    def finish_template(self):
+        """Save current polygon points as a named template"""
+        from PyQt5.QtWidgets import QInputDialog
+        
+        if len(self.polygon_points) < 3:
+            print("❌ Need at least 3 points for a template")
+            self.polygon_points = []
+            self.update()
+            return
+        
+        name, ok = QInputDialog.getText(
+            self, "Save Template",
+            "Enter template name:",
+        )
+        
+        if ok and name and name.strip():
+            name = name.strip()
+            success = self.template_manager.add_template(
+                name, self.polygon_points,
+                self.image_width, self.image_height
+            )
+            if success:
+                print(f"✅ Template '{name}' saved with {len(self.polygon_points)} points")
+                # Notify parent to update dropdown
+                if hasattr(self, 'parent_window') and self.parent_window:
+                    self.parent_window.update_template_dropdown()
+            else:
+                print("❌ Failed to save template (too small?)")
+        else:
+            print("❌ Template save cancelled")
+        
         self.polygon_points = []
         self.update()
+    
+    def start_stamp(self, pos):
+        """Start placing a stamp template"""
+        if not self.stamp_template_name:
+            print("❌ No template selected")
+            return
+        
+        template = self.template_manager.get_template(self.stamp_template_name)
+        if not template:
+            print(f"❌ Template '{self.stamp_template_name}' not found")
+            return
+        
+        self.stamping = True
+        self.stamp_center = self.widget_to_image(pos)
+        self.stamp_current_pos = self.stamp_center
+        print(f"🔷 Placing template '{self.stamp_template_name}' - drag to scale")
+    
+    def finish_stamp(self):
+        """Finish placing stamp — creates a PolygonShape"""
+        if not self.stamping or not self.stamp_center or not self.stamp_current_pos:
+            self.stamping = False
+            return
+        
+        # Calculate scale from drag distance
+        dx = abs(self.stamp_current_pos[0] - self.stamp_center[0])
+        dy = abs(self.stamp_current_pos[1] - self.stamp_center[1])
+        scale_x = max(dx, 10)  # minimum 10px
+        scale_y = max(dy, 10)
+        
+        # Get pixel points from template
+        pixel_points = self.template_manager.get_pixel_points(
+            self.stamp_template_name,
+            self.stamp_center[0], self.stamp_center[1],
+            scale_x, scale_y
+        )
+        
+        if pixel_points and len(pixel_points) >= 3:
+            current_class = self.class_manager.get_current_class()
+            if current_class:
+                polygon = PolygonShape(
+                    class_id=current_class.id,
+                    image_size=(self.image_width, self.image_height)
+                )
+                polygon.from_pixel_points(pixel_points)
+                polygon.close_polygon()
+                self.save_state()
+                self.shapes.append(polygon)
+                print(f"✅ Stamp placed with {len(pixel_points)} points")
+        
+        self.stamping = False
+        self.stamp_center = None
+        self.stamp_current_pos = None
+        self.update()
+    
+    def draw_stamp_preview(self, painter):
+        """Draw preview of stamp being placed"""
+        if not self.stamp_center or not self.stamp_current_pos or not self.stamp_template_name:
+            return
+        
+        # Calculate scale
+        dx = abs(self.stamp_current_pos[0] - self.stamp_center[0])
+        dy = abs(self.stamp_current_pos[1] - self.stamp_center[1])
+        scale_x = max(dx, 10)
+        scale_y = max(dy, 10)
+        
+        # Get pixel points
+        pixel_points = self.template_manager.get_pixel_points(
+            self.stamp_template_name,
+            self.stamp_center[0], self.stamp_center[1],
+            scale_x, scale_y
+        )
+        
+        if not pixel_points or len(pixel_points) < 3:
+            return
+        
+        # Draw preview polygon
+        painter.setPen(QPen(QColor(255, 255, 0), 2, Qt.DashLine))
+        painter.setBrush(QBrush(QColor(255, 255, 0, 40)))
+        
+        points = QPolygonF()
+        for px, py in pixel_points:
+            wx = px * self.scale + self.offset_x
+            wy = py * self.scale + self.offset_y
+            points.append(QPointF(wx, wy))
+        points.append(points[0])  # close the polygon
+        painter.drawPolygon(points)
+        
+        # Draw center marker
+        cx = self.stamp_center[0] * self.scale + self.offset_x
+        cy = self.stamp_center[1] * self.scale + self.offset_y
+        painter.setBrush(QBrush(QColor(255, 255, 255)))
+        painter.setPen(QPen(QColor(0, 0, 0), 1))
+        half = self.handle_size // 2
+        painter.drawRect(int(cx) - half, int(cy) - half, self.handle_size, self.handle_size)
         
     def cancel_polygon(self):
         """Cancel polygon drawing"""
