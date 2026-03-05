@@ -97,6 +97,20 @@ class PolygonShape(Shape):
                 mx = (pixel_points[i][0] + pixel_points[j][0]) // 2
                 my = (pixel_points[i][1] + pixel_points[j][1]) // 2
                 handles[f'mid_{i}'] = (mx, my)
+            
+        if self.inner_points:
+            for i, p in enumerate(self.inner_points):
+                px = int(p[0] * self.image_width)
+                py = int(p[1] * self.image_height)
+                handles[f'inner_{i}'] = (px, py)
+                
+            if len(self.inner_points) >= 3:
+                for i in range(len(self.inner_points)):
+                    j = (i + 1) % len(self.inner_points)
+                    mx = (self.inner_points[i][0] + self.inner_points[j][0]) / 2
+                    my = (self.inner_points[i][1] + self.inner_points[j][1]) / 2
+                    handles[f'mid_inner_{i}'] = (int(mx * self.image_width), int(my * self.image_height))
+            
         return handles
     
     def resize_from_handle(self, handle_name, dx, dy):
@@ -114,7 +128,7 @@ class PolygonShape(Shape):
                 )
                 return True
         
-        elif handle_name.startswith('mid_'):
+        elif handle_name.startswith('mid_') and not handle_name.startswith('mid_inner_'):
             # Midpoint handle — this was converted to a vertex in begin_resize
             # Find the actual vertex index for this midpoint
             mid_idx = int(handle_name.split('_')[1])
@@ -129,28 +143,55 @@ class PolygonShape(Shape):
                     orig_ny + dy / self.image_height
                 )
                 return True
-        
+            
+        elif handle_name.startswith('mid_inner_'):
+            actual_idx = self._mid_inner_vertex_idx
+            if actual_idx is not None and 0 <= actual_idx < len(self._inner_origin):
+                orig_nx, orig_ny = self._inner_origin[actual_idx]
+                self.inner_points[actual_idx] = (
+                    orig_nx + dx / self.image_width,
+                    orig_ny + dy / self.image_height
+                )
+                return True
+            
+        elif handle_name.startswith('inner_'):
+            idx = int(handle_name.split('_')[1])
+            if hasattr(self, '_inner_origin') and 0 <= idx < len(self._inner_origin):
+                orig_nx, orig_ny = self._inner_origin[idx]
+                self.inner_points[idx] = (
+                    orig_nx + dx / self.image_width,
+                    orig_ny + dy / self.image_height
+                )
+                return True
+    
         return False
     
     def begin_resize(self, handle_name=None):
         """Store original points before resizing starts.
         If handle_name is a midpoint, insert a new vertex first."""
         self._mid_vertex_idx = None
+        self._mid_inner_vertex_idx = None
         
-        if handle_name and handle_name.startswith('mid_'):
+        if handle_name and handle_name.startswith('mid_') and not handle_name.startswith('mid_inner_'):
             mid_idx = int(handle_name.split('_')[1])
             insert_at = mid_idx + 1
-            
-            # Compute the midpoint in normalized coords
             p1 = self.points[mid_idx]
             p2 = self.points[(mid_idx + 1) % len(self.points)]
             mid_point = ((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2)
-            
-            # Insert the new vertex
             self.points.insert(insert_at, mid_point)
             self._mid_vertex_idx = insert_at
-        
+            
+        elif handle_name and handle_name.startswith('mid_inner_'):
+            mid_idx = int(handle_name.split('_')[2])
+            insert_at = mid_idx + 1
+            p1 = self.inner_points[mid_idx]
+            p2 = self.inner_points[(mid_idx + 1) % len(self.inner_points)]
+            mid_point = ((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2)
+            self.inner_points.insert(insert_at, mid_point)
+            self._mid_inner_vertex_idx = insert_at
+    
         self._resize_origin = list(self.points)
+        self._inner_origin = list(self.inner_points) if self.inner_points else []
         return True
     
     def close_polygon(self):

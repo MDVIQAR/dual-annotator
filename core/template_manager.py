@@ -8,7 +8,7 @@ class TemplateManager:
     def __init__(self):
         self.templates = {}  # name -> list of (dx, dy) offsets from center
     
-    def add_template(self, name, pixel_points, image_width, image_height):
+    def add_template(self, name, pixel_points, image_width, image_height, inner_pixel_points=None, shape_type='polygon', ctrl_points=None, inner_ctrl_points=None, native_params=None):
         """
         Store a polygon template normalized to its own bounding box center.
         Points are stored as offsets from center, normalized by bounding box size,
@@ -17,9 +17,13 @@ class TemplateManager:
         if not name or len(pixel_points) < 3:
             return False
         
-        # Find bounding box
-        xs = [p[0] for p in pixel_points]
-        ys = [p[1] for p in pixel_points]
+        # Find bounding box (using all points including inner ones to perfectly center it)
+        all_points = list(pixel_points)
+        if inner_pixel_points:
+            all_points.extend(inner_pixel_points)
+            
+        xs = [p[0] for p in all_points]
+        ys = [p[1] for p in all_points]
         min_x, max_x = min(xs), max(xs)
         min_y, max_y = min(ys), max(ys)
         
@@ -42,13 +46,57 @@ class TemplateManager:
                 (px - cx) / half_w,
                 (py - cy) / half_h
             ))
+            
+        normalized_inner = []
+        if inner_pixel_points:
+            for px, py in inner_pixel_points:
+                normalized_inner.append((
+                    (px - cx) / half_w,
+                    (py - cy) / half_h
+                ))
+                
+        normalized_ctrl = []
+        if ctrl_points:
+            for c in ctrl_points:
+                if c is not None:
+                    normalized_ctrl.append(((c[0] - cx) / half_w, (c[1] - cy) / half_h))
+                else:
+                    normalized_ctrl.append(None)
+                    
+        normalized_inner_ctrl = []
+        if inner_ctrl_points:
+            for c in inner_ctrl_points:
+                if c is not None:
+                    normalized_inner_ctrl.append(((c[0] - cx) / half_w, (c[1] - cy) / half_h))
+                else:
+                    normalized_inner_ctrl.append(None)
         
-        self.templates[name] = normalized_points
+        self.templates[name] = {
+            'type': shape_type,
+            'orig_w': bbox_w,
+            'orig_h': bbox_h,
+            'points': normalized_points,
+            'inner_points': normalized_inner,
+            'ctrl': normalized_ctrl,
+            'inner_ctrl': normalized_inner_ctrl,
+            'native': native_params or {}
+        }
         return True
     
     def get_template(self, name):
         """Get template points (normalized offsets from center)"""
         return self.templates.get(name, None)
+        
+    def get_template_info(self, name):
+        """Return dict with orig_w, orig_h, type"""
+        template_obj = self.templates.get(name)
+        if isinstance(template_obj, dict):
+            return {
+                'orig_w': template_obj.get('orig_w', 100),
+                'orig_h': template_obj.get('orig_h', 100),
+                'type': template_obj.get('type', 'polygon')
+            }
+        return {'orig_w': 100, 'orig_h': 100, 'type': 'polygon'}
     
     def list_templates(self):
         """Get list of template names"""
@@ -65,14 +113,58 @@ class TemplateManager:
         """
         Get template points as pixel coordinates, placed at (center_x, center_y)
         and scaled by (scale_x, scale_y) which represent the half-width and half-height.
+        Returns: (type, outer_points, inner_points, ctrl_points, inner_ctrl_points, native_params)
         """
-        points = self.templates.get(name)
-        if not points:
-            return []
+        template_obj = self.templates.get(name)
+        if not template_obj:
+            return 'polygon', [], [], [], [], {}
+            
+        # Handle old template format if needed
+        if not isinstance(template_obj, dict):
+            points = template_obj
+            shape_type = 'polygon'
+            inner_points = []
+            ctrl_points = []
+            inner_ctrl_points = []
+            native_params = {}
+        else:
+            points = template_obj.get('points', [])
+            inner_points = template_obj.get('inner_points', [])
+            shape_type = template_obj.get('type', 'polygon')
+            ctrl_points = template_obj.get('ctrl', [])
+            inner_ctrl_points = template_obj.get('inner_ctrl', [])
+            native_params = template_obj.get('native', {})
         
-        result = []
+        outer_result = []
         for dx, dy in points:
             px = center_x + dx * scale_x
             py = center_y + dy * scale_y
-            result.append((int(px), int(py)))
-        return result
+            outer_result.append((int(px), int(py)))
+            
+        inner_result = []
+        for dx, dy in inner_points:
+            px = center_x + dx * scale_x
+            py = center_y + dy * scale_y
+            inner_result.append((int(px), int(py)))
+            
+        ctrl_result = []
+        for c in ctrl_points:
+            if c is not None:
+                dx, dy = c
+                px = center_x + dx * scale_x
+                py = center_y + dy * scale_y
+                ctrl_result.append((int(px), int(py)))
+            else:
+                ctrl_result.append(None)
+                
+        inner_ctrl_result = []
+        for c in inner_ctrl_points:
+            if c is not None:
+                dx, dy = c
+                px = center_x + dx * scale_x
+                py = center_y + dy * scale_y
+                inner_ctrl_result.append((int(px), int(py)))
+            else:
+                inner_ctrl_result.append(None)
+            
+        return shape_type, outer_result, inner_result, ctrl_result, inner_ctrl_result, native_params

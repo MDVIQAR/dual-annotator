@@ -7,6 +7,7 @@ import math
 
 from core.annotation import BoundingBox
 from core.polygon_shape import PolygonShape
+from core.bezier_shape import BezierPolygonShape
 from core.circle_shape import CircleShape
 from core.ellipse_shape import EllipseShape
 from core.ring_shape import FrameShape, DonutShape, HollowEllipseShape
@@ -106,8 +107,12 @@ class AnnotationCanvas(QWidget):
         
         # Polygon drawing state
         self.drawing_polygon = False
-        self.drawing_inner_cutout = False  # Whether drawing inner cutout for hollow polygon
-        self.cutout_target_shape = None  # The polygon shape to add a cutout to
+        self.drawing_inner_cutout = False
+        self.cutout_target_shape = None
+
+        # Bezier polygon drawing state
+        self.drawing_bezier = False
+        self.bezier_points = []  # pixel points being drawn
         
         # Pan mode
         self.pan_mode = False
@@ -135,6 +140,9 @@ class AnnotationCanvas(QWidget):
         # Enable keyboard focus
         self.setFocusPolicy(Qt.StrongFocus)
         self.setFocus()
+        
+        # Mouse tracking for previews
+        self.current_mouse_pos = None
         
         print("✅ Canvas initialized")
         
@@ -354,6 +362,10 @@ class AnnotationCanvas(QWidget):
             # Draw polygon preview if drawing polygon
             if self.polygon_points and len(self.polygon_points) > 0:
                 self.draw_polygon_preview(painter)
+
+            # Draw bezier preview if drawing bezier
+            if self.bezier_points and len(self.bezier_points) > 0:
+                self.draw_bezier_preview(painter)
                 
             # Draw circle preview if drawing circle
             if self.circle_center and self.circle_radius > 0:
@@ -417,6 +429,8 @@ class AnnotationCanvas(QWidget):
                     self.draw_single_box(painter, shape, color)
                 elif shape.type == 'polygon':
                     self.draw_polygon(painter, shape, color)
+                elif shape.type == 'bezier_polygon':
+                    self.draw_bezier_shape(painter, shape, color)
                 elif shape.type == 'circle':
                     self.draw_circle(painter, shape, color)
                 elif shape.type == 'ellipse':
@@ -466,8 +480,8 @@ class AnnotationCanvas(QWidget):
             painter.drawRect(x1 - half, y2 - half, self.handle_size, self.handle_size)  # BL
             painter.drawRect(x2 - half, y2 - half, self.handle_size, self.handle_size)  # BR
         
-        # Draw class name if available
-        if self.class_manager and hasattr(box, 'class_id') and box.class_id:
+        # Draw class label if not dragging or copying
+        if not (self.drag_copy or self.drawing or self.moving) and box.class_id:
             cls = self.class_manager.get_class(box.class_id)
             if cls:
                 painter.setPen(QPen(Qt.white, 1))
@@ -477,10 +491,122 @@ class AnnotationCanvas(QWidget):
                 text = cls.name
                 text_width = painter.fontMetrics().horizontalAdvance(text)
                 text_height = painter.fontMetrics().height()
-                painter.fillRect(x1, y1 - text_height - 5, text_width + 10, text_height + 5, QColor(0, 0, 0, 150))
+                
+                # Use class color for background to make it visible!
+                label_color = QColor(cls.color) if cls.color else QColor(0, 0, 0, 200)
+                # Darken the background color slightly to ensure white text is visible
+                label_bg = label_color.darker(150)
+                label_bg.setAlpha(200)
+                
+                painter.fillRect(x1, y1 - text_height - 5, text_width + 10, text_height + 5, label_bg)
                 
                 painter.drawText(x1 + 5, y1 - 8, text)
     
+    def draw_bezier_shape(self, painter, bezier_shape, color):
+        """Draw a bezier polygon shape"""
+        if not bezier_shape.points:
+            return
+            
+        # Draw the main path
+        path = bezier_shape._make_path(self.scale, self.offset_x, self.offset_y)
+        
+        # Hollow inner cutout support (like regular polygon)
+        if bezier_shape.inner_points:
+            inner_bezier = BezierPolygonShape(bezier_shape.inner_points)
+            inner_bezier.closed = True
+            inner_bezier.image_width = bezier_shape.image_width
+            inner_bezier.image_height = bezier_shape.image_height
+            if hasattr(bezier_shape, 'inner_control_points'):
+                inner_bezier.ctrl = list(bezier_shape.inner_control_points)
+            inner_path = inner_bezier._make_path(self.scale, self.offset_x, self.offset_y)
+            path = path.subtracted(inner_path)
+            
+        if bezier_shape.selected:
+            painter.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 80)))
+            painter.setPen(QPen(color, 2, Qt.DashLine))
+        else:
+            painter.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 50)))
+            painter.setPen(QPen(color, 2))
+            
+        painter.drawPath(path)
+        
+        # Draw handles if selected
+        if bezier_shape.selected:
+            half = self.handle_size // 2
+            handles = bezier_shape.get_resize_handles()
+            
+            for handle_name, (hx, hy) in handles.items():
+                whx = int(hx * self.scale + self.offset_x)
+                why = int(hy * self.scale + self.offset_y)
+                
+                if handle_name.startswith('vertex_') or handle_name.startswith('inner_'):
+                    # Vertex handle (white square)
+                    painter.setBrush(QBrush(QColor(255, 255, 255)))
+                    painter.setPen(QPen(QColor(0, 0, 0), 1))
+                    painter.drawRect(whx - half, why - half, self.handle_size, self.handle_size)
+                elif handle_name.startswith('ctrl_'):
+                    # Control handle (yellow diamond)
+                    painter.setBrush(QBrush(QColor(255, 255, 0)))
+                    painter.setPen(QPen(QColor(0, 0, 0), 1))
+                    diamond = QPolygonF([
+                        QPointF(whx, why - half),
+                        QPointF(whx + half, why),
+                        QPointF(whx, why + half),
+                        QPointF(whx - half, why)
+                    ])
+                    painter.drawPolygon(diamond)
+                    
+        # Draw class label if not dragging or copying
+        if not (self.drag_copy or self.drawing or self.moving) and bezier_shape.class_id:
+            cls = self.class_manager.get_class(bezier_shape.class_id)
+            if cls and bezier_shape.points:
+                wx, wy = bezier_shape._norm_to_px(*bezier_shape.points[0])
+                wx = wx * self.scale + self.offset_x
+                wy = wy * self.scale + self.offset_y
+                painter.setPen(QPen(Qt.white, 1))
+                painter.setFont(QFont("Arial", 8))
+                text = cls.name
+                text_width = painter.fontMetrics().horizontalAdvance(text)
+                text_height = painter.fontMetrics().height()
+                
+                # Use class color for background to make it visible!
+                label_color = QColor(cls.color) if cls.color else QColor(0, 0, 0, 200)
+                # Darken the background color slightly to ensure white text is visible
+                label_bg = label_color.darker(150)
+                label_bg.setAlpha(200)
+                
+                painter.fillRect(int(wx), int(wy) - text_height - 5, text_width + 10, text_height + 5, label_bg)
+                painter.drawText(int(wx) + 5, int(wy) - 5, text)
+
+    def draw_bezier_preview(self, painter):
+        """Draw bezier polygon while it is being created (straight lines preview)"""
+        if not self.bezier_points:
+            return
+            
+        # Draw lines between points
+        painter.setPen(QPen(QColor(0, 255, 0), 2, Qt.DashLine))
+        for i in range(len(self.bezier_points) - 1):
+            p1 = self.bezier_points[i]
+            p2 = self.bezier_points[i + 1]
+            wp1 = QPoint(int(p1[0] * self.scale + self.offset_x), int(p1[1] * self.scale + self.offset_y))
+            wp2 = QPoint(int(p2[0] * self.scale + self.offset_x), int(p2[1] * self.scale + self.offset_y))
+            painter.drawLine(wp1, wp2)
+            
+        # Draw line to cursor
+        if self.current_mouse_pos:
+            last_p = self.bezier_points[-1]
+            w_last = QPoint(int(last_p[0] * self.scale + self.offset_x), int(last_p[1] * self.scale + self.offset_y))
+            painter.drawLine(w_last, self.current_mouse_pos)
+            
+        # Draw points
+        painter.setBrush(QBrush(QColor(255, 255, 255)))
+        painter.setPen(QPen(QColor(0, 0, 0), 1))
+        half = self.handle_size // 2
+        for p in self.bezier_points:
+            wpx = int(p[0] * self.scale + self.offset_x)
+            wpy = int(p[1] * self.scale + self.offset_y)
+            painter.drawRect(wpx - half, wpy - half, self.handle_size, self.handle_size)
+
     def draw_polygon(self, painter, polygon, color):
         """Draw a polygon shape with highlighting when selected"""
         from PyQt5.QtGui import QPainterPath
@@ -554,26 +680,23 @@ class AnnotationCanvas(QWidget):
                 painter.drawPolygon(outer_poly)
             
             # Draw vertex handles for selected polygon
-            if polygon.selected:
-                painter.setBrush(QBrush(QColor(255, 255, 255)))
-                painter.setPen(QPen(QColor(0, 0, 0), 1))
+        if polygon.selected:
+            half = self.handle_size // 2
+            mid_r = max(self.handle_size // 3, 4)
+            handles = polygon.get_resize_handles()
+            
+            for handle_name, (hx, hy) in handles.items():
+                wx = int(hx * self.scale + self.offset_x)
+                wy = int(hy * self.scale + self.offset_y)
                 
-                half = self.handle_size // 2
-                for wx, wy in [(p.x(), p.y()) for p in widget_points]:
-                    painter.drawRect(int(wx - half), int(wy - half), self.handle_size, self.handle_size)
-                
-                # Draw midpoint handles (smaller circles)
-                if polygon.closed and len(points) >= 3:
+                if handle_name.startswith('vertex_') or handle_name.startswith('inner_'):
+                    painter.setBrush(QBrush(QColor(255, 255, 255)))
+                    painter.setPen(QPen(QColor(0, 0, 0), 1))
+                    painter.drawRect(wx - half, wy - half, self.handle_size, self.handle_size)
+                elif handle_name.startswith('mid_'):
                     painter.setBrush(QBrush(QColor(180, 180, 255)))
                     painter.setPen(QPen(QColor(0, 0, 0), 1))
-                    mid_r = max(self.handle_size // 3, 4)
-                    for i in range(len(points)):
-                        j = (i + 1) % len(points)
-                        mx = (points[i][0] + points[j][0]) / 2
-                        my = (points[i][1] + points[j][1]) / 2
-                        wmx = int(mx * self.scale + self.offset_x)
-                        wmy = int(my * self.scale + self.offset_y)
-                        painter.drawEllipse(QPointF(wmx, wmy), mid_r, mid_r)
+                    painter.drawEllipse(QPointF(wx, wy), mid_r, mid_r)
         
         # Draw class name if available
         if polygon.selected and self.class_manager and hasattr(polygon, 'class_id') and polygon.class_id:
@@ -855,32 +978,167 @@ class AnnotationCanvas(QWidget):
                 painter.drawRect(whx - half//2, why - half//2, half, half)
     
     def draw_hollow_ellipse_preview(self, painter):
-        """Draw hollow ellipse preview while drawing"""
-        if not hasattr(self, 'hollow_ellipse_center') or not self.hollow_ellipse_center:
+        """Draw hollow ellipse preview"""
+        if not hasattr(self, 'hollow_ellipse_center') or not self.hollow_ellipse_center or self.hollow_ellipse_rx <= 0:
             return
-        
+            
         cx, cy = self.hollow_ellipse_center
-        wx = int(cx * self.scale + self.offset_x)
-        wy = int(cy * self.scale + self.offset_y)
+        wcx = int(cx * self.scale + self.offset_x)
+        wcy = int(cy * self.scale + self.offset_y)
         wrx = int(self.hollow_ellipse_rx * self.scale)
         wry = int(self.hollow_ellipse_ry * self.scale)
+        wirx = int(getattr(self, 'hollow_ellipse_inner_rx', 0) * self.scale)
+        wiry = int(getattr(self, 'hollow_ellipse_inner_ry', 0) * self.scale)
         
         # Draw outer ellipse preview
         painter.setPen(QPen(QColor(255, 255, 0), 2, Qt.DashLine))
         painter.setBrush(Qt.NoBrush)
-        painter.drawEllipse(wx - wrx, wy - wry, wrx * 2, wry * 2)
+        painter.drawEllipse(QPointF(wcx, wcy), wrx, wry)
         
-        # Draw inner ellipse preview (45% of outer)
-        wirx = int(wrx * 0.45)
-        wiry = int(wry * 0.45)
-        painter.setPen(QPen(QColor(255, 200, 0), 1, Qt.DashLine))
-        painter.drawEllipse(wx - wirx, wy - wiry, wirx * 2, wiry * 2)
-        
+        # Draw inner ellipse preview
+        if wirx > 0 and wiry > 0:
+            painter.setPen(QPen(QColor(255, 200, 0), 1, Qt.DashLine))
+            painter.drawEllipse(QPointF(wcx, wcy), wirx, wiry)
+            
         # Draw center point
         painter.setBrush(QBrush(QColor(255, 255, 255)))
         painter.setPen(QPen(QColor(0, 0, 0), 1))
         half = self.handle_size // 2
-        painter.drawRect(wx - half, wy - half, self.handle_size, self.handle_size)
+        painter.drawRect(wcx - half, wcy - half, self.handle_size, self.handle_size)
+
+    def draw_stamp_preview(self, painter):
+        """Draw template stamp preview based on drag distance"""
+        if not hasattr(self, 'stamping') or not self.stamping or not self.stamp_center or not self.stamp_current_pos:
+            return
+            
+        dx = abs(self.stamp_current_pos[0] - self.stamp_center[0])
+        dy = abs(self.stamp_current_pos[1] - self.stamp_center[1])
+        
+        # If user hasn't dragged much, show default preview size
+        info = self.template_manager.get_template_info(self.stamp_template_name)
+        orig_half_w = info['orig_w'] / 2.0
+        orig_half_h = info['orig_h'] / 2.0
+        if orig_half_w == 0: orig_half_w = 50.0
+        if orig_half_h == 0: orig_half_h = 50.0
+
+        if dx < 5 and dy < 5:
+            scale_x = orig_half_w
+            scale_y = orig_half_h
+        else:
+            scale_x = max(dx, 10)
+            scale_y = max(dy, 10)
+            
+        ratio_x = scale_x / orig_half_w
+        ratio_y = scale_y / orig_half_h
+        
+        shape_type, outer_points, inner_points, ctrl_points, inner_ctrl_points, native_params = self.template_manager.get_pixel_points(
+            self.stamp_template_name,
+            self.stamp_center[0], self.stamp_center[1],
+            scale_x, scale_y
+        )
+        
+        painter.setPen(QPen(QColor(255, 255, 0), 2))
+        painter.setBrush(QBrush(QColor(255, 255, 0, 50)))
+        
+        from PyQt5.QtGui import QPainterPath, QPolygonF
+        from PyQt5.QtCore import QPointF
+        
+        wcx = int(self.stamp_center[0] * self.scale + self.offset_x)
+        wcy = int(self.stamp_center[1] * self.scale + self.offset_y)
+        
+        # Custom draws for native shapes so the preview matches the rehydrated shape
+        if shape_type in ('box', 'frame', 'circle', 'ellipse', 'donut', 'hollow_ellipse'):
+            if shape_type == 'box' or shape_type == 'frame':
+                orig_w = native_params.get('w', 100)
+                orig_h = native_params.get('h', 100)
+                w = int(orig_w * ratio_x * self.scale)
+                h = int(orig_h * ratio_y * self.scale)
+                
+                if shape_type == 'frame':
+                    # Draw outer frame
+                    path = QPainterPath()
+                    path.addRect(wcx - w//2, wcy - h//2, w, h)
+                    
+                    # Draw inner cutout
+                    w_ratio = (orig_w * ratio_x) / max(orig_w, 1)
+                    h_ratio = (orig_h * ratio_y) / max(orig_h, 1)
+                    
+                    t_top = int(native_params.get('t_top', 20.0) * h_ratio * self.scale)
+                    t_bottom = int(native_params.get('t_bottom', 20.0) * h_ratio * self.scale)
+                    t_left = int(native_params.get('t_left', 20.0) * w_ratio * self.scale)
+                    t_right = int(native_params.get('t_right', 20.0) * w_ratio * self.scale)
+                    
+                    ix = (wcx - w//2) + t_left
+                    iy = (wcy - h//2) + t_top
+                    iw = max(w - t_left - t_right, 4)
+                    ih = max(h - t_top - t_bottom, 4)
+                    
+                    inner_path = QPainterPath()
+                    inner_path.addRect(ix, iy, iw, ih)
+                    path = path.subtracted(inner_path)
+                    painter.drawPath(path)
+                else:
+                    painter.drawRect(wcx - w//2, wcy - h//2, w, h)
+                    
+            elif shape_type == 'circle':
+                r = int(native_params.get('r', 50) * ratio_x * self.scale)
+                painter.drawEllipse(QPointF(wcx, wcy), r, r)
+                
+            elif shape_type == 'ellipse':
+                rx = int(native_params.get('rx', 50) * ratio_x * self.scale)
+                ry = int(native_params.get('ry', 50) * ratio_y * self.scale)
+                painter.drawEllipse(QPointF(wcx, wcy), rx, ry)
+                
+            elif shape_type == 'donut':
+                outer_r = int(native_params.get('outer_r', 50) * ratio_x * self.scale)
+                inner_r = int(native_params.get('inner_r', 25) * ratio_x * self.scale)
+                
+                path = QPainterPath()
+                path.addEllipse(QPointF(wcx, wcy), outer_r, outer_r)
+                inner_path = QPainterPath()
+                inner_path.addEllipse(QPointF(wcx, wcy), inner_r, inner_r)
+                path = path.subtracted(inner_path)
+                painter.drawPath(path)
+                
+            elif shape_type == 'hollow_ellipse':
+                outer_rx = int(native_params.get('outer_rx', 50) * ratio_x * self.scale)
+                outer_ry = int(native_params.get('outer_ry', 50) * ratio_y * self.scale)
+                inner_rx = int(native_params.get('inner_rx', 25) * ratio_x * self.scale)
+                inner_ry = int(native_params.get('inner_ry', 25) * ratio_y * self.scale)
+                
+                path = QPainterPath()
+                path.addEllipse(QPointF(wcx, wcy), outer_rx, outer_ry)
+                inner_path = QPainterPath()
+                inner_path.addEllipse(QPointF(wcx, wcy), inner_rx, inner_ry)
+                path = path.subtracted(inner_path)
+                painter.drawPath(path)
+
+        else:
+            # Generic Polygon/Bezier path
+            if outer_points and len(outer_points) >= 3:
+                outer_poly = QPolygonF()
+                for px, py in outer_points:
+                    wx = int(px * self.scale + self.offset_x)
+                    wy = int(py * self.scale + self.offset_y)
+                    outer_poly.append(QPointF(wx, wy))
+                
+                outer_path = QPainterPath()
+                outer_path.addPolygon(outer_poly)
+                outer_path.closeSubpath()
+                
+                if inner_points and len(inner_points) >= 3:
+                    inner_poly = QPolygonF()
+                    for px, py in inner_points:
+                        wx = int(px * self.scale + self.offset_x)
+                        wy = int(py * self.scale + self.offset_y)
+                        inner_poly.append(QPointF(wx, wy))
+                        
+                    inner_path = QPainterPath()
+                    inner_path.addPolygon(inner_poly)
+                    inner_path.closeSubpath()
+                    outer_path = outer_path.subtracted(inner_path)
+                
+                painter.drawPath(outer_path)
 
     def draw_polygon_preview(self, painter):
         """Draw polygon preview while drawing"""
@@ -983,6 +1241,36 @@ class AnnotationCanvas(QWidget):
             self.last_mouse_pos = event.pos()
             self.setCursor(Qt.ClosedHandCursor)
             
+        elif event.button() == Qt.RightButton:
+            # Handle right click vertex insertion for bezier polygons
+            if self.selected_shape and getattr(self.selected_shape, 'type', '') == 'bezier_polygon':
+                image_x, image_y = self.widget_to_image(event.pos())
+                if hasattr(self.selected_shape, 'get_closest_edge'):
+                    # Check if hovering near boundary (10 pixels threshold scaled)
+                    edge_info = self.selected_shape.get_closest_edge(image_x, image_y, 10.0 / self.scale)
+                    if edge_info:
+                        idx, pt, is_inner = edge_info
+                        menu = QMenu(self)
+                        add_action = menu.addAction("Add Curve Point Here")
+                        action = menu.exec_(self.mapToGlobal(event.pos()))
+                        if action == add_action:
+                            self.save_state()  # Save state for undo
+                            self.selected_shape.insert_vertex(idx, pt, is_inner)
+                            self.update()
+                            print(f"✅ Inserted new curve point via context menu")
+                        return
+
+                # Fallback to direct ctrl point click
+                handle = self.get_resize_handle_at_pos(event.pos(), self.selected_shape)
+                if handle and (handle.startswith('ctrl_') or handle.startswith('ctrl_inner_')):
+                    self.save_state()  # Save before modifying
+                    if hasattr(self.selected_shape, 'insert_vertex_at_ctrl'):
+                        inserted = self.selected_shape.insert_vertex_at_ctrl(handle)
+                        if inserted:
+                            print(f"✅ Inserted new vertex at {handle} via right-click")
+                            self.update()
+                            return
+            
         elif event.button() == Qt.LeftButton and not self.pan_mode:
             if self.pixmap and not self.pixmap.isNull():
                 
@@ -1059,6 +1347,8 @@ class AnnotationCanvas(QWidget):
                         self.start_hollow_ellipse_drawing(event.pos())
                     elif self.current_shape_type == 'template':
                         self.start_polygon_drawing(event.pos())  # reuse polygon flow
+                    elif self.current_shape_type == 'bezier_polygon':
+                        self.start_bezier_drawing(event.pos())
                     elif self.current_shape_type == 'stamp':
                         self.start_stamp(event.pos())
                 else:
@@ -1069,6 +1359,7 @@ class AnnotationCanvas(QWidget):
         """Handle mouse move events"""
         # Convert widget coordinates to image coordinates
         image_x, image_y = self.widget_to_image(event.pos())
+        self.current_mouse_pos = event.pos()
         
         # Emit position signal
         self.position_changed.emit(image_x, image_y)
@@ -1165,10 +1456,17 @@ class AnnotationCanvas(QWidget):
             # Ensure we're not stuck in any special state
             self.drag_copy = False
             self.pasting = False
-                
+            
     def wheelEvent(self, event):
         """Handle mouse wheel for zooming - zooms to cursor position"""
         if not self.pixmap or self.pixmap.isNull():
+            return
+            
+        modifiers = QApplication.keyboardModifiers()
+        if modifiers == Qt.ShiftModifier and self.selected_shape:
+            # Scale selected shape
+            scale_factor = 1.05 if event.angleDelta().y() > 0 else 0.95
+            self.scale_selected_shape(scale_factor)
             return
         
         # Get cursor position in widget coordinates
@@ -1199,6 +1497,90 @@ class AnnotationCanvas(QWidget):
             self.offset_y = image_y - image_pos[1] * self.scale
             
             self.update()
+            
+    def scale_selected_shape(self, factor):
+        """Scale the currently selected shape evenly by a given factor"""
+        shape = self.selected_shape
+        if not shape:
+            return
+            
+        self.save_state()
+        
+        # Box
+        if shape.type == 'box':
+            shape.width = min(1.0, shape.width * factor)
+            shape.height = min(1.0, shape.height * factor)
+            
+        # Frame
+        elif shape.type == 'frame':
+            cx = shape.x + shape.w / 2
+            cy = shape.y + shape.h / 2
+            shape.w = min(1.0, shape.w * factor)
+            shape.h = min(1.0, shape.h * factor)
+            shape.x = max(0.0, cx - shape.w / 2)
+            shape.y = max(0.0, cy - shape.h / 2)
+            if hasattr(shape, 't_top'):
+                shape.t_top *= factor
+                shape.t_bottom *= factor
+                shape.t_left *= factor
+                shape.t_right *= factor
+                
+        # Donut
+        elif shape.type == 'donut':
+            d = min(self.image_width, self.image_height)
+            max_r = min(shape.cx, 1 - shape.cx, shape.cy, 1 - shape.cy) * min(self.image_width, self.image_height) / d
+            shape.outer_r = min(max_r, shape.outer_r * factor)
+            shape.inner_r *= factor
+            
+        # Circle
+        elif shape.type == 'circle':
+            shape.radius = min(1.0, shape.radius * factor)
+            
+        # Ellipse
+        elif shape.type == 'ellipse':
+            shape.radius_x = min(1.0, shape.radius_x * factor)
+            shape.radius_y = min(1.0, shape.radius_y * factor)
+            
+        # Hollow Ellipse
+        elif shape.type == 'hollow_ellipse':
+            shape.outer_rx = min(1.0, shape.outer_rx * factor)
+            shape.outer_ry = min(1.0, shape.outer_ry * factor)
+            shape.inner_rx *= factor
+            shape.inner_ry *= factor
+            
+        # Polygons
+        elif shape.type in ('polygon', 'bezier_polygon'):
+            if not shape.points:
+                return
+            
+            # Find center
+            min_x = min(p[0] for p in shape.points)
+            max_x = max(p[0] for p in shape.points)
+            min_y = min(p[1] for p in shape.points)
+            max_y = max(p[1] for p in shape.points)
+            
+            cx = (min_x + max_x) / 2.0
+            cy = (min_y + max_y) / 2.0
+            
+            shape.points = [(cx + (p[0] - cx) * factor, cy + (p[1] - cy) * factor) for p in shape.points]
+            
+            if shape.type == 'bezier_polygon':
+                if hasattr(shape, 'control_points') and shape.control_points:
+                    for i in range(len(shape.control_points)):
+                        if shape.control_points[i] is not None:
+                            c = shape.control_points[i]
+                            shape.control_points[i] = (cx + (c[0] - cx) * factor, cy + (c[1] - cy) * factor)
+                            
+            if getattr(shape, 'inner_points', None):
+                shape.inner_points = [(cx + (p[0] - cx) * factor, cy + (p[1] - cy) * factor) for p in shape.inner_points]
+                
+                if shape.type == 'bezier_polygon' and hasattr(shape, 'inner_control_points') and shape.inner_control_points:
+                    for i in range(len(shape.inner_control_points)):
+                        if shape.inner_control_points[i] is not None:
+                            c = shape.inner_control_points[i]
+                            shape.inner_control_points[i] = (cx + (c[0] - cx) * factor, cy + (c[1] - cy) * factor)
+                            
+        self.update()
             
     def keyPressEvent(self, event):
         """Handle keyboard events"""
@@ -1261,6 +1643,12 @@ class AnnotationCanvas(QWidget):
             print("🔷 Template drawing mode")
             return
         
+        elif key_text == 'Q':
+            if hasattr(self, 'parent_window') and self.parent_window:
+                self.parent_window.set_shape_type('bezier_polygon')
+            print("🔷 Bezier Polygon tool selected")
+            return
+        
         # ===== NAVIGATION =====
         elif key_text == 'A':
             if hasattr(self, 'parent_window') and self.parent_window:
@@ -1307,6 +1695,8 @@ class AnnotationCanvas(QWidget):
                 self.cancel_donut()
             elif hasattr(self, 'hollow_ellipse_center') and self.hollow_ellipse_center:
                 self.cancel_hollow_ellipse()
+            elif self.bezier_points:
+                self.cancel_bezier()
             print("❌ Operation cancelled")
             return
         
@@ -1314,6 +1704,8 @@ class AnnotationCanvas(QWidget):
         elif key == Qt.Key_Return or key == Qt.Key_Enter:
             if self.polygon_points:
                 self.finish_polygon()
+            elif self.bezier_points:
+                self.finish_bezier()
             return
         
         # ===== DELETE =====
@@ -1814,88 +2206,256 @@ class AnnotationCanvas(QWidget):
     
     def finish_stamp(self):
         """Finish placing stamp — creates a PolygonShape"""
-        if not self.stamping or not self.stamp_center or not self.stamp_current_pos:
+        if not self.stamping or not getattr(self, 'stamp_center', None) or not getattr(self, 'stamp_current_pos', None):
             self.stamping = False
             return
         
         # Calculate scale from drag distance
         dx = abs(self.stamp_current_pos[0] - self.stamp_center[0])
         dy = abs(self.stamp_current_pos[1] - self.stamp_center[1])
-        scale_x = max(dx, 10)  # minimum 10px
-        scale_y = max(dy, 10)
+        
+        # If user just clicks without dragging, use a decent default scale
+        info = self.template_manager.get_template_info(self.stamp_template_name)
+        orig_half_w = info['orig_w'] / 2.0
+        orig_half_h = info['orig_h'] / 2.0
+        if orig_half_w == 0: orig_half_w = 50.0
+        if orig_half_h == 0: orig_half_h = 50.0
+
+        if dx < 5 and dy < 5:
+            scale_x = orig_half_w
+            scale_y = orig_half_h
+        else:
+            scale_x = max(dx, 10)  # minimum 10px
+            scale_y = max(dy, 10)
+            
+        ratio_x = scale_x / orig_half_w
+        ratio_y = scale_y / orig_half_h
         
         # Get pixel points from template
-        pixel_points = self.template_manager.get_pixel_points(
+        shape_type, outer_points, inner_points, ctrl_points, inner_ctrl_points, native_params = self.template_manager.get_pixel_points(
             self.stamp_template_name,
             self.stamp_center[0], self.stamp_center[1],
             scale_x, scale_y
         )
         
-        if pixel_points and len(pixel_points) >= 3:
-            current_class = self.class_manager.get_current_class()
-            if current_class:
-                polygon = PolygonShape(
-                    class_id=current_class.id,
-                    image_size=(self.image_width, self.image_height)
-                )
-                polygon.from_pixel_points(pixel_points)
-                polygon.close_polygon()
-                self.save_state()
-                self.shapes.append(polygon)
-                print(f"✅ Stamp placed with {len(pixel_points)} points")
-        
-        self.stamping = False
-        self.stamp_center = None
-        self.stamp_current_pos = None
-        self.update()
+        current_class = self.class_manager.get_current_class()
+        if not current_class:
+            self.stamping = False
+            self.stamp_center = None
+            self.stamp_current_pos = None
+            self.update()
+            return
+
+        shape = None
+        cw, ch = self.image_width, self.image_height
+
+        if shape_type == 'box':
+            from core.annotation import BoundingBox
+            shape = BoundingBox(class_id=current_class.id, image_size=(cw, ch))
+            cx, cy = self.stamp_center
+            w = native_params.get('w', 100) * ratio_x # roughly scaling by the drag ratio compared to base
+            h = native_params.get('h', 100) * ratio_y
+            shape.from_pixels(cx - w/2, cy - h/2, cx + w/2, cy + h/2)
+            
+        elif shape_type == 'circle':
+            from core.circle_shape import CircleShape
+            shape = CircleShape(class_id=current_class.id, image_size=(cw, ch))
+            r = native_params.get('r', 50) * ratio_x
+            shape.from_pixels(self.stamp_center[0], self.stamp_center[1], r)
+            
+        elif shape_type == 'ellipse':
+            from core.ellipse_shape import EllipseShape
+            shape = EllipseShape(class_id=current_class.id, image_size=(cw, ch))
+            rx = native_params.get('rx', 50) * ratio_x
+            ry = native_params.get('ry', 50) * ratio_y
+            shape.from_pixels(self.stamp_center[0], self.stamp_center[1], rx, ry)
+            
+        elif shape_type == 'frame':
+            from core.ring_shape import FrameShape
+            shape = FrameShape(class_id=current_class.id, image_size=(cw, ch))
+            cx, cy = self.stamp_center
+            
+            # The original w/h stored was for rendering.
+            # When we drag to scale during stamp, the bounding box might change ratio slightly.
+            orig_w = native_params.get('w', 100)
+            orig_h = native_params.get('h', 100)
+            target_w = orig_w * ratio_x
+            target_h = orig_h * ratio_y
+            
+            shape.from_pixels(cx - target_w/2, cy - target_h/2, cx + target_w/2, cy + target_h/2)
+            
+            # Apply proportionally scaled thicknesses
+            w_ratio = target_w / max(orig_w, 1)
+            h_ratio = target_h / max(orig_h, 1)
+            
+            shape.t_top = native_params.get('t_top', 20.0) * h_ratio
+            shape.t_bottom = native_params.get('t_bottom', 20.0) * h_ratio
+            shape.t_left = native_params.get('t_left', 20.0) * w_ratio
+            shape.t_right = native_params.get('t_right', 20.0) * w_ratio
+            
+        elif shape_type == 'donut':
+            from core.ring_shape import DonutShape
+            shape = DonutShape(class_id=current_class.id, image_size=(cw, ch))
+            outer_r = native_params.get('outer_r', 50) * (scale_x / 50.0)
+            inner_r = native_params.get('inner_r', 25) * (scale_x / 50.0)
+            shape.from_pixels(self.stamp_center[0], self.stamp_center[1], outer_r)
+            d = min(cw, ch)
+            shape.inner_r = inner_r / d
+            
+        elif shape_type == 'hollow_ellipse':
+            from core.ring_shape import HollowEllipseShape
+            shape = HollowEllipseShape(class_id=current_class.id, image_size=(cw, ch))
+            outer_rx = native_params.get('outer_rx', 50) * (scale_x / 50.0)
+            outer_ry = native_params.get('outer_ry', 50) * (scale_y / 50.0)
+            inner_rx = native_params.get('inner_rx', 25) * (scale_x / 50.0)
+            inner_ry = native_params.get('inner_ry', 25) * (scale_y / 50.0)
+            shape.from_pixels(self.stamp_center[0], self.stamp_center[1], outer_rx, outer_ry)
+            shape.inner_rx = inner_rx / cw
+            shape.inner_ry = inner_ry / ch
+            
+        else:
+            # Fallback to polygon logic (including bezier_polygon)
+            if outer_points and len(outer_points) >= 3:
+                if shape_type == 'bezier_polygon':
+                    from core.bezier_shape import BezierPolygonShape
+                    shape = BezierPolygonShape(class_id=current_class.id, image_size=(cw, ch))
+                else:
+                    from core.polygon_shape import PolygonShape
+                    shape = PolygonShape(class_id=current_class.id, image_size=(cw, ch))
+                    
+                shape.from_pixel_points(outer_points)
+                
+                if inner_points and len(inner_points) >= 3:
+                    normalized_inner = []
+                    for px, py in inner_points:
+                        normalized_inner.append((px / cw, py / ch))
+                    shape.inner_points = normalized_inner
+                    
+                if shape_type == 'bezier_polygon':
+                    shape.ctrl = []
+                    for c in ctrl_points:
+                        shape.ctrl.append((c[0] / cw, c[1] / ch) if c is not None else None)
+                            
+                    if inner_ctrl_points:
+                        shape.inner_control_points = []
+                        for c in inner_ctrl_points:
+                            shape.inner_control_points.append((c[0] / cw, c[1] / ch) if c is not None else None)
+                    
+                shape.close_polygon()
+                
+        if shape is not None:
+            self.save_state()
+            self.shapes.append(shape)
+            print(f"✅ Stamp placed as natively constructed '{shape_type}'")
+            
+            self.stamping = False
+            self.stamp_center = None
+            self.stamp_current_pos = None
+            self.update()
     
-    def draw_stamp_preview(self, painter):
-        """Draw preview of stamp being placed"""
-        if not self.stamp_center or not self.stamp_current_pos or not self.stamp_template_name:
-            return
-        
-        # Calculate scale
-        dx = abs(self.stamp_current_pos[0] - self.stamp_center[0])
-        dy = abs(self.stamp_current_pos[1] - self.stamp_center[1])
-        scale_x = max(dx, 10)
-        scale_y = max(dy, 10)
-        
-        # Get pixel points
-        pixel_points = self.template_manager.get_pixel_points(
-            self.stamp_template_name,
-            self.stamp_center[0], self.stamp_center[1],
-            scale_x, scale_y
-        )
-        
-        if not pixel_points or len(pixel_points) < 3:
-            return
-        
-        # Draw preview polygon
-        painter.setPen(QPen(QColor(255, 255, 0), 2, Qt.DashLine))
-        painter.setBrush(QBrush(QColor(255, 255, 0, 40)))
-        
-        points = QPolygonF()
-        for px, py in pixel_points:
-            wx = px * self.scale + self.offset_x
-            wy = py * self.scale + self.offset_y
-            points.append(QPointF(wx, wy))
-        points.append(points[0])  # close the polygon
-        painter.drawPolygon(points)
-        
-        # Draw center marker
-        cx = self.stamp_center[0] * self.scale + self.offset_x
-        cy = self.stamp_center[1] * self.scale + self.offset_y
-        painter.setBrush(QBrush(QColor(255, 255, 255)))
-        painter.setPen(QPen(QColor(0, 0, 0), 1))
-        half = self.handle_size // 2
-        painter.drawRect(int(cx) - half, int(cy) - half, self.handle_size, self.handle_size)
-        
+    
     def cancel_polygon(self):
         """Cancel polygon drawing"""
         self.polygon_points = []
         self.drawing_inner_cutout = False
         self.cutout_target_shape = None
         print("❌ Polygon cancelled")
+        self.update()
+
+    # ==========================================
+    #  Bezier Polygon Drawing
+    # ==========================================
+
+    def start_bezier_drawing(self, pos):
+        """Add a point to the bezier polygon being drawn"""
+        if not self.class_manager or not self.class_manager.get_current_class():
+            print("⚠️ Cannot draw - no class selected")
+            return
+            
+        img_pos = self.widget_to_image(pos)
+        
+        # If this is the first point
+        if not self.drawing_bezier:
+            self.drawing_bezier = True
+            self.bezier_points = [img_pos]
+            self.undone_bezier_points = [] # Clear redo stack
+            print(f"🔷 Started bezier polygon at ({img_pos[0]}, {img_pos[1]})")
+        else:
+            # Check if closing the polygon (near first point)
+            if len(self.bezier_points) >= 3:
+                first_pos = self.bezier_points[0]
+                dist = math.hypot(img_pos[0] - first_pos[0], img_pos[1] - first_pos[1])
+                # If closer than 10 pixels (scaled)
+                if dist < 10.0 / self.scale:
+                    self.finish_bezier()
+                    return
+            
+            self.bezier_points.append(img_pos)
+            self.undone_bezier_points = [] # Clear redo stack on new point
+            print(f"🔷 Added bezier point ({img_pos[0]}, {img_pos[1]})")
+        
+        self.update()
+
+    def update_bezier_drawing(self, pos):
+        """Update cursor tracking for bezier polygon"""
+        pass  # Just need a method signature to match patterns, current_mouse_pos handles the preview drawing
+
+    def finish_bezier(self):
+        """Finish drawing bezier polygon"""
+        if len(self.bezier_points) >= 3:
+            if self.drawing_inner_cutout and self.cutout_target_shape:
+                # OUTER DRAWING MODE: new bezier = outer, original = inner
+                self.save_state()
+                target = self.cutout_target_shape
+                
+                # Save original points as inner (the hole)
+                original_points = list(target.points)
+                # For bezier shapes, we also need to preserve control points if we want them editable later,
+                # but currently hollow shapes just draw the inner_points as straight lines. Let's just store the points.
+                original_ctrl_points = getattr(target, 'control_points', None)
+                if original_ctrl_points:
+                    target.inner_control_points = list(original_ctrl_points)
+                
+                # Set new outer shape from the just-drawn bezier
+                target.from_pixel_points(self.bezier_points)
+                target.close_polygon()
+                
+                # Set original as inner cutout
+                target.inner_points = original_points
+                
+                print(f"✅ Hollow bezier created: outer={len(self.bezier_points)} pts, inner={len(original_points)} pts")
+                self.drawing_inner_cutout = False
+                self.cutout_target_shape = None
+                self.bezier_points = []
+                if hasattr(self, 'undone_bezier_points'):
+                    self.undone_bezier_points = []
+                self.update()
+            else:
+                current_class = self.class_manager.get_current_class()
+                if current_class:
+                    bezier = BezierPolygonShape(
+                        class_id=current_class.id,
+                        image_size=(self.image_width, self.image_height)
+                    )
+                    bezier.from_pixel_points(self.bezier_points)
+                    bezier.close_polygon()
+                    self.save_state()
+                    self.shapes.append(bezier)
+                    print(f"✅ Bezier polygon completed with {len(self.bezier_points)} points")
+                
+        self.drawing_bezier = False
+        self.bezier_points = []
+        if hasattr(self, 'undone_bezier_points'):
+            self.undone_bezier_points = []
+        self.update()
+
+    def cancel_bezier(self):
+        """Cancel bezier drawing"""
+        self.drawing_bezier = False
+        self.bezier_points = []
+        if hasattr(self, 'undone_bezier_points'):
+            self.undone_bezier_points = []
+        print("❌ Bezier cancelled")
         self.update()
         
     def start_circle_drawing(self, pos):
@@ -2136,27 +2696,23 @@ class AnnotationCanvas(QWidget):
         """Update shape position while moving"""
         if not self.moving or not self.selected_shape:
             return
-        
+
         current_pos = self.widget_to_image(pos)
         dx = (current_pos[0] - self.move_start_pos[0]) / self.image_width
         dy = (current_pos[1] - self.move_start_pos[1]) / self.image_height
-        
-        # Move shape based on type
-        if hasattr(self.selected_shape, 'x') and hasattr(self.selected_shape, 'y'):  # Box, Frame
-            self.selected_shape.x += dx
-            self.selected_shape.y += dy
-        elif hasattr(self.selected_shape, 'center_x') and hasattr(self.selected_shape, 'center_y'):  # Circle, Ellipse
-            self.selected_shape.center_x += dx
-            self.selected_shape.center_y += dy
-        elif hasattr(self.selected_shape, 'cx') and hasattr(self.selected_shape, 'cy'):  # Donut
-            self.selected_shape.cx += dx
-            self.selected_shape.cy += dy
-        elif hasattr(self.selected_shape, 'points'):  # Polygon
-            new_points = []
-            for nx, ny in self.selected_shape.points:
-                new_points.append((nx + dx, ny + dy))
-            self.selected_shape.points = new_points
-        
+
+        # Use the shape's own move() method so inner+outer always move as one unit
+        if hasattr(self.selected_shape, 'move'):
+            self.selected_shape.move(dx, dy)
+        else:
+            # Fallback for any shape without a move() method
+            if hasattr(self.selected_shape, 'x') and hasattr(self.selected_shape, 'y'):
+                self.selected_shape.x += dx
+                self.selected_shape.y += dy
+            elif hasattr(self.selected_shape, 'cx') and hasattr(self.selected_shape, 'cy'):
+                self.selected_shape.cx += dx
+                self.selected_shape.cy += dy
+
         self.move_start_pos = current_pos
         self.update()
 
@@ -2196,59 +2752,114 @@ class AnnotationCanvas(QWidget):
     # ===== UNDO/REDO METHODS =====
     def save_state(self):
         """Save current state for undo"""
-        # Create a copy of current shapes
-        state = []
-        for shape in self.shapes:
-            if hasattr(shape, 'copy'):
-                state.append(shape.copy())
-        
+        # Create a deep copy of all shapes
+        state = [shape.copy() for shape in self.shapes]
         self.undo_stack.append(state)
+        
+        # Clear redo stack when a new action is performed
+        self.redo_stack.clear()
+        
+        # Limit stack size
         if len(self.undo_stack) > self.max_stack_size:
             self.undo_stack.pop(0)
-        self.redo_stack.clear()  # Clear redo stack on new action
+            
         print(f"💾 State saved (undo stack: {len(self.undo_stack)})")
-
+        
     def undo(self):
         """Undo last action"""
         if not self.undo_stack:
             print("⚠️ Nothing to undo")
-            return False
-        
+            return
+            
         # Save current state to redo stack
-        current_state = []
-        for shape in self.shapes:
-            if hasattr(shape, 'copy'):
-                current_state.append(shape.copy())
+        current_state = [shape.copy() for shape in self.shapes]
         self.redo_stack.append(current_state)
         
         # Restore previous state
         self.shapes = self.undo_stack.pop()
+        
+        # Deselect any selected shape to prevent issues
         self.selected_shape = None
-        self.shape_selected.emit("none")
+        
         self.update()
         print(f"↩ Undo completed (undo: {len(self.undo_stack)}, redo: {len(self.redo_stack)})")
-        return True
-
+    
     def redo(self):
         """Redo last undone action"""
         if not self.redo_stack:
             print("⚠️ Nothing to redo")
-            return False
-        
+            return
+            
         # Save current state to undo stack
-        current_state = []
-        for shape in self.shapes:
-            if hasattr(shape, 'copy'):
-                current_state.append(shape.copy())
+        current_state = [shape.copy() for shape in self.shapes]
         self.undo_stack.append(current_state)
         
         # Restore next state
         self.shapes = self.redo_stack.pop()
+        
+        # Deselect any selected shape to prevent issues
         self.selected_shape = None
-        self.shape_selected.emit("none")
+        
         self.update()
         print(f"↪ Redo completed (undo: {len(self.undo_stack)}, redo: {len(self.redo_stack)})")
-        return True
+
+    def undo_last_point(self):
+        """Undo the last drawn point in any multi-point shape (polygon, bezier)"""
+        if self.polygon_points and len(self.polygon_points) > 0:
+            pt = self.polygon_points.pop()
+            if not hasattr(self, 'undone_polygon_points'):
+                self.undone_polygon_points = []
+            self.undone_polygon_points.append(pt)
+            
+            # Warp cursor to the new last point
+            if self.polygon_points:
+                last_pt = self.polygon_points[-1]
+                wx = int(last_pt[0] * self.scale + self.offset_x)
+                wy = int(last_pt[1] * self.scale + self.offset_y)
+                QCursor.setPos(self.mapToGlobal(QPoint(wx, wy)))
+                
+            self.update()
+            print(f"⟲ Undid last polygon point: {pt}")
+        elif self.bezier_points and len(self.bezier_points) > 0:
+            pt = self.bezier_points.pop()
+            if not hasattr(self, 'undone_bezier_points'):
+                self.undone_bezier_points = []
+            self.undone_bezier_points.append(pt)
+            
+            # Warp cursor to the new last point
+            if self.bezier_points:
+                last_pt = self.bezier_points[-1]
+                wx = int(last_pt[0] * self.scale + self.offset_x)
+                wy = int(last_pt[1] * self.scale + self.offset_y)
+                QCursor.setPos(self.mapToGlobal(QPoint(wx, wy)))
+                
+            self.update()
+            print(f"⟲ Undid last bezier point: {pt}")
+
+    def redo_last_point(self):
+        """Redo the last drawn point in any multi-point shape"""
+        if hasattr(self, 'undone_polygon_points') and self.undone_polygon_points and self.current_shape_type == 'polygon':
+            pt = self.undone_polygon_points.pop()
+            self.polygon_points.append(pt)
+            
+            # Warp cursor to the re-added point
+            wx = int(pt[0] * self.scale + self.offset_x)
+            wy = int(pt[1] * self.scale + self.offset_y)
+            QCursor.setPos(self.mapToGlobal(QPoint(wx, wy)))
+            
+            self.update()
+            print(f"⟳ Redid last polygon point: {pt}")
+        elif hasattr(self, 'undone_bezier_points') and self.undone_bezier_points and self.current_shape_type == 'bezier_polygon':
+            pt = self.undone_bezier_points.pop()
+            self.bezier_points.append(pt)
+            
+            # Warp cursor to the re-added point
+            wx = int(pt[0] * self.scale + self.offset_x)
+            wy = int(pt[1] * self.scale + self.offset_y)
+            QCursor.setPos(self.mapToGlobal(QPoint(wx, wy)))
+            
+            self.update()
+            print(f"⟳ Redid last bezier point: {pt}")
     
     # ==========================================
     #  Right-click context menu
@@ -2278,10 +2889,14 @@ class AnnotationCanvas(QWidget):
         """)
         
         # --- While drawing polygon ---
-        if self.polygon_points:
-            if len(self.polygon_points) > 1:
+        if self.drawing_polygon or self.polygon_points:
+            if len(self.polygon_points) > 0:
                 undo_pt = menu.addAction("⟲ Undo Last Point")
-                undo_pt.triggered.connect(self.undo_last_polygon_point)
+                undo_pt.triggered.connect(self.undo_last_point)
+                
+                if hasattr(self, 'undone_polygon_points') and self.undone_polygon_points:
+                    redo_pt = menu.addAction("⟳ Redo Last Point")
+                    redo_pt.triggered.connect(self.redo_last_point)
             
             if len(self.polygon_points) >= 3:
                 finish = menu.addAction("✓ Finish Polygon (Enter)")
@@ -2289,6 +2904,26 @@ class AnnotationCanvas(QWidget):
             
             cancel = menu.addAction("✗ Cancel Drawing (Esc)")
             cancel.triggered.connect(self.cancel_polygon)
+            
+            menu.exec_(event.globalPos())
+            return
+
+        # --- While drawing bezier polygon ---
+        if self.drawing_bezier or self.bezier_points:
+            if len(self.bezier_points) > 0:
+                undo_pt = menu.addAction("⟲ Undo Last Point")
+                undo_pt.triggered.connect(self.undo_last_point)
+                
+                if hasattr(self, 'undone_bezier_points') and self.undone_bezier_points:
+                    redo_pt = menu.addAction("⟳ Redo Last Point")
+                    redo_pt.triggered.connect(self.redo_last_point)
+            
+            if len(self.bezier_points) >= 3:
+                finish = menu.addAction("✓ Finish Bezier Polygon (Enter)")
+                finish.triggered.connect(self.finish_bezier)
+            
+            cancel = menu.addAction("✗ Cancel Drawing (Esc)")
+            cancel.triggered.connect(self.cancel_bezier)
             
             menu.exec_(event.globalPos())
             return
@@ -2302,14 +2937,19 @@ class AnnotationCanvas(QWidget):
             copy_act.triggered.connect(self.copy_selected)
             
             # Hollow shape options for polygons
-            if self.selected_shape.type == 'polygon':
+            if self.selected_shape.type in ('polygon', 'bezier_polygon'):
                 menu.addSeparator()
-                if not self.selected_shape.inner_points:
+                if not getattr(self.selected_shape, 'inner_points', None):
                     outer_act = menu.addAction("◎ Draw Outer Shape (make hollow)")
                     outer_act.triggered.connect(self.start_outer_drawing)
                 else:
                     remove_hollow = menu.addAction("⊘ Remove Hollow (make solid)")
                     remove_hollow.triggered.connect(self.remove_inner_cutout)
+                
+            # Save as template option (for ALL shapes)
+            menu.addSeparator()
+            save_tmpl_act = menu.addAction("💾 Save as Template")
+            save_tmpl_act.triggered.connect(self.save_selected_as_template)
             
             menu.addSeparator()
         
@@ -2331,12 +2971,7 @@ class AnnotationCanvas(QWidget):
     
     def undo_last_polygon_point(self):
         """Remove the last point added during polygon drawing"""
-        if self.polygon_points and len(self.polygon_points) > 1:
-            removed = self.polygon_points.pop()
-            print(f"⟲ Undid last polygon point: {removed}")
-            self.update()
-        elif self.polygon_points and len(self.polygon_points) == 1:
-            self.cancel_polygon()
+        self.undo_last_point()
     
     def start_outer_drawing(self):
         """Start drawing outer shape for the selected polygon (to make it hollow).
@@ -2345,6 +2980,8 @@ class AnnotationCanvas(QWidget):
             self.drawing_inner_cutout = True  # reuse the flag name
             self.cutout_target_shape = self.selected_shape
             self.polygon_points = []
+            if hasattr(self, 'undone_polygon_points'):
+                self.undone_polygon_points = []
             # Deselect so we can draw around it
             self.selected_shape.selected = False
             self.selected_shape = None
@@ -2362,6 +2999,171 @@ class AnnotationCanvas(QWidget):
             self.selected_shape.inner_points = []
             print("⊘ Hollow effect removed")
             self.update()
+    
+    def save_selected_as_template(self):
+        """Save the selected shape as a reusable template"""
+        from PyQt5.QtWidgets import QInputDialog
+        import math
+        
+        if not self.selected_shape:
+            return
+            
+        name, ok = QInputDialog.getText(self, "Save as Template", "Template name:")
+        if not (ok and name and name.strip()):
+            return
+            
+        name = name.strip()
+        
+        # Convert the shape to pixel points
+        pixel_points = []
+        shape = self.selected_shape
+        t = shape.type
+        
+        if t == 'polygon':
+            if hasattr(shape, 'closed') and not shape.closed:
+                print("❌ Cannot save unclosed polygon as template")
+                return
+            pixel_points = shape.to_pixel_points()
+        elif t == 'bezier_polygon':
+            if hasattr(shape, 'closed') and not shape.closed:
+                print("❌ Cannot save unclosed bezier polygon as template")
+                return
+            pixel_points = shape.to_pixel_points()
+        elif t == 'box':
+            x1, y1, x2, y2 = shape.to_pixels()
+            pixel_points = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+        elif t == 'circle':
+            cx, cy, r = shape.to_pixels()
+            for i in range(32):
+                angle = 2 * math.pi * i / 32
+                px = cx + r * math.cos(angle)
+                py = cy + r * math.sin(angle)
+                pixel_points.append((int(px), int(py)))
+        elif t == 'ellipse':
+            cx, cy, rx, ry = shape.to_pixels()
+            for i in range(32):
+                angle = 2 * math.pi * i / 32
+                px = cx + rx * math.cos(angle)
+                py = cy + ry * math.sin(angle)
+                pixel_points.append((int(px), int(py)))
+        elif t == 'frame':
+            x, y, w, h = shape.to_pixels()
+            pixel_points = [(x, y), (x+w, y), (x+w, y+h), (x, y+h)]
+            native = {
+                'w': w, 'h': h,
+                't_top': getattr(shape, 't_top', 20.0),
+                't_bottom': getattr(shape, 't_bottom', 20.0),
+                't_left': getattr(shape, 't_left', 20.0),
+                't_right': getattr(shape, 't_right', 20.0)
+            }
+        elif t == 'donut':
+            cx, cy, outer_r, inner_r = shape.to_pixels()
+            native = {'outer_r': outer_r, 'inner_r': inner_r}
+            for i in range(32):
+                angle = 2 * math.pi * i / 32
+                px = cx + outer_r * math.cos(angle)
+                py = cy + outer_r * math.sin(angle)
+                pixel_points.append((int(px), int(py)))
+        elif t == 'hollow_ellipse':
+            cx, cy, outer_rx, outer_ry, inner_rx, inner_ry = shape.to_pixels()
+            native = {'outer_rx': outer_rx, 'outer_ry': outer_ry, 'inner_rx': inner_rx, 'inner_ry': inner_ry}
+            for i in range(32):
+                angle = 2 * math.pi * i / 32
+                px = cx + outer_rx * math.cos(angle)
+                py = cy + outer_ry * math.sin(angle)
+                pixel_points.append((int(px), int(py)))
+            
+        if not pixel_points or len(pixel_points) < 3:
+            print("❌ Invalid shape for template")
+            return
+        
+        # Check for inner cutouts (hollow shapes)
+        inner_pixel_points = None
+        if getattr(shape, 'inner_points', None):
+            if hasattr(shape, '_norm_to_px'):
+                inner_pixel_points = [shape._norm_to_px(px, py) for px, py in shape.inner_points]
+            elif hasattr(shape, 'get_inner_pixel_points'):
+                inner_pixel_points = shape.get_inner_pixel_points()
+        elif t == 'hollow_ellipse':
+            # Pre-calculated in the loop above
+            inner_pixel_points = []
+            wirx = getattr(shape, 'inner_rx', 0)
+            wiry = getattr(shape, 'inner_ry', 0)
+            if wirx > 0 and wiry > 0:
+                for i in range(32):
+                    angle = 2 * math.pi * i / 32
+                    px = cx + wirx * math.cos(angle)
+                    py = cy + wiry * math.sin(angle)
+                    inner_pixel_points.append((int(px), int(py)))
+        elif t == 'donut':
+            inner_pixel_points = []
+            inner_r = getattr(shape, 'inner_radius', 0)
+            if inner_r > 0:
+                for i in range(32):
+                    angle = 2 * math.pi * i / 32
+                    px = cx + inner_r * math.cos(angle)
+                    py = cy + inner_r * math.sin(angle)
+                    inner_pixel_points.append((int(px), int(py)))
+                
+        ctrl_points = None
+        inner_ctrl_points = None
+        if t == 'bezier_polygon':
+            ctrl_points = []
+            for c in getattr(shape, 'ctrl', []):
+                if c is not None:
+                    ctrl_points.append((c[0] * self.image_width, c[1] * self.image_height))
+                else:
+                    ctrl_points.append(None)
+                    
+            if getattr(shape, 'inner_control_points', None):
+                inner_ctrl_points = []
+                for c in shape.inner_control_points:
+                    if c is not None:
+                        inner_ctrl_points.append((c[0] * self.image_width, c[1] * self.image_height))
+                    else:
+                        inner_ctrl_points.append(None)
+                
+        # Restore point loops for native parameters
+        native = {}
+        if t == 'box':
+            x1, y1, x2, y2 = shape.to_pixels()
+            native = {'w': x2 - x1, 'h': y2 - y1}
+        elif t == 'circle':
+            cx, cy, r = shape.to_pixels()
+            native = {'r': r}
+        elif t == 'ellipse':
+            cx, cy, rx, ry = shape.to_pixels()
+            native = {'rx': rx, 'ry': ry}
+        elif t == 'frame':
+            x, y, w, h = shape.to_pixels()
+            native = {
+                'w': w, 'h': h,
+                't_top': getattr(shape, 't_top', 20.0),
+                't_bottom': getattr(shape, 't_bottom', 20.0),
+                't_left': getattr(shape, 't_left', 20.0),
+                't_right': getattr(shape, 't_right', 20.0)
+            }
+        elif t == 'donut':
+            cx, cy, outer_r, inner_r = shape.to_pixels()
+            native = {'outer_r': outer_r, 'inner_r': inner_r}
+        elif t == 'hollow_ellipse':
+            cx, cy, outer_rx, outer_ry, inner_rx, inner_ry = shape.to_pixels()
+            native = {'outer_rx': outer_rx, 'outer_ry': outer_ry, 'inner_rx': inner_rx, 'inner_ry': inner_ry}
+                
+        success = self.template_manager.add_template(
+            name, pixel_points, self.image_width, self.image_height, 
+            inner_pixel_points=inner_pixel_points,
+            shape_type=t,
+            ctrl_points=ctrl_points,
+            inner_ctrl_points=inner_ctrl_points,
+            native_params=native
+        )
+        if success:
+            print(f"💾 Template '{name}' saved from selected shape")
+            if hasattr(self, 'parent_window') and self.parent_window:
+                self.parent_window.update_template_dropdown()
+        else:
+            print("❌ Failed to save template")
     
     def paste_at_cursor(self, pos):
         """Paste clipboard shape at cursor position"""
