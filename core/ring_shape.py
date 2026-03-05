@@ -53,14 +53,9 @@ class FrameShape(Shape):
         return ix, iy, iw, ih
     
     def contains_point(self, px, py):
-        """Check if point is in ring (in outer but not inner)"""
+        """Check if point is within the outer rect (full bounding box, for selection/move)"""
         x, y, w, h = self.to_pixels()
-        ix, iy, iw, ih = self.get_inner_rect()
-        
-        in_outer = x <= px <= x + w and y <= py <= y + h
-        in_inner = ix <= px <= ix + iw and iy <= py <= iy + ih
-        
-        return in_outer and not in_inner
+        return x <= px <= x + w and y <= py <= y + h
     
     def move(self, dx, dy):
         """Move the frame by delta (normalized)"""
@@ -243,10 +238,10 @@ class DonutShape(Shape):
         self.inner_r = r * 0.45 / d  # Inner radius 45% of outer
     
     def contains_point(self, px, py):
-        """Check if point is in ring (in outer but not inner)"""
+        """Check if point is within the outer circle (full bounding area, for selection/move)"""
         cx, cy, outer_r, inner_r = self.to_pixels()
         dist = math.sqrt((px - cx)**2 + (py - cy)**2)
-        return dist <= outer_r and dist >= inner_r
+        return dist <= outer_r
     
     def move(self, dx, dy):
         """Move the donut by delta (normalized)"""
@@ -423,20 +418,12 @@ class HollowEllipseShape(Shape):
         self.inner_ry = (ry * 0.45) / self.image_height
     
     def contains_point(self, px, py):
-        """Check if point is in ring (in outer ellipse but not inner)"""
+        """Check if point is within the outer ellipse (full bounding area, for selection/move)"""
         cx, cy, orx, ory, irx, iry = self.to_pixels()
         if orx == 0 or ory == 0:
             return False
-        # Check outer ellipse
         outer_val = ((px - cx) / orx) ** 2 + ((py - cy) / ory) ** 2
-        in_outer = outer_val <= 1
-        # Check inner ellipse
-        if irx > 0 and iry > 0:
-            inner_val = ((px - cx) / irx) ** 2 + ((py - cy) / iry) ** 2
-            in_inner = inner_val <= 1
-        else:
-            in_inner = False
-        return in_outer and not in_inner
+        return outer_val <= 1
     
     def move(self, dx, dy):
         """Move the hollow ellipse by delta (normalized)"""

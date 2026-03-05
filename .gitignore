@@ -21,3 +21,9 @@ ENV/
 
 # Virtual Environment
 venv/
+
+#ignore temp files
+tmpclaude-*
+
+#ignore md files
+*.md

@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (
     QStatusBar, QLabel, QWidget, QVBoxLayout,
     QHBoxLayout, QMessageBox, QFileDialog, QSplitter,
     QListWidget, QListWidgetItem, QAbstractItemView, 
-    QComboBox, QFrame, QPushButton, QShortcut
+    QComboBox, QFrame, QPushButton, QShortcut, QTextEdit, QLineEdit, QScrollArea
 )
 from PyQt5.QtCore import Qt, QSize, pyqtSignal
 from PyQt5.QtGui import QIcon, QKeySequence, QFont, QColor, QPalette, QPolygonF
@@ -210,10 +210,10 @@ class ShortcutBar(QFrame):
         layout.setContentsMargins(10, 0, 10, 0)
         layout.setSpacing(5)
         
-        # Shortcuts - UPDATED VERSION (L/J/K/I REMOVED)
         shortcuts = [
             ("B", "Box Tool"),
             ("P", "Polygon Tool"),
+            ("Q", "Bezier Curve"),
             ("C", "Circle Tool"),
             ("E", "Ellipse Tool"),
             ("F", "Frame"),
@@ -222,6 +222,9 @@ class ShortcutBar(QFrame):
             ("Del", "Delete"),
             ("Ctrl+C/V", "Copy/Paste"),
             ("Ctrl+Z/Y", "Undo/Redo"),
+            ("Ctrl+Drag", "Drag Copy"),
+            ("Shift+Scroll", "Scale Shape"),
+            ("Right Click", "Point Undo/Redo"),
             ("Space", "Pan Mode")
         ]
         
@@ -337,17 +340,27 @@ class MainWindow(QMainWindow):
                 background-color: #3a3a3a;
             }
             QPushButton {
-                background-color: #2b2b2b;
-                color: #ffffff;
-                border: 1px solid #3a3a3a;
-                border-radius: 3px;
-                padding: 5px;
-            }
-            QPushButton:hover {
+            background-color: #2b2b2b;
+            color: #ffffff;
+            border: 1px solid #3a3a3a;
+            border-radius: 3px;
+            padding: 5px;
+        }
+        QPushButton:hover {
                 background-color: #3a3a3a;
             }
             QFrame {
                 color: #ffffff;
+            }
+            QDialog {
+                background-color: #2b2b2b;
+                color: #ffffff;
+            }
+            QLineEdit {
+                background-color: #1e1e1e;
+                color: #ffffff;
+                border: 1px solid #555555;
+                padding: 4px;
             }
         """)
         
@@ -473,15 +486,9 @@ class MainWindow(QMainWindow):
         nav_title.setEnabled(False)
         shortcuts_menu.addSeparator()
         
-        prev_action = QAction('Previous Image', self)
-        prev_action.setShortcut('A')
-        prev_action.triggered.connect(self.prev_image)
-        shortcuts_menu.addAction(prev_action)
+
         
-        next_action = QAction('Next Image', self)
-        next_action.setShortcut('D')
-        next_action.triggered.connect(self.next_image)
-        shortcuts_menu.addAction(next_action)
+
         
         pan_action = QAction('Toggle Pan Mode', self)
         pan_action.setShortcut('Space')
@@ -519,6 +526,11 @@ class MainWindow(QMainWindow):
         polygon_shortcut.setShortcut('P')
         polygon_shortcut.triggered.connect(lambda: self.set_shape_type('polygon'))
         shortcuts_menu.addAction(polygon_shortcut)
+        
+        bezier_shortcut = QAction('Bezier Curve', self)
+        bezier_shortcut.setShortcut('Q')
+        bezier_shortcut.triggered.connect(lambda: self.set_shape_type('bezier_polygon'))
+        shortcuts_menu.addAction(bezier_shortcut)
         
         circle_shortcut = QAction('Circle Tool', self)
         circle_shortcut.setShortcut('C')
@@ -596,6 +608,25 @@ class MainWindow(QMainWindow):
         cancel_shortcut.setShortcut('Esc')
         cancel_shortcut.triggered.connect(self.cancel_operation)
         shortcuts_menu.addAction(cancel_shortcut)
+        
+        shortcuts_menu.addSeparator()
+        
+        # New Feature Shortcuts
+        feature_title = shortcuts_menu.addAction('🆕 NEW FEATURES')
+        feature_title.setEnabled(False)
+        shortcuts_menu.addSeparator()
+        
+        scale_help = QAction('Scale Pattern/Shape (Shift+Scroll)', self)
+        scale_help.setEnabled(False)
+        shortcuts_menu.addAction(scale_help)
+        
+        drag_copy_help = QAction('Clone Shape (Ctrl + Drag)', self)
+        drag_copy_help.setEnabled(False)
+        shortcuts_menu.addAction(drag_copy_help)
+        
+        undo_point_help = QAction('Undo Last Point (Right-Click Menu)', self)
+        undo_point_help.setEnabled(False)
+        shortcuts_menu.addAction(undo_point_help)
         
         # ===== HELP MENU =====
         help_menu = menubar.addMenu('&Help')
@@ -725,6 +756,10 @@ class MainWindow(QMainWindow):
         self.shape_btn_polygon.clicked.connect(lambda: self.set_shape_type('polygon'))
         layout.addWidget(self.shape_btn_polygon)
         
+        self.shape_btn_bezier = ToolButton("polygon", "Bezier Curve (Q)") # reuse polygon icon for now
+        self.shape_btn_bezier.clicked.connect(lambda: self.set_shape_type('bezier_polygon'))
+        layout.addWidget(self.shape_btn_bezier)
+        
         self.shape_btn_circle = ToolButton("circle", "Circle (C)")
         self.shape_btn_circle.clicked.connect(lambda: self.set_shape_type('circle'))
         layout.addWidget(self.shape_btn_circle)
@@ -757,28 +792,43 @@ class MainWindow(QMainWindow):
         template_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(template_label)
         
-        self.shape_btn_template = ToolButton("template", "Template (T)")
-        self.shape_btn_template.clicked.connect(lambda: self.set_shape_type('template'))
+        self.shape_btn_template = ToolButton("template", "Place Template / Stamp")
+        self.shape_btn_template.setCheckable(True)
+        self.shape_btn_template.clicked.connect(lambda: self.set_shape_type('stamp'))
         layout.addWidget(self.shape_btn_template)
         
         # Template dropdown
         self.template_combo = QComboBox()
+        self.template_combo.setMinimumWidth(50)
+        self.template_combo.setMinimumHeight(32)
         self.template_combo.setStyleSheet("""
             QComboBox {
                 background-color: #2b2b2b;
                 color: #ffffff;
-                border: 1px solid #3a3a3a;
-                border-radius: 3px;
-                padding: 4px;
-                font-size: 11px;
+                border: 1px solid #555;
+                border-radius: 4px;
+                padding: 4px 6px;
+                font-size: 12px;
+                min-height: 28px;
+            }
+            QComboBox:hover {
+                border: 1px solid #4a7ab5;
             }
             QComboBox::drop-down {
                 border: none;
+                width: 20px;
+            }
+            QComboBox::down-arrow {
+                width: 10px;
+                height: 10px;
             }
             QComboBox QAbstractItemView {
                 background-color: #2b2b2b;
                 color: #ffffff;
                 selection-background-color: #3a5a8a;
+                font-size: 12px;
+                padding: 4px;
+                min-width: 180px;
             }
         """)
         self.template_combo.addItem("-- No template --")
@@ -913,16 +963,26 @@ class MainWindow(QMainWindow):
             # Update button states
             self.shape_btn_box.setChecked(shape_type == 'box')
             self.shape_btn_polygon.setChecked(shape_type == 'polygon')
+            self.shape_btn_bezier.setChecked(shape_type == 'bezier_polygon')
             self.shape_btn_circle.setChecked(shape_type == 'circle')
             self.shape_btn_ellipse.setChecked(shape_type == 'ellipse')
             self.shape_btn_frame.setChecked(shape_type == 'frame')
             self.shape_btn_donut.setChecked(shape_type == 'donut')
             self.shape_btn_hollow_ellipse.setChecked(shape_type == 'hollow_ellipse')
-            self.shape_btn_template.setChecked(shape_type == 'template')
+            self.shape_btn_template.setChecked(shape_type in ('template', 'stamp'))
             self.shape_btn_none.setChecked(shape_type == 'none' or shape_type is None)
             
             if shape_type and shape_type != 'none':
                 self.status_bar.showMessage(f"Drawing tool: {shape_type}", 1000)
+                # if switching to stamp mode, make sure a template name is loaded
+                if shape_type == 'stamp' and hasattr(self, 'template_combo') and hasattr(self, 'canvas'):
+                    text = self.template_combo.currentText()
+                    if "No template" not in text:
+                        name = text.replace("📋 ", "")
+                        self.canvas.stamp_template_name = name
+                        self.status_bar.showMessage(f"Stamp mode: '{name}' — click center + drag to scale", 3000)
+                    else:
+                        self.status_bar.showMessage("Select a template from the dropdown to use the Stamp tool", 3000)
             else:
                 self.status_bar.showMessage("Selection mode - click on shapes to select them", 1000)
     
@@ -1107,8 +1167,13 @@ class MainWindow(QMainWindow):
     
     def paste_shape(self):
         if hasattr(self, 'canvas') and hasattr(self.canvas, 'pixmap') and self.canvas.pixmap:
-            center = self.canvas.rect().center()
-            self.canvas.start_paste(center)
+            # Paste at cursor location
+            from PyQt5.QtGui import QCursor
+            pos = self.canvas.mapFromGlobal(QCursor.pos())
+            # Ensure it's inside the canvas area roughly
+            if not self.canvas.rect().contains(pos):
+                pos = self.canvas.rect().center()
+            self.canvas.start_paste(pos)
     
     def delete_selected(self):
         if hasattr(self, 'canvas'):

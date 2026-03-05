@@ -38,8 +38,17 @@ class Shape(ABC):
         pass
     
     def copy(self):
-        """Create a copy of this shape"""
+        """Create a deep copy of this shape"""
+        import copy as _copy
         new_shape = self.__class__.__new__(self.__class__)
-        new_shape.__dict__ = self.__dict__.copy()
+        new_shape.__dict__ = {}
+        for k, v in self.__dict__.items():
+            if isinstance(v, list):
+                new_shape.__dict__[k] = [
+                    tuple(item) if isinstance(item, (list, tuple)) else item
+                    for item in v
+                ]
+            else:
+                new_shape.__dict__[k] = v
         new_shape.id = str(uuid.uuid4())[:8]
         return new_shape
