@@ -36,6 +36,8 @@ class CircleShape(Shape):
         """Move the circle by delta (normalized)"""
         self.center_x += dx
         self.center_y += dy
+        if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'move'):
+            self.inner_shape.move(dx, dy)
         
     def get_resize_handles(self):
         """Get resize handles - only corner handles for simplicity"""
@@ -48,9 +50,28 @@ class CircleShape(Shape):
             'bottom_left': (cx - r, cy + r),
             'bottom_right': (cx + r, cy + r)
         }
+        
+        if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'get_resize_handles'):
+            inner_handles = self.inner_shape.get_resize_handles()
+            for k, (hx, hy) in inner_handles.items():
+                handles[f'inner_{k}'] = (hx, hy)
+                
         return handles
     
+    def begin_resize(self):
+        """Store original geometry before resizing starts"""
+        self._resize_origin = self.to_pixels()  # Stores (cx, cy, r)
+        if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'begin_resize'):
+            self.inner_shape.begin_resize()
+        return True
+        
     def resize_from_handle(self, handle_name, dx, dy):
+        if handle_name.startswith('inner_'):
+            if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'resize_from_handle'):
+                inner_handle = handle_name.replace('inner_', '', 1)
+                return self.inner_shape.resize_from_handle(inner_handle, dx, dy)
+            return False
+            
         if self._resize_origin is None:
             return False
 
@@ -107,13 +128,7 @@ class CircleShape(Shape):
             'center_y': self.center_y,
             'radius': self.radius
         }
-    
-    def begin_resize(self):
-        """Store original geometry before resizing starts"""
-        self._resize_origin = self.to_pixels()  # Stores (cx, cy, r)
-        return True
-        
-    @classmethod
+
     def from_dict(cls, data, image_size):
         """Create from dictionary"""
         circle = cls(

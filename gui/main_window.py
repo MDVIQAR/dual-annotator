@@ -194,56 +194,69 @@ class ShortcutBar(QFrame):
                 padding: 0 10px;
             }
             QLabel#shortcut {
-                color: #8ab4f8;
+                color: #ffffff;
                 font-weight: bold;
-                background-color: #1e1e1e;
-                padding: 3px 8px;
-                border-radius: 3px;
-                margin: 2px;
+                font-size: 12px;
+                background-color: #3b82f6; /* Modern Blue */
+                padding: 2px 6px;
+                border-radius: 4px;
+                margin-right: 2px;
             }
             QLabel#desc {
-                color: #ddd;
+                color: #a1a1aa;
+                font-size: 12px;
+                font-weight: 500;
+                margin-right: 15px;
             }
         """)
         
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 0, 10, 0)
-        layout.setSpacing(5)
+        self.layout = QHBoxLayout(self)
+        self.layout.setContentsMargins(10, 0, 10, 0)
+        self.layout.setSpacing(5)
+        
+        self.shortcut_items = {} # key -> (key_label, desc_label, separator_label)
         
         shortcuts = [
-            ("B", "Box Tool"),
-            ("P", "Polygon Tool"),
-            ("Q", "Bezier Curve"),
-            ("C", "Circle Tool"),
-            ("E", "Ellipse Tool"),
+            ("B", "Box"),
+            ("P", "Polygon"),
+            ("Q", "Bezier"),
+            ("C", "Circle"),
+            ("E", "Ellipse"),
             ("F", "Frame"),
             ("O", "Donut"),
             ("H", "Hollow Ellipse"),
-            ("Del", "Delete"),
-            ("Ctrl+C/V", "Copy/Paste"),
-            ("Ctrl+Z/Y", "Undo/Redo"),
-            ("Ctrl+Drag", "Drag Copy"),
-            ("Shift+Scroll", "Scale Shape"),
-            ("Right Click", "Point Undo/Redo"),
-            ("Space", "Pan Mode")
+            ("T", "Stamp")
         ]
         
-        for key, desc in shortcuts:
+        for i, (key, desc) in enumerate(shortcuts):
             key_label = QLabel(key)
             key_label.setObjectName("shortcut")
-            layout.addWidget(key_label)
+            self.layout.addWidget(key_label)
             
             desc_label = QLabel(desc)
             desc_label.setObjectName("desc")
-            layout.addWidget(desc_label)
+            self.layout.addWidget(desc_label)
             
-            # Add separator
-            if shortcuts.index((key, desc)) < len(shortcuts) - 1:
+            sep = None
+            # Add subtle separator
+            if i < len(shortcuts) - 1:
                 sep = QLabel("|")
-                sep.setStyleSheet("color: #444;")
-                layout.addWidget(sep)
+                sep.setStyleSheet("color: #3f3f46; font-size: 10px; margin-right: 10px;")
+                self.layout.addWidget(sep)
+            
+            self.shortcut_items[desc.lower().replace(" ", "_")] = (key_label, desc_label, sep)
         
-        layout.addStretch()
+        self.layout.addStretch()
+
+    def set_item_visible(self, item_key, visible):
+        """Toggle visibility of a shortcut item group"""
+        if item_key in self.shortcut_items:
+            key_label, desc_label, sep = self.shortcut_items[item_key]
+            key_label.setVisible(visible)
+            desc_label.setVisible(visible)
+            if sep:
+                sep.setVisible(visible)
+
 
 class MainWindow(QMainWindow):
     """Main application window with redesigned layout"""
@@ -279,6 +292,10 @@ class MainWindow(QMainWindow):
         # Set keyboard shortcuts for navigation
         QShortcut(QKeySequence('A'), self, self.prev_image)
         QShortcut(QKeySequence('D'), self, self.next_image)   
+
+        # Initialize with YOLO mode constraints
+        self.switch_mode('yolo')
+
         
     def set_dark_theme(self):
         """Set dark theme for the application"""
@@ -371,9 +388,9 @@ class MainWindow(QMainWindow):
             self.class_manager.add_class("Person", "#4ECDC4")
             self.class_manager.add_class("Bicycle", "#45B7D1")
             self.class_manager.add_class("Dog", "#96CEB4")
-            print("✅ Default classes added")
+            print("Success: Default classes added")
         except Exception as e:
-            print(f"⚠️ Could not add default classes: {e}")
+            print(f"Error: Could not add default classes: {e}")
         
     def setup_menu_bar(self):
         """Create the menu bar with all menus and actions"""
@@ -542,20 +559,21 @@ class MainWindow(QMainWindow):
         ellipse_shortcut.triggered.connect(lambda: self.set_shape_type('ellipse'))
         shortcuts_menu.addAction(ellipse_shortcut)
         
-        frame_shortcut = QAction('Frame Tool', self)
-        frame_shortcut.setShortcut('F')
-        frame_shortcut.triggered.connect(lambda: self.set_shape_type('frame'))
-        shortcuts_menu.addAction(frame_shortcut)
+        self.frame_action = QAction('Frame Tool', self)
+        self.frame_action.setShortcut('F')
+        self.frame_action.triggered.connect(lambda: self.set_shape_type('frame'))
+        shortcuts_menu.addAction(self.frame_action)
         
-        donut_shortcut = QAction('Donut Tool', self)
-        donut_shortcut.setShortcut('O')
-        donut_shortcut.triggered.connect(lambda: self.set_shape_type('donut'))
-        shortcuts_menu.addAction(donut_shortcut)
+        self.donut_action = QAction('Donut Tool', self)
+        self.donut_action.setShortcut('O')
+        self.donut_action.triggered.connect(lambda: self.set_shape_type('donut'))
+        shortcuts_menu.addAction(self.donut_action)
         
-        hollow_ellipse_shortcut = QAction('Hollow Ellipse Tool', self)
-        hollow_ellipse_shortcut.setShortcut('H')
-        hollow_ellipse_shortcut.triggered.connect(lambda: self.set_shape_type('hollow_ellipse'))
-        shortcuts_menu.addAction(hollow_ellipse_shortcut)
+        self.hollow_ellipse_action = QAction('Hollow Ellipse Tool', self)
+        self.hollow_ellipse_action.setShortcut('H')
+        self.hollow_ellipse_action.triggered.connect(lambda: self.set_shape_type('hollow_ellipse'))
+        shortcuts_menu.addAction(self.hollow_ellipse_action)
+
         
         template_shortcut = QAction('Template Tool', self)
         template_shortcut.setShortcut('T')
@@ -1045,22 +1063,51 @@ class MainWindow(QMainWindow):
     
     def switch_mode(self, mode):
         """Switch between YOLO and U-Net modes"""
-        if mode == 'yolo':
-            self.yolo_mode_action.setChecked(True)
-            self.unet_mode_action.setChecked(False)
-            self.mode_label.setText("Mode: YOLO")
-            self.canvas.set_mode('yolo')
-            self.mode_btn_yolo.setChecked(True)
-            self.mode_btn_unet.setChecked(False)
-        else:
-            self.yolo_mode_action.setChecked(False)
-            self.unet_mode_action.setChecked(True)
-            self.mode_label.setText("Mode: U-Net")
-            self.canvas.set_mode('unet')
-            self.mode_btn_yolo.setChecked(False)
-            self.mode_btn_unet.setChecked(True)
+        is_unet = (mode == 'unet')
+        
+        # Update menu actions
+        self.yolo_mode_action.setChecked(not is_unet)
+        self.unet_mode_action.setChecked(is_unet)
+        
+        # Update mode buttons
+        self.mode_btn_yolo.setChecked(not is_unet)
+        self.mode_btn_unet.setChecked(is_unet)
+        
+        # Update status bar
+        self.mode_label.setText(f"Mode: {'U-Net' if is_unet else 'YOLO'}")
+        
+        # Update canvas mode
+        if hasattr(self, 'canvas'):
+            self.canvas.set_mode(mode)
+        
+        # Show/Hide hollow shape options
+        # Buttons
+        self.shape_btn_frame.setVisible(is_unet)
+        self.shape_btn_donut.setVisible(is_unet)
+        self.shape_btn_hollow_ellipse.setVisible(is_unet)
+        
+        # Menu Shortcuts
+        if hasattr(self, 'frame_action'):
+            self.frame_action.setVisible(is_unet)
+        if hasattr(self, 'donut_action'):
+            self.donut_action.setVisible(is_unet)
+        if hasattr(self, 'hollow_ellipse_action'):
+            self.hollow_ellipse_action.setVisible(is_unet)
             
+        # Shortcut Bar Items
+        if hasattr(self, 'shortcut_bar'):
+            self.shortcut_bar.set_item_visible('frame', is_unet)
+            self.shortcut_bar.set_item_visible('donut', is_unet)
+            self.shortcut_bar.set_item_visible('hollow_ellipse', is_unet)
+            
+        # If in YOLO and a hollow shape was selected, switch back to Box
+        if not is_unet and hasattr(self, 'canvas'):
+            current_tool = getattr(self.canvas, 'current_shape_type', None)
+            if current_tool in ('frame', 'donut', 'hollow_ellipse'):
+                self.set_shape_type('box')
+                
         self.status_bar.showMessage(f"Switched to {mode.upper()} mode", 2000)
+
     
     def open_image_folder(self):
         """Open a folder containing images"""
