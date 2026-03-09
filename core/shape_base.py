@@ -12,6 +12,13 @@ class Shape(ABC):
         self.selected = False
         self.created_at = None
         
+        # Hollow pair support
+        self.inner_shape = None
+        self.hollow_role = None  # 'outer' | 'inner' | None
+        self.group_id = None
+        self.is_hollow = False
+
+        
     @abstractmethod
     def contains_point(self, x, y):
         """Check if point is inside the shape"""
@@ -52,3 +59,35 @@ class Shape(ABC):
                 new_shape.__dict__[k] = v
         new_shape.id = str(uuid.uuid4())[:8]
         return new_shape
+        
+    def attach_inner(self, inner_shape):
+        """Link inner_shape to this shape as the hollow cutout."""
+        gid = str(uuid.uuid4())[:8]
+        self.inner_shape = inner_shape
+        self.is_hollow = True
+        self.hollow_role = 'outer'
+        self.group_id = gid
+        inner_shape.hollow_role = 'inner'
+        inner_shape.group_id = gid
+
+    def detach_inner(self):
+        """Detach inner shape and reset hollow state."""
+        if self.inner_shape:
+            self.inner_shape.hollow_role = None
+            self.inner_shape.group_id = None
+        self.inner_shape = None
+        self.is_hollow = False
+        self.hollow_role = None
+        
+    def to_dict(self):
+        """Return base dictionary representation"""
+        d = {
+            'id': self.id,
+            'class_id': self.class_id,
+            'is_hollow': self.is_hollow,
+            'group_id': self.group_id,
+            'hollow_role': self.hollow_role
+        }
+        if self.inner_shape and hasattr(self.inner_shape, 'to_dict'):
+            d['inner_shape'] = self.inner_shape.to_dict()
+        return d

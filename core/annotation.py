@@ -16,7 +16,13 @@ class BoundingBox:
         self.selected = False
         self.created_at = None
         self.type = 'box'
-        self._resize_origin = None  # Add this line
+        self._resize_origin = None
+        
+        # Hollow pair support
+        self.inner_shape = None
+        self.hollow_role = None  # 'outer' | 'inner' | None
+        self.group_id = None
+        self.is_hollow = False
 
     def copy(self):
         """Create a copy of this bounding box"""
@@ -65,6 +71,13 @@ class BoundingBox:
         """Check if point is inside the box (pixel coordinates)"""
         x1, y1, x2, y2 = self.to_pixels()
         return x1 <= px <= x2 and y1 <= py <= y2
+        
+    def move(self, dx, dy):
+        """Move the bounding box by delta (normalized)"""
+        self.x += dx
+        self.y += dy
+        if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'move'):
+            self.inner_shape.move(dx, dy)
     
     def get_resize_handles(self):
         """Get the positions of resize handles (corners)"""
@@ -76,16 +89,29 @@ class BoundingBox:
             'bottom_left': (x1, y2),
             'bottom_right': (x2, y2)
         }
+        
+        if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'get_resize_handles'):
+            inner_handles = self.inner_shape.get_resize_handles()
+            for k, (hx, hy) in inner_handles.items():
+                handles[f'inner_{k}'] = (hx, hy)
+                
         return handles
     
     def begin_resize(self):
         """Store original geometry before resizing starts"""
         self._resize_origin = self.to_pixels()  # Stores (x1, y1, x2, y2)
-        print(f"📦 Box begin_resize() called, origin: {self._resize_origin}")
+        if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'begin_resize'):
+            self.inner_shape.begin_resize()
         return True
     
     def resize_from_handle(self, handle_name, dx, dy):
         """Resize the box from a specific handle"""
+        if handle_name.startswith('inner_'):
+            if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'resize_from_handle'):
+                inner_handle = handle_name.replace('inner_', '', 1)
+                return self.inner_shape.resize_from_handle(inner_handle, dx, dy)
+            return False
+            
         if self._resize_origin is None:
             print("❌ Box _resize_origin is None")
             return False
@@ -161,15 +187,42 @@ class BoundingBox:
     
     def to_dict(self):
         """Convert to dictionary for saving"""
-        return {
+        d = {
             'id': self.id,
             'type': 'box',
             'class_id': self.class_id,
             'x': self.x,
             'y': self.y,
             'width': self.width,
-            'height': self.height
+            'height': self.height,
+            'is_hollow': self.is_hollow,
+            'group_id': self.group_id,
+            'hollow_role': self.hollow_role
         }
+        if self.inner_shape and hasattr(self.inner_shape, 'to_dict'):
+            d['inner_shape'] = self.inner_shape.to_dict()
+        return d
+    
+    def attach_inner(self, inner_shape):
+        """Link inner_shape to this shape as the hollow cutout."""
+        gid = str(uuid.uuid4())[:8]
+        self.inner_shape = inner_shape
+        self.is_hollow = True
+        self.hollow_role = 'outer'
+        self.group_id = gid
+        if hasattr(inner_shape, 'hollow_role'):
+            inner_shape.hollow_role = 'inner'
+            inner_shape.group_id = gid
+
+    def detach_inner(self):
+        """Detach inner shape and reset hollow state."""
+        if self.inner_shape:
+            if hasattr(self.inner_shape, 'hollow_role'):
+                self.inner_shape.hollow_role = None
+                self.inner_shape.group_id = None
+        self.inner_shape = None
+        self.is_hollow = False
+        self.hollow_role = None
     
     @classmethod
     def from_dict(cls, data, image_size):

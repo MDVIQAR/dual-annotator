@@ -110,6 +110,9 @@ class BezierPolygonShape(Shape):
         self.ctrl = new_ctrl
         if self.inner_points:
             self.inner_points = [(nx + dx, ny + dy) for nx, ny in self.inner_points]
+            
+        if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'move'):
+            self.inner_shape.move(dx, dy)
 
     # ------------------------------------------------------------------
     #  Resize handles
@@ -155,6 +158,11 @@ class BezierPolygonShape(Shape):
                         wmx, wmy = self._norm_to_px(mx, my)
                         handles[f'ctrl_inner_{i}'] = (wmx, wmy)
 
+        if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'get_resize_handles'):
+            inner_handles = self.inner_shape.get_resize_handles()
+            for k, (hx, hy) in inner_handles.items():
+                handles[f'inner_{k}'] = (hx, hy)
+                
         return handles
 
     def begin_resize(self, handle_name=None):
@@ -170,9 +178,19 @@ class BezierPolygonShape(Shape):
             if len(inner_ctrl) != len(self.inner_points):
                 self.inner_control_points = inner_ctrl + [None] * (len(self.inner_points) - len(inner_ctrl))
                 self._inner_ctrl_origin = list(self.inner_control_points)
+                
+        if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'begin_resize'):
+            inner_handle = handle_name.replace('inner_', '', 1) if handle_name and handle_name.startswith('inner_') else None
+            self.inner_shape.begin_resize(inner_handle)
+            
         return True
 
     def resize_from_handle(self, handle_name, dx, dy):
+        if handle_name.startswith('inner_') and getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'resize_from_handle'):
+            inner_handle = handle_name.replace('inner_', '', 1)
+            if not inner_handle.isdigit():
+                return self.inner_shape.resize_from_handle(inner_handle, dx, dy)
+                
         if self._resize_origin is None:
             return False
 

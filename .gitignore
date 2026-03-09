@@ -27,3 +27,7 @@ tmpclaude-*
 
 #ignore md files
 *.md
+
+Ignore_Files/
+
+test_*.py

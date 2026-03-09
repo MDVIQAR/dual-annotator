@@ -82,6 +82,9 @@ class PolygonShape(Shape):
             for nx, ny in self.inner_points:
                 new_inner.append((nx + dx, ny + dy))
             self.inner_points = new_inner
+            
+        if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'move'):
+            self.inner_shape.move(dx, dy)
         
     def get_resize_handles(self):
         """Get all vertices as resize handles, plus midpoint handles between edges"""
@@ -110,11 +113,23 @@ class PolygonShape(Shape):
                     mx = (self.inner_points[i][0] + self.inner_points[j][0]) / 2
                     my = (self.inner_points[i][1] + self.inner_points[j][1]) / 2
                     handles[f'mid_inner_{i}'] = (int(mx * self.image_width), int(my * self.image_height))
+                    
+        if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'get_resize_handles'):
+            inner_handles = self.inner_shape.get_resize_handles()
+            for k, (hx, hy) in inner_handles.items():
+                handles[f'inner_{k}'] = (hx, hy)
             
         return handles
     
     def resize_from_handle(self, handle_name, dx, dy):
         """Move a vertex or midpoint - dx, dy are cumulative delta from resize start"""
+        if handle_name.startswith('inner_') and getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'resize_from_handle'):
+            # It's an inner shape handle passed up
+            inner_handle = handle_name.replace('inner_', '', 1)
+            # Avoid intercepting old hardcoded inner ring logic if inner_handle is just a digit '0', '1', etc 
+            if not inner_handle.isdigit():
+                return self.inner_shape.resize_from_handle(inner_handle, dx, dy)
+                
         if self._resize_origin is None:
             return False
         
@@ -192,6 +207,11 @@ class PolygonShape(Shape):
     
         self._resize_origin = list(self.points)
         self._inner_origin = list(self.inner_points) if self.inner_points else []
+        
+        if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'begin_resize'):
+            inner_handle = handle_name.replace('inner_', '', 1) if handle_name and handle_name.startswith('inner_') else None
+            self.inner_shape.begin_resize(inner_handle)
+            
         return True
     
     def close_polygon(self):
