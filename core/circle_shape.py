@@ -65,11 +65,33 @@ class CircleShape(Shape):
             self.inner_shape.begin_resize()
         return True
         
+    def _constrain_inner_shape(self):
+        """Ensure inner circle stays fully inside the outer circle."""
+        inner = getattr(self, 'inner_shape', None)
+        if not inner or not hasattr(inner, 'to_pixels') or not hasattr(inner, 'from_pixels'):
+            return
+        min_gap = 4
+        cx_o, cy_o, r_o = self.to_pixels()
+        cx_i, cy_i, r_i = inner.to_pixels()
+        # Clamp inner radius so inner stays inside outer with gap
+        r_i = max(5, min(r_i, r_o - min_gap))
+        # Clamp inner center so inner circle stays inside outer
+        dist = math.sqrt((cx_i - cx_o) ** 2 + (cy_i - cy_o) ** 2)
+        if dist + r_i > r_o - min_gap and dist > 1e-6:
+            new_dist = max(0, r_o - min_gap - r_i)
+            scale = new_dist / dist
+            cx_i = cx_o + (cx_i - cx_o) * scale
+            cy_i = cy_o + (cy_i - cy_o) * scale
+        inner.from_pixels(int(cx_i), int(cy_i), int(r_i))
+
     def resize_from_handle(self, handle_name, dx, dy):
         if handle_name.startswith('inner_'):
             if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'resize_from_handle'):
                 inner_handle = handle_name.replace('inner_', '', 1)
-                return self.inner_shape.resize_from_handle(inner_handle, dx, dy)
+                result = self.inner_shape.resize_from_handle(inner_handle, dx, dy)
+                if result:
+                    self._constrain_inner_shape()
+                return result
             return False
             
         if self._resize_origin is None:
@@ -111,6 +133,13 @@ class CircleShape(Shape):
         min_radius = 5
         max_radius = min(self.image_width, self.image_height) // 2
         new_r = max(min_radius, min(new_r, max_radius))
+
+        # Ensure outer contains inner + gap when hollow
+        min_gap = 4
+        if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'to_pixels'):
+            _, _, r_i = self.inner_shape.to_pixels()
+            new_r = max(new_r, r_i + min_gap)
+            new_r = min(new_r, max_radius)
 
         self.center_x = new_cx / self.image_width
         self.center_y = new_cy / self.image_height
