@@ -109,16 +109,16 @@ class BoundingBox:
         if handle_name.startswith('inner_'):
             if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'resize_from_handle'):
                 inner_handle = handle_name.replace('inner_', '', 1)
-                return self.inner_shape.resize_from_handle(inner_handle, dx, dy)
+                result = self.inner_shape.resize_from_handle(inner_handle, dx, dy)
+                if result:
+                    self._constrain_inner_shape()
+                return result
             return False
             
         if self._resize_origin is None:
-            print("❌ Box _resize_origin is None")
             return False
         
         orig_x1, orig_y1, orig_x2, orig_y2 = self._resize_origin
-        print(f"📐 Box original: ({orig_x1}, {orig_y1}) - ({orig_x2}, {orig_y2})")
-        print(f"📐 Delta: ({dx}, {dy})")
         
         # Start with original coordinates
         left = orig_x1
@@ -130,30 +130,36 @@ class BoundingBox:
         if handle_name == 'top_left':
             left += dx
             top += dy
-            print(f"↖️ Moving top_left: left={left}, top={top}")
         elif handle_name == 'top_right':
             right += dx
             top += dy
-            print(f"↗️ Moving top_right: right={right}, top={top}")
         elif handle_name == 'bottom_left':
             left += dx
             bottom += dy
-            print(f"↙️ Moving bottom_left: left={left}, bottom={bottom}")
         elif handle_name == 'bottom_right':
             right += dx
             bottom += dy
-            print(f"↘️ Moving bottom_right: right={right}, bottom={bottom}")
         else:
-            print(f"❌ Unknown handle: {handle_name}")
             return False
         
         # Prevent inversion
         if right <= left:
             right = left + 1
-            print(f"⚠️ Fixed right inversion: {right}")
         if bottom <= top:
             bottom = top + 1
-            print(f"⚠️ Fixed bottom inversion: {bottom}")
+
+        # Ensure outer always contains inner + gap (hollow shapes)
+        min_gap = 4
+        if getattr(self, 'inner_shape', None) and isinstance(self.inner_shape, BoundingBox):
+            ix1, iy1, ix2, iy2 = self.inner_shape.to_pixels()
+            left = min(left, ix1 - min_gap)
+            right = max(right, ix2 + min_gap)
+            top = min(top, iy1 - min_gap)
+            bottom = max(bottom, iy2 + min_gap)
+            if right <= left:
+                right = left + 1
+            if bottom <= top:
+                bottom = top + 1
         
         # Ensure coordinates stay within image bounds
         left = max(0, min(left, self.image_width - 1))
@@ -161,15 +167,11 @@ class BoundingBox:
         top = max(0, min(top, self.image_height - 1))
         bottom = max(0, min(bottom, self.image_height - 1))
         
-        print(f"✨ New pixel bounds: left={left}, right={right}, top={top}, bottom={bottom}")
-        
         # Calculate new center and dimensions
         new_center_x = (left + right) / 2
         new_center_y = (top + bottom) / 2
         new_width = right - left
         new_height = bottom - top
-        
-        print(f"✨ New values: center=({new_center_x}, {new_center_y}), size=({new_width}, {new_height})")
         
         # Update normalized coordinates
         self.x = new_center_x / self.image_width
@@ -177,9 +179,41 @@ class BoundingBox:
         self.width = new_width / self.image_width
         self.height = new_height / self.image_height
         
-        print(f"✅ Final normalized: x={self.x:.3f}, y={self.y:.3f}, w={self.width:.3f}, h={self.height:.3f}")
+        # Constrain inner shape to stay within new outer bounds
+        if getattr(self, 'inner_shape', None):
+            self._constrain_inner_shape()
         
         return True
+    
+    def _constrain_inner_shape(self):
+        """Ensure inner shape stays fully within the outer box"""
+        inner = self.inner_shape
+        if not inner or not isinstance(inner, BoundingBox):
+            return
+        
+        ox1, oy1, ox2, oy2 = self.to_pixels()
+        ix1, iy1, ix2, iy2 = inner.to_pixels()
+        
+        min_gap = 4  # Minimum gap between inner and outer edges in pixels
+        
+        # Clamp inner box to be within outer box
+        ix1 = max(ix1, ox1 + min_gap)
+        iy1 = max(iy1, oy1 + min_gap)
+        ix2 = min(ix2, ox2 - min_gap)
+        iy2 = min(iy2, oy2 - min_gap)
+        
+        # Ensure inner box has minimum size
+        if ix2 - ix1 < 10:
+            mid_x = (ox1 + ox2) / 2
+            ix1 = mid_x - 5
+            ix2 = mid_x + 5
+        if iy2 - iy1 < 10:
+            mid_y = (oy1 + oy2) / 2
+            iy1 = mid_y - 5
+            iy2 = mid_y + 5
+        
+        # Update inner shape
+        inner.from_pixels(ix1, iy1, ix2, iy2, self.image_width, self.image_height)
     
     def to_yolo_string(self):
         """Convert to YOLO format string"""

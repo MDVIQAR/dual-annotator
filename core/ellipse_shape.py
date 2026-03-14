@@ -71,11 +71,42 @@ class EllipseShape(Shape):
             self.inner_shape.begin_resize()
         return True
         
+    def _constrain_inner_shape(self):
+        """Ensure inner ellipse stays fully inside the outer ellipse."""
+        inner = getattr(self, 'inner_shape', None)
+        if not inner or not hasattr(inner, 'to_pixels') or not hasattr(inner, 'from_pixels'):
+            return
+        min_gap = 4
+        cx_o, cy_o, rx_o, ry_o = self.to_pixels()
+        cx_i, cy_i, rx_i, ry_i = inner.to_pixels()
+        # Clamp inner radii to stay inside outer with gap
+        rx_i = max(2, min(rx_i, rx_o - min_gap))
+        ry_i = max(2, min(ry_i, ry_o - min_gap))
+        # Clamp inner bounding box to outer bounding box with margin
+        ox1, oy1 = cx_o - rx_o, cy_o - ry_o
+        ox2, oy2 = cx_o + rx_o, cy_o + ry_o
+        ix1, iy1 = cx_i - rx_i, cy_i - ry_i
+        ix2, iy2 = cx_i + rx_i, cy_i + ry_i
+        ix1 = max(ix1, ox1 + min_gap)
+        iy1 = max(iy1, oy1 + min_gap)
+        ix2 = min(ix2, ox2 - min_gap)
+        iy2 = min(iy2, oy2 - min_gap)
+        if ix2 <= ix1 or iy2 <= iy1:
+            return
+        new_cx = (ix1 + ix2) / 2
+        new_cy = (iy1 + iy2) / 2
+        new_rx = (ix2 - ix1) / 2
+        new_ry = (iy2 - iy1) / 2
+        inner.from_pixels(int(new_cx), int(new_cy), int(new_rx), int(new_ry))
+
     def resize_from_handle(self, handle_name, dx, dy):
         if handle_name.startswith('inner_'):
             if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'resize_from_handle'):
                 inner_handle = handle_name.replace('inner_', '', 1)
-                return self.inner_shape.resize_from_handle(inner_handle, dx, dy)
+                result = self.inner_shape.resize_from_handle(inner_handle, dx, dy)
+                if result:
+                    self._constrain_inner_shape()
+                return result
             return False
             
         if self._resize_origin is None:
@@ -119,6 +150,15 @@ class EllipseShape(Shape):
 
         new_rx = max(min_size, min(new_rx, max_rx))
         new_ry = max(min_size, min(new_ry, max_ry))
+
+        # Ensure outer contains inner + gap when hollow
+        min_gap = 4
+        if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'to_pixels'):
+            _, _, irx, iry = self.inner_shape.to_pixels()
+            new_rx = max(new_rx, irx + min_gap)
+            new_ry = max(new_ry, iry + min_gap)
+            new_rx = min(new_rx, max_rx)
+            new_ry = min(new_ry, max_ry)
 
         self.center_x = new_cx / self.image_width
         self.center_y = new_cy / self.image_height
