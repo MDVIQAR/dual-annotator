@@ -179,40 +179,61 @@ class BoundingBox:
         self.width = new_width / self.image_width
         self.height = new_height / self.image_height
         
-        # Constrain inner shape to stay within new outer bounds
-        if getattr(self, 'inner_shape', None):
+        # If this shape has a hollow inner, prevent outer from shrinking
+        # so small that it would pass through or swallow the inner shape.
+        if getattr(self, 'inner_shape', None) and isinstance(self.inner_shape, BoundingBox):
+            MIN_GAP = 4
+            ix1, iy1, ix2, iy2 = self.inner_shape.to_pixels()
+            inner_w = ix2 - ix1
+            inner_h = iy2 - iy1
+            # Outer must be at least inner + gap on every side
+            min_outer_w = inner_w + 2 * MIN_GAP
+            min_outer_h = inner_h + 2 * MIN_GAP
+            if new_width < min_outer_w or new_height < min_outer_h:
+                # Reject this resize — outer would swallow inner
+                return False
             self._constrain_inner_shape()
-        
+
         return True
     
     def _constrain_inner_shape(self):
-        """Ensure inner shape stays fully within the outer box"""
+        """Ensure inner shape stays fully within the outer box.
+        Works for BoundingBox inner shapes only — circle/ellipse inner
+        shapes are constrained directly in their own resize_from_handle."""
         inner = self.inner_shape
         if not inner or not isinstance(inner, BoundingBox):
             return
-        
+
+        MIN_GAP = 4
         ox1, oy1, ox2, oy2 = self.to_pixels()
         ix1, iy1, ix2, iy2 = inner.to_pixels()
-        
-        min_gap = 4  # Minimum gap between inner and outer edges in pixels
-        
-        # Clamp inner box to be within outer box
-        ix1 = max(ix1, ox1 + min_gap)
-        iy1 = max(iy1, oy1 + min_gap)
-        ix2 = min(ix2, ox2 - min_gap)
-        iy2 = min(iy2, oy2 - min_gap)
-        
-        # Ensure inner box has minimum size
-        if ix2 - ix1 < 10:
+
+        # Clamp inner to stay inside outer with gap on all sides
+        ix1 = max(ix1, ox1 + MIN_GAP)
+        iy1 = max(iy1, oy1 + MIN_GAP)
+        ix2 = min(ix2, ox2 - MIN_GAP)
+        iy2 = min(iy2, oy2 - MIN_GAP)
+
+        # Enforce minimum inner size — but never push it outside the outer.
+        # Compute how much space is actually available inside the outer.
+        available_w = (ox2 - ox1) - 2 * MIN_GAP
+        available_h = (oy2 - oy1) - 2 * MIN_GAP
+        if available_w < 2 or available_h < 2:
+            # Outer is too small to contain any inner shape — do nothing
+            return
+
+        min_w = min(10, available_w)
+        min_h = min(10, available_h)
+
+        if ix2 - ix1 < min_w:
             mid_x = (ox1 + ox2) / 2
-            ix1 = mid_x - 5
-            ix2 = mid_x + 5
-        if iy2 - iy1 < 10:
+            ix1 = mid_x - min_w / 2
+            ix2 = mid_x + min_w / 2
+        if iy2 - iy1 < min_h:
             mid_y = (oy1 + oy2) / 2
-            iy1 = mid_y - 5
-            iy2 = mid_y + 5
-        
-        # Update inner shape
+            iy1 = mid_y - min_h / 2
+            iy2 = mid_y + min_h / 2
+
         inner.from_pixels(ix1, iy1, ix2, iy2, self.image_width, self.image_height)
     
     def to_yolo_string(self):

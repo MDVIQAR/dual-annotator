@@ -85,39 +85,46 @@ class CircleShape(Shape):
         inner.from_pixels(int(cx_i), int(cy_i), int(r_i))
 
     def resize_from_handle(self, handle_name, dx, dy):
+        MIN_GAP = 4
+        MIN_R   = 4
+
+        # ── Inner handle drag ──────────────────────────────────────────
         if handle_name.startswith('inner_'):
             if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'resize_from_handle'):
                 inner_handle = handle_name.replace('inner_', '', 1)
                 result = self.inner_shape.resize_from_handle(inner_handle, dx, dy)
                 if result:
-                    self._constrain_inner_shape()
+                    # Clamp: inner radius must never reach or exceed outer radius
+                    _, _, outer_r = self.to_pixels()
+                    _, _, inner_r = self.inner_shape.to_pixels()
+                    if inner_r >= outer_r - MIN_GAP:
+                        max_allowed = max(MIN_R, outer_r - MIN_GAP)
+                        self.inner_shape.radius = (
+                            max_allowed / max(self.inner_shape.image_width,
+                                              self.inner_shape.image_height)
+                        )
                 return result
             return False
-            
+
+        # ── Outer handle drag ──────────────────────────────────────────
         if self._resize_origin is None:
             return False
 
         orig_cx, orig_cy, orig_r = self._resize_origin
 
-        # Original bounding box
-        left = orig_cx - orig_r
-        right = orig_cx + orig_r
-        top = orig_cy - orig_r
+        left   = orig_cx - orig_r
+        right  = orig_cx + orig_r
+        top    = orig_cy - orig_r
         bottom = orig_cy + orig_r
 
-        # Apply delta relative to ORIGINAL box
         if handle_name == 'top_left':
-            left += dx
-            top += dy
+            left += dx;  top    += dy
         elif handle_name == 'top_right':
-            right += dx
-            top += dy
+            right += dx; top    += dy
         elif handle_name == 'bottom_left':
-            left += dx
-            bottom += dy
+            left += dx;  bottom += dy
         elif handle_name == 'bottom_right':
-            right += dx
-            bottom += dy
+            right += dx; bottom += dy
         else:
             return False
 
@@ -128,22 +135,22 @@ class CircleShape(Shape):
 
         new_cx = (left + right) / 2
         new_cy = (top + bottom) / 2
-        new_r = min((right - left), (bottom - top)) / 2
+        new_r  = min((right - left), (bottom - top)) / 2
 
         min_radius = 5
         max_radius = min(self.image_width, self.image_height) // 2
         new_r = max(min_radius, min(new_r, max_radius))
 
-        # Ensure outer contains inner + gap when hollow
-        min_gap = 4
-        if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'to_pixels'):
-            _, _, r_i = self.inner_shape.to_pixels()
-            new_r = max(new_r, r_i + min_gap)
-            new_r = min(new_r, max_radius)
+        # Clamp: outer radius must always be larger than inner radius + gap
+        if getattr(self, 'inner_shape', None):
+            _, _, inner_r = self.inner_shape.to_pixels()
+            if new_r <= inner_r + MIN_GAP:
+                # Reject — outer would shrink inside inner
+                return False
 
         self.center_x = new_cx / self.image_width
         self.center_y = new_cy / self.image_height
-        self.radius = new_r / max(self.image_width, self.image_height)
+        self.radius   = new_r / max(self.image_width, self.image_height)
 
         return True
     

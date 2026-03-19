@@ -16,6 +16,7 @@ class ClassPanel(QWidget):
     class_selected = pyqtSignal(str)
     class_added = pyqtSignal()
     class_removed = pyqtSignal()
+    class_edited = pyqtSignal()  # AUTOSAVE INTEGRATION
     
     def __init__(self, class_manager: ClassManager):
         super().__init__()
@@ -208,6 +209,7 @@ class ClassPanel(QWidget):
                     cls.name = name.strip()
                     cls.color = color.name()
                     self.refresh_list()
+                    self.class_edited.emit()  # AUTOSAVE INTEGRATION
     
     def delete_class(self):
         current = self.class_list.currentItem()

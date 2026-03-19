@@ -293,9 +293,49 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence('A'), self, self.prev_image)
         QShortcut(QKeySequence('D'), self, self.next_image)   
 
-        # Initialize with YOLO mode constraints
-        self.switch_mode('yolo')
+        # Initialize toolbar visibility for default YOLO mode
+        # Do NOT call switch_mode() here — canvas.mode is already 'yolo'
+        # and the guard `if mode == current_mode: return` would skip it.
+        # Instead, set visibility directly since all buttons exist now.
+        self.shape_btn_frame.setVisible(False)
+        self.shape_btn_donut.setVisible(False)
+        self.shape_btn_hollow_ellipse.setVisible(False)
+        if hasattr(self, 'frame_action'):
+            self.frame_action.setVisible(False)
+        if hasattr(self, 'donut_action'):
+            self.donut_action.setVisible(False)
+        if hasattr(self, 'hollow_ellipse_action'):
+            self.hollow_ellipse_action.setVisible(False)
+        if hasattr(self, 'shortcut_bar'):
+            self.shortcut_bar.set_item_visible('frame', False)
+            self.shortcut_bar.set_item_visible('donut', False)
+            self.shortcut_bar.set_item_visible('hollow_ellipse', False)
 
+        # AUTOSAVE INTEGRATION
+        from core.project_manager import ProjectManager
+        self.project_manager = ProjectManager()
+        self.canvas.annotation_changed.connect(self._on_annotation_changed)
+
+    def _on_annotation_changed(self):
+        """Called every time a shape is added, moved, deleted, or modified."""
+        if not self.image_folder or self.current_image_index < 0:
+            return
+        filename = self.image_files[self.current_image_index]
+        # Copy shapes to avoid mutations
+        shapes_copy = list(self.canvas.shapes)
+        self.project_manager.schedule_autosave(
+            filename,
+            shapes_copy,
+            self.canvas.mode,
+            self.canvas.image_width,
+            self.canvas.image_height
+        )
+        
+    def closeEvent(self, event):
+        """Handle application close"""
+        if hasattr(self, "project_manager"):
+            self.project_manager.flush_autosave()
+        super().closeEvent(event)
         
     def set_dark_theme(self):
         """Set dark theme for the application"""
@@ -382,7 +422,9 @@ class MainWindow(QMainWindow):
         """)
         
     def setup_default_classes(self):
-        """Add some default classes for testing"""
+        """Add some default classes for testing - only if no classes exist yet"""
+        if self.class_manager.get_all_classes():
+            return  # Don't overwrite existing classes
         try:
             self.class_manager.add_class("Car", "#FF6B6B")
             self.class_manager.add_class("Person", "#4ECDC4")
@@ -937,6 +979,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(classes_label)
         
         self.class_panel = ClassPanel(self.class_manager)
+        self.class_panel.class_added.connect(self._on_classes_changed)
+        self.class_panel.class_removed.connect(self._on_classes_changed)
+        self.class_panel.class_edited.connect(self._on_classes_changed)
         layout.addWidget(self.class_panel)
         
         layout.addWidget(self.create_separator())
@@ -1004,7 +1049,7 @@ class MainWindow(QMainWindow):
             else:
                 self.status_bar.showMessage("Selection mode - click on shapes to select them", 1000)
     
-    def update_template_dropdown(self):
+    def update_template_dropdown(self, select_name=None):
         """Refresh the template dropdown from canvas template_manager"""
         if not hasattr(self, 'canvas') or not hasattr(self.canvas, 'template_manager'):
             return
@@ -1017,6 +1062,12 @@ class MainWindow(QMainWindow):
             self.template_combo.addItem(f"📋 {name}")
         
         self.template_combo.blockSignals(False)
+        
+        # Auto-select newly saved template so the user can see it was saved
+        if select_name:
+            idx = self.template_combo.findText(f"📋 {select_name}")
+            if idx >= 0:
+                self.template_combo.setCurrentIndex(idx)
     
     def on_template_selected(self, index):
         """Handle template selection from dropdown"""
@@ -1063,6 +1114,28 @@ class MainWindow(QMainWindow):
     
     def switch_mode(self, mode):
         """Switch between YOLO and U-Net modes"""
+        if not hasattr(self, 'canvas'): return
+        current_mode = self.canvas.mode
+        if mode == current_mode:
+            return
+            
+        # AUTOSAVE INTEGRATION - check if current image has annotations at mode switch
+        has_annotations = bool(self.canvas.shapes)
+        coexist = False
+        if has_annotations:
+            from gui.mode_switch_dialog import ModeSwitchDialog
+            from PyQt5.QtWidgets import QDialog
+            dlg = ModeSwitchDialog(current_mode, mode, len(self.canvas.shapes), self)
+            if dlg.exec_() != QDialog.Accepted:
+                # Revert ratio buttons visually
+                is_unet = (current_mode == 'unet')
+                self.yolo_mode_action.setChecked(not is_unet)
+                self.unet_mode_action.setChecked(is_unet)
+                self.mode_btn_yolo.setChecked(not is_unet)
+                self.mode_btn_unet.setChecked(is_unet)
+                return
+            coexist = dlg.coexist
+            
         is_unet = (mode == 'unet')
         
         # Update menu actions
@@ -1077,8 +1150,7 @@ class MainWindow(QMainWindow):
         self.mode_label.setText(f"Mode: {'U-Net' if is_unet else 'YOLO'}")
         
         # Update canvas mode
-        if hasattr(self, 'canvas'):
-            self.canvas.set_mode(mode)
+        self.canvas.set_mode(mode)
         
         # Show/Hide hollow shape options
         # Buttons
@@ -1100,6 +1172,16 @@ class MainWindow(QMainWindow):
             self.shortcut_bar.set_item_visible('donut', is_unet)
             self.shortcut_bar.set_item_visible('hollow_ellipse', is_unet)
             
+        # After switching: update layer visibility in saved JSON
+        if hasattr(self, "project_manager") and self.current_image_index >= 0:
+            filename = self.image_files[self.current_image_index]
+            self.project_manager.set_layer_visibility(filename, current_mode, coexist)
+            self.project_manager.set_layer_visibility(filename, mode, True)
+            
+        # Reload annotations for the new target mode
+        if hasattr(self, "project_manager") and self.current_image_index >= 0:
+            self._restore_annotations(self.image_files[self.current_image_index])
+            
         # If in YOLO and a hollow shape was selected, switch back to Box
         if not is_unet and hasattr(self, 'canvas'):
             current_tool = getattr(self.canvas, 'current_shape_type', None)
@@ -1117,11 +1199,51 @@ class MainWindow(QMainWindow):
             "",
             QFileDialog.ShowDirsOnly
         )
+        if not folder_path:
+            return
+            
+        # AUTOSAVE INTEGRATION - flush current before switching folders
+        if hasattr(self, "project_manager") and self.current_image_index >= 0:
+            self.project_manager.flush_autosave()
+            
+        # Check if this folder already has a project
+        project_data = self.project_manager.open_folder(folder_path, parent_widget=self)
+        if project_data is None:
+            return # user cancelled the resume dialog
+            
+        self.image_folder = folder_path
         
-        if folder_path:
-            self.image_folder = folder_path
-            self.load_images_from_folder(folder_path)
-            self.status_bar.showMessage(f"Loaded images from: {folder_path}")
+        # Restore classes FIRST, before loading images, so that when _restore_annotations
+        # runs for the first image the class_manager is already populated.
+        if project_data.get("classes"):
+            self._restore_classes(project_data["classes"])
+        else:
+            # New project or empty classes - push current default classes to project
+            self._on_classes_changed()
+        
+        self.load_images_from_folder(folder_path)
+            
+        # Restore mode
+        saved_mode = project_data.get("active_mode", "yolo")
+        self.switch_mode(saved_mode)
+        
+        self.status_bar.showMessage(f"Loaded: {folder_path}")
+        
+    def _restore_classes(self, classes_data):
+        """Restore classes from saved project data. Completely replaces the class manager state."""
+        self.class_manager.classes = {}
+        self.class_manager.current_class_id = None
+        for c in classes_data:
+            from core.class_manager import ClassCategory
+            cls = ClassCategory(name=c["name"], color=c["color"], class_id=c["id"])
+            self.class_manager.classes[c["id"]] = cls
+        # Auto-select the first class so the user can draw immediately
+        all_cls = self.class_manager.get_all_classes()
+        if all_cls:
+            self.class_manager.current_class_id = all_cls[0].id
+        if hasattr(self, 'class_panel'):
+            self.class_panel.refresh_list()
+        print(f"🎨 Restored {len(classes_data)} classes from project")
     
     def load_images_from_folder(self, folder_path):
         """Load all image files from the selected folder"""
@@ -1152,16 +1274,58 @@ class MainWindow(QMainWindow):
     
     def load_image(self, index):
         """Load image at specified index"""
+        # AUTOSAVE INTEGRATION - flush before loading new image
+        if hasattr(self, "project_manager") and self.current_image_index >= 0:
+            self.project_manager.flush_autosave()
+            
         if 0 <= index < len(self.image_files):
             self.current_image_index = index
             image_path = os.path.join(self.image_folder, self.image_files[index])
             
-            self.canvas.load_image(image_path)
+            self.canvas.load_image(image_path) # this clears canvas.shapes
+            
+            # AUTOSAVE INTEGRATION - restore annotations after image loads
+            if hasattr(self, "project_manager"):
+                self._restore_annotations(self.image_files[index])
+                
             self.file_list.setCurrentRow(index)
             self.update_image_counter()
             self.image_info_label.setText(self.image_files[index])
             self.setWindowTitle(f"Dual Annotator - {self.image_files[index]}")
             self.status_bar.showMessage(f"Loaded: {self.image_files[index]}", 2000)
+
+    def _restore_annotations(self, filename):
+        """Load saved annotations for an image and place them on canvas."""
+        data = self.project_manager.load_image_annotations(filename)
+        if data is None:
+            return  # no saved annotations - canvas stays empty
+
+        if data.get("hash_mismatch"):
+            self._show_hash_warning()
+
+        # Determine which layer to show based on current mode
+        mode = self.canvas.mode
+        layers = data.get("layers", {})
+        
+        # Load the visible layers
+        w, h = self.canvas.image_width, self.canvas.image_height
+        shapes = []
+        for l_mode, layer in layers.items():
+            if layer.get("visible", False):
+                annotations = layer.get("annotations", [])
+                for ann in annotations:
+                    shape = self.project_manager.deserialize_shape(ann, w, h)
+                    if shape:
+                        shapes.append(shape)
+                        
+        self.canvas.shapes = shapes
+        self.canvas.update()
+
+    def _show_hash_warning(self):
+        """Show a temporary hash mismatch warning label or banner"""
+        print("⚠️ Image has changed since last annotation.")
+        # Just update status bar for now, could be improved with an embedded QLabel widget
+        self.status_bar.showMessage("WARNING: Image file has changed since last annotation.", 5000)
     
     def on_file_selected(self, item):
         """Handle file selection from list"""
@@ -1281,6 +1445,18 @@ class MainWindow(QMainWindow):
             self.current_file = file_path
             self.status_bar.showMessage(f"Saved to: {file_path}")
     
+    def _on_classes_changed(self):
+        """Called when classes are added, removed, or edited to keep project.json in sync."""
+        if hasattr(self, "project_manager") and self.project_manager.project_data:
+            classes = []
+            for cls in self.class_manager.get_all_classes():
+                classes.append({
+                    "id": cls.id,
+                    "name": cls.name,
+                    "color": cls.color
+                })
+            self.project_manager.update_project_classes(classes)
+
     def show_about(self):
         QMessageBox.about(
             self,

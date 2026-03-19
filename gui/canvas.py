@@ -19,6 +19,7 @@ class AnnotationCanvas(QWidget):
     # Signals
     position_changed = pyqtSignal(int, int)  # Emitted when mouse moves
     shape_selected = pyqtSignal(str)  # Emitted when shape is selected
+    annotation_changed = pyqtSignal()  # AUTOSAVE INTEGRATION
     
     def __init__(self):
         """Initialize the canvas"""
@@ -277,6 +278,7 @@ class AnnotationCanvas(QWidget):
                 self.shapes.append(self.current_shape)
                 shape_type = getattr(self.current_shape, 'type', 'box')
                 print(f"✅ Added new {shape_type}")
+                self.annotation_changed.emit()  # AUTOSAVE INTEGRATION
         
         self.drawing = False
         self.start_point = None
@@ -374,85 +376,152 @@ class AnnotationCanvas(QWidget):
             
         self._hollow_preview_mode = None
         self._hollow_preview_shape = None
+        self.annotation_changed.emit()  # AUTOSAVE INTEGRATION
         self.update()
 
     def save_template_from_shape(self, shape):
+        """Unified method to save a shape as a template, preserving its identity."""
         from PyQt5.QtWidgets import QInputDialog, QMessageBox
+        import math
         
         name, ok = QInputDialog.getText(self, "Save Template", "Enter a name for the template:")
-        if ok and name:
-            points = shape.to_pixel_points() if hasattr(shape, 'to_pixel_points') else []
-            if not points and shape.type in ('box', 'circle', 'ellipse', 'frame', 'donut'):
-                # Convert basic shapes to polygon representation for template
-                if shape.type == 'box':
-                    x1, y1, x2, y2 = shape.to_pixels()
-                    points = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
-                elif shape.type == 'circle':
-                    cx, cy, r = shape.to_pixels()
-                    points = [(cx + r * math.cos(math.radians(angle)), cy + r * math.sin(math.radians(angle))) for angle in range(0, 360, 10)]
-                elif hasattr(shape, 'to_pixels'):
-                    try:
-                        pts = shape.to_pixels()
-                        if isinstance(pts, tuple) and len(pts) == 4:
-                            cx, cy, rx, ry = pts
-                            points = [(cx + rx * math.cos(math.radians(angle)), cy + ry * math.sin(math.radians(angle))) for angle in range(0, 360, 10)]
-                    except Exception:
-                        pass
-                        
-            if not points:
-                QMessageBox.warning(self, "Error", f"Cannot create template from {shape.type}")
+        if not (ok and name and name.strip()):
+            return
+            
+        name = name.strip()
+        t = shape.type
+        
+        # 1. Get pixel points representation (for preview/fallback)
+        pixel_points = []
+        if t == 'polygon' or t == 'bezier_polygon':
+            if hasattr(shape, 'closed') and not shape.closed:
+                QMessageBox.warning(self, "Error", f"Cannot save unclosed {t} as template")
                 return
-                
-            inner_pts = []
-            if getattr(shape, 'inner_shape', None) and hasattr(shape.inner_shape, 'to_pixel_points'):
-                inner_pts = shape.inner_shape.to_pixel_points()
-            elif getattr(shape, 'inner_shape', None) and shape.inner_shape.type == 'box':
-                x1, y1, x2, y2 = shape.inner_shape.to_pixels()
-                inner_pts = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
-            elif getattr(shape, 'inner_shape', None) and hasattr(shape.inner_shape, 'to_pixels'):
-                try:
-                    pts = shape.inner_shape.to_pixels()
-                    if isinstance(pts, tuple) and len(pts) == 4 and shape.inner_shape.type == 'ellipse':
-                        cx, cy, rx, ry = pts
-                        inner_pts = [(cx + rx * math.cos(math.radians(angle)), cy + ry * math.sin(math.radians(angle))) for angle in range(0, 360, 10)]
-                    elif isinstance(pts, tuple) and len(pts) == 3 and shape.inner_shape.type == 'circle':
-                        cx, cy, r = pts
-                        inner_pts = [(cx + r * math.cos(math.radians(angle)), cy + r * math.sin(math.radians(angle))) for angle in range(0, 360, 10)]
-                except Exception:
-                    pass
-            
-            ctrl_pts = []
-            if shape.type == 'bezier_polygon':
-                for c in shape.ctrl:
-                    if c is not None:
-                        ctrl_pts.append((c[0] * self.image_width, c[1] * self.image_height))
-                    else:
-                        ctrl_pts.append(None)
-                        
-            inner_ctrl_pts = []
-            if getattr(shape, 'inner_shape', None) and shape.inner_shape.type == 'bezier_polygon':
-                for c in shape.inner_shape.ctrl:
-                    if c is not None:
-                        inner_ctrl_pts.append((c[0] * self.image_width, c[1] * self.image_height))
-                    else:
-                        inner_ctrl_pts.append(None)
+            pixel_points = shape.to_pixel_points()
+        elif t == 'box':
+            x1, y1, x2, y2 = shape.to_pixels()
+            pixel_points = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+        elif t == 'circle':
+            cx, cy, r = shape.to_pixels()
+            for i in range(36):
+                angle = 2 * math.pi * i / 36
+                pixel_points.append((int(cx + r * math.cos(angle)), int(cy + r * math.sin(angle))))
+        elif t == 'ellipse':
+            cx, cy, rx, ry = shape.to_pixels()
+            for i in range(36):
+                angle = 2 * math.pi * i / 36
+                pixel_points.append((int(cx + rx * math.cos(angle)), int(cy + ry * math.sin(angle))))
+        elif t in ('frame', 'donut', 'hollow_ellipse'):
+            # Convert to outer points for standard template representation
+            if t == 'frame':
+                x1, y1, x2, y2 = shape.to_pixels()
+                pixel_points = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+            else:
+                pts = shape.to_pixels()
+                cx, cy = pts[0], pts[1]
+                rx = pts[2]
+                ry = pts[3] if len(pts) > 3 else pts[2]
+                for i in range(36):
+                    angle = 2 * math.pi * i / 36
+                    pixel_points.append((int(cx + rx * math.cos(angle)), int(cy + ry * math.sin(angle))))
+        
+        if not pixel_points or len(pixel_points) < 3:
+            QMessageBox.warning(self, "Error", f"Invalid shape '{t}' for template")
+            return
 
-            self.template_manager.add_template(
-                name=name,
-                pixel_points=points,
-                image_width=self.image_width,
-                image_height=self.image_height,
-                inner_pixel_points=inner_pts,
-                shape_type=shape.type if shape.type in ('polygon', 'bezier_polygon') else 'polygon',
-                ctrl_points=ctrl_pts,
-                inner_ctrl_points=inner_ctrl_pts
-            )
-            print(f"✅ Saved template: {name}")
+        # 2. Get inner points if any
+        inner_pixel_points = None
+        inner_type = None
+        
+        # Priority 1: Object-based inner shape (for Boxes, Circles, Ellipses, and some Polygons)
+        if getattr(shape, 'inner_shape', None):
+            inner_type = shape.inner_shape.type
+            if hasattr(shape.inner_shape, 'to_pixel_points'):
+                inner_pixel_points = shape.inner_shape.to_pixel_points()
+            else:
+                ipts = shape.inner_shape.to_pixels()
+                if shape.inner_shape.type == 'box':
+                    ix1, iy1, ix2, iy2 = ipts
+                    inner_pixel_points = [(ix1, iy1), (ix2, iy1), (ix2, iy2), (ix1, iy2)]
+                elif shape.inner_shape.type == 'circle':
+                    icx, icy, ir = ipts
+                    inner_pixel_points = [(int(icx + ir * math.cos(2*math.pi*i/36)), int(icy + ir * math.sin(2*math.pi*i/36))) for i in range(36)]
+                elif shape.inner_shape.type == 'ellipse':
+                    icx, icy, irx, iry = ipts
+                    inner_pixel_points = [(int(icx + irx * math.cos(2*math.pi*i/36)), int(icy + iry * math.sin(2*math.pi*i/36))) for i in range(36)]
+        
+        # Priority 2: List-based inner points (for standard PolygonShape)
+        if not inner_pixel_points and getattr(shape, 'inner_points', None):
+            inner_type = 'polygon'
+            if hasattr(shape, 'get_inner_pixel_points'):
+                inner_pixel_points = shape.get_inner_pixel_points()
+            else:
+                cw, ch = self.image_width, self.image_height
+                inner_pixel_points = [(int(nx * cw), int(ny * ch)) for nx, ny in shape.inner_points]
+        
+        # 3. Get control points for bezier
+        
+        # 3. Get control points for bezier
+        ctrl_points = None
+        inner_ctrl_points = None
+        if t == 'bezier_polygon':
+            ctrl_points = []
+            for c in getattr(shape, 'ctrl', []):
+                ctrl_points.append((c[0] * self.image_width, c[1] * self.image_height) if c is not None else None)
             
-            if hasattr(self.parent_window, 'populate_template_dropdown'):
-                self.parent_window.populate_template_dropdown()
-            elif hasattr(self.parent_window, 'update_template_list'):
-                self.parent_window.update_template_list()
+            # Use inner_shape for bezier inner control points if it exists as a bezier
+            target_inner = shape.inner_shape if getattr(shape, 'inner_shape', None) else shape
+            if getattr(target_inner, 'inner_control_points', None):
+                inner_ctrl_points = []
+                for c in target_inner.inner_control_points:
+                    inner_ctrl_points.append((c[0] * self.image_width, c[1] * self.image_height) if c is not None else None)
+            elif getattr(target_inner, 'ctrl', None) and target_inner != shape:
+                # If it's an attached inner shape that is a bezier
+                inner_ctrl_points = []
+                for c in target_inner.ctrl:
+                    inner_ctrl_points.append((c[0] * self.image_width, c[1] * self.image_height) if c is not None else None)
+
+        # 4. Get native parameters
+        native = {'inner_type': inner_type}
+        if t == 'box':
+            x1, y1, x2, y2 = shape.to_pixels()
+            native.update({'w': x2 - x1, 'h': y2 - y1})
+        elif t == 'circle':
+            _, _, r = shape.to_pixels()
+            native.update({'r': r})
+        elif t == 'ellipse':
+            _, _, rx, ry = shape.to_pixels()
+            native.update({'rx': rx, 'ry': ry})
+        elif t == 'frame':
+            _, _, w, h = shape.to_pixels()
+            native.update({
+                'w': w, 'h': h,
+                't_top': getattr(shape, 't_top', 20.0), 't_bottom': getattr(shape, 't_bottom', 20.0),
+                't_left': getattr(shape, 't_left', 20.0), 't_right': getattr(shape, 't_right', 20.0)
+            })
+        elif t == 'donut':
+            _, _, outer_r, inner_r = shape.to_pixels()
+            native.update({'outer_r': outer_r, 'inner_r': inner_r})
+        elif t == 'hollow_ellipse':
+            _, _, outer_rx, outer_ry, inner_rx, inner_ry = shape.to_pixels()
+            native.update({'outer_rx': outer_rx, 'outer_ry': outer_ry, 'inner_rx': inner_rx, 'inner_ry': inner_ry})
+
+        # 5. Add to manager
+        success = self.template_manager.add_template(
+            name, pixel_points, self.image_width, self.image_height,
+            inner_pixel_points=inner_pixel_points,
+            shape_type=t,
+            ctrl_points=ctrl_points,
+            inner_ctrl_points=inner_ctrl_points,
+            native_params=native
+        )
+        
+        if success:
+            print(f"✅ Saved template: {name} (Type: {t})")
+            if hasattr(self.parent_window, 'update_template_dropdown'):
+                self.parent_window.update_template_dropdown(name)
+        else:
+            QMessageBox.warning(self, "Error", "Failed to save template")
 
 
     def cancel_hollow_preview(self):
@@ -503,6 +572,7 @@ class AnnotationCanvas(QWidget):
             self.shapes.remove(self.selected_shape)
             self.selected_shape = None
             self.shape_selected.emit("none")
+            self.annotation_changed.emit()  # AUTOSAVE INTEGRATION
             self.update()
             print("🗑️ Deleted selected shape")
         
@@ -670,6 +740,56 @@ class AnnotationCanvas(QWidget):
             else:
                 # Default to box for backward compatibility
                 self.draw_single_box(painter, shape, color)
+                
+            # Draw class label for the shape
+            if not (self.drag_copy or self.drawing or self.moving) and getattr(shape, 'class_id', None):
+                if self.class_manager:
+                    cls = self.class_manager.get_class(shape.class_id)
+                    if cls:
+                        px, py = 0, 0
+                        stype = getattr(shape, 'type', 'box')
+                        if hasattr(shape, 'to_pixels') or hasattr(shape, 'to_pixel_points'):
+                            try:
+                                if stype in ('polygon', 'bezier_polygon') and hasattr(shape, 'to_pixel_points'):
+                                    pts = shape.to_pixel_points()
+                                    if pts and len(pts) > 0:
+                                        if isinstance(pts[0], (list, tuple)):
+                                            px = min(p[0] for p in pts)
+                                            py = min(p[1] for p in pts)
+                                        else:
+                                            px, py = pts[0], pts[1]
+                                elif hasattr(shape, 'to_pixels'):
+                                    pixels = shape.to_pixels()
+                                    if stype == 'circle' and len(pixels) >= 3:
+                                        px, py = pixels[0] - pixels[2], pixels[1] - pixels[2]
+                                    elif stype == 'ellipse' and len(pixels) >= 4:
+                                        px, py = pixels[0] - pixels[2], pixels[1] - pixels[3]
+                                    elif stype == 'donut' and len(pixels) >= 4:
+                                        px, py = pixels[0] - pixels[2], pixels[1] - pixels[2]
+                                    elif stype == 'hollow_ellipse' and len(pixels) >= 6:
+                                        px, py = pixels[0] - pixels[2], pixels[1] - pixels[3]
+                                    elif len(pixels) >= 2:
+                                        if isinstance(pixels[0], (int, float)):
+                                            px, py = pixels[0], pixels[1]
+                                        elif isinstance(pixels[0], (list, tuple)) and len(pixels[0]) >= 2:
+                                            px, py = pixels[0][0], pixels[0][1]
+                            except Exception:
+                                pass 
+                        wx = int(px * self.scale + self.offset_x)
+                        wy = int(py * self.scale + self.offset_y)
+                        
+                        painter.setPen(QPen(Qt.white, 1))
+                        painter.setFont(QFont("Arial", 8))
+                        text = cls.name
+                        text_width = painter.fontMetrics().horizontalAdvance(text)
+                        text_height = painter.fontMetrics().height()
+                        
+                        label_color = QColor(cls.color) if cls.color else QColor(0, 0, 0, 200)
+                        label_bg = label_color.darker(150)
+                        label_bg.setAlpha(200)
+                        
+                        painter.fillRect(wx, wy - text_height - 5, text_width + 10, text_height + 5, label_bg)
+                        painter.drawText(wx + 5, wy - 8, text)
         
     def draw_single_box(self, painter, box, color):
         """Draw a single bounding box"""
@@ -723,29 +843,8 @@ class AnnotationCanvas(QWidget):
                 whx = int(hx * self.scale + self.offset_x)
                 why = int(hy * self.scale + self.offset_y)
                 painter.drawRect(whx - half, why - half, self.handle_size, self.handle_size)
-        
-        # Draw class label if not dragging or copying
-        if not (self.drag_copy or self.drawing or self.moving) and box.class_id:
-            cls = self.class_manager.get_class(box.class_id)
-            if cls:
-                painter.setPen(QPen(Qt.white, 1))
-                painter.setFont(QFont("Arial", 8))
-                
-                # Draw background for text
-                text = cls.name
-                text_width = painter.fontMetrics().horizontalAdvance(text)
-                text_height = painter.fontMetrics().height()
-                
-                # Use class color for background to make it visible!
-                label_color = QColor(cls.color) if cls.color else QColor(0, 0, 0, 200)
-                # Darken the background color slightly to ensure white text is visible
-                label_bg = label_color.darker(150)
-                label_bg.setAlpha(200)
-                
-                painter.fillRect(x1, y1 - text_height - 5, text_width + 10, text_height + 5, label_bg)
-                
-                painter.drawText(x1 + 5, y1 - 8, text)
-    
+        # Resize handles have been drawn; class label is now handled globally in draw_shapes.
+
     def draw_bezier_shape(self, painter, bezier_shape, color):
         """Draw a bezier polygon shape"""
         if not bezier_shape.points:
@@ -1731,6 +1830,7 @@ class AnnotationCanvas(QWidget):
             self.setCursor(Qt.OpenHandCursor if self.pan_mode else Qt.ArrowCursor)
             
         elif event.button() == Qt.LeftButton:
+            was_moving_or_resizing = self.moving or self.resizing  # AUTOSAVE INTEGRATION
             if self.moving:
                 self.finish_move()
             elif self.drawing:
@@ -1761,6 +1861,9 @@ class AnnotationCanvas(QWidget):
             # Ensure we're not stuck in any special state
             self.drag_copy = False
             self.pasting = False
+            
+            if was_moving_or_resizing:  # AUTOSAVE INTEGRATION
+                self.annotation_changed.emit()
             
     def wheelEvent(self, event):
         """Handle mouse wheel for zooming - zooms to cursor position"""
@@ -1805,86 +1908,111 @@ class AnnotationCanvas(QWidget):
             
     def scale_selected_shape(self, factor):
         """Scale the currently selected shape evenly by a given factor"""
-        shape = self.selected_shape
-        if not shape:
+        if not self.selected_shape:
             return
             
         self.save_state()
         
-        # Box
-        if shape.type == 'box':
-            shape.width = min(1.0, shape.width * factor)
-            shape.height = min(1.0, shape.height * factor)
+        # Determine the group center (from the outermost shape)
+        def get_center(sh):
+            if sh.type == 'box':
+                return sh.x, sh.y
+            elif sh.type == 'circle':
+                return sh.center_x, sh.center_y
+            elif sh.type == 'ellipse':
+                return sh.center_x, sh.center_y
+            elif sh.type == 'frame':
+                return sh.x + sh.w / 2, sh.y + sh.h / 2
+            elif sh.type in ('donut', 'hollow_ellipse'):
+                return sh.cx, sh.cy
+            elif sh.type in ('polygon', 'bezier_polygon'):
+                if not sh.points: return 0.5, 0.5
+                return (min(p[0] for p in sh.points) + max(p[0] for p in sh.points)) / 2.0, \
+                       (min(p[1] for p in sh.points) + max(p[1] for p in sh.points)) / 2.0
+            return 0.5, 0.5
+
+        group_cx, group_cy = get_center(self.selected_shape)
+
+        def do_scale(sh, f, cx, cy):
+            # Scale dimensions and radii
+            if sh.type == 'box':
+                sh.width = min(1.0, sh.width * f)
+                sh.height = min(1.0, sh.height * f)
+                # If it's an inner shape, move it relative to group center
+                if sh != self.selected_shape:
+                    sh.x = cx + (sh.x - cx) * f
+                    sh.y = cy + (sh.y - cy) * f
             
-        # Frame
-        elif shape.type == 'frame':
-            cx = shape.x + shape.w / 2
-            cy = shape.y + shape.h / 2
-            shape.w = min(1.0, shape.w * factor)
-            shape.h = min(1.0, shape.h * factor)
-            shape.x = max(0.0, cx - shape.w / 2)
-            shape.y = max(0.0, cy - shape.h / 2)
-            if hasattr(shape, 't_top'):
-                shape.t_top *= factor
-                shape.t_bottom *= factor
-                shape.t_left *= factor
-                shape.t_right *= factor
+            elif sh.type == 'circle':
+                sh.radius = min(1.0, sh.radius * f)
+                if sh != self.selected_shape:
+                    sh.center_x = cx + (sh.center_x - cx) * f
+                    sh.center_y = cy + (sh.center_y - cy) * f
+                    
+            elif sh.type == 'ellipse':
+                sh.radius_x = min(1.0, sh.radius_x * f)
+                sh.radius_y = min(1.0, sh.radius_y * f)
+                if sh != self.selected_shape:
+                    sh.center_x = cx + (sh.center_x - cx) * f
+                    sh.center_y = cy + (sh.center_y - cy) * f
+
+            elif sh.type == 'frame':
+                cur_cx = sh.x + sh.w / 2
+                cur_cy = sh.y + sh.h / 2
+                sh.w = min(1.0, sh.w * f)
+                sh.h = min(1.0, sh.h * f)
+                # Scale thicknesses
+                sh.t_top *= f
+                sh.t_bottom *= f
+                sh.t_left *= f
+                sh.t_right *= f
+                # Apply movement relative to group center
+                new_center_x = cx + (cur_cx - cx) * f
+                new_center_y = cy + (cur_cy - cy) * f
+                sh.x = max(0.0, new_center_x - sh.w / 2)
+                sh.y = max(0.0, new_center_y - sh.h / 2)
+
+            elif sh.type == 'donut':
+                d = min(self.image_width, self.image_height)
+                max_r = min(sh.cx, 1 - sh.cx, sh.cy, 1 - sh.cy) * min(self.image_width, self.image_height) / d
+                sh.outer_r = min(max_r, sh.outer_r * f)
+                sh.inner_r *= f
+                if sh != self.selected_shape:
+                    sh.cx = cx + (sh.cx - cx) * f
+                    sh.cy = cy + (sh.cy - cy) * f
+
+            elif sh.type == 'hollow_ellipse':
+                sh.outer_rx = min(1.0, sh.outer_rx * f)
+                sh.outer_ry = min(1.0, sh.outer_ry * f)
+                sh.inner_rx *= f
+                sh.inner_ry *= f
+                if sh != self.selected_shape:
+                    sh.cx = cx + (sh.cx - cx) * f
+                    sh.cy = cy + (sh.cy - cy) * f
+
+            elif sh.type in ('polygon', 'bezier_polygon'):
+                if not sh.points: return
+                sh.points = [(cx + (p[0] - cx) * f, cy + (p[1] - cy) * f) for p in sh.points]
                 
-        # Donut
-        elif shape.type == 'donut':
-            d = min(self.image_width, self.image_height)
-            max_r = min(shape.cx, 1 - shape.cx, shape.cy, 1 - shape.cy) * min(self.image_width, self.image_height) / d
-            shape.outer_r = min(max_r, shape.outer_r * factor)
-            shape.inner_r *= factor
-            
-        # Circle
-        elif shape.type == 'circle':
-            shape.radius = min(1.0, shape.radius * factor)
-            
-        # Ellipse
-        elif shape.type == 'ellipse':
-            shape.radius_x = min(1.0, shape.radius_x * factor)
-            shape.radius_y = min(1.0, shape.radius_y * factor)
-            
-        # Hollow Ellipse
-        elif shape.type == 'hollow_ellipse':
-            shape.outer_rx = min(1.0, shape.outer_rx * factor)
-            shape.outer_ry = min(1.0, shape.outer_ry * factor)
-            shape.inner_rx *= factor
-            shape.inner_ry *= factor
-            
-        # Polygons
-        elif shape.type in ('polygon', 'bezier_polygon'):
-            if not shape.points:
-                return
-            
-            # Find center
-            min_x = min(p[0] for p in shape.points)
-            max_x = max(p[0] for p in shape.points)
-            min_y = min(p[1] for p in shape.points)
-            max_y = max(p[1] for p in shape.points)
-            
-            cx = (min_x + max_x) / 2.0
-            cy = (min_y + max_y) / 2.0
-            
-            shape.points = [(cx + (p[0] - cx) * factor, cy + (p[1] - cy) * factor) for p in shape.points]
-            
-            if shape.type == 'bezier_polygon':
-                if hasattr(shape, 'control_points') and shape.control_points:
-                    for i in range(len(shape.control_points)):
-                        if shape.control_points[i] is not None:
-                            c = shape.control_points[i]
-                            shape.control_points[i] = (cx + (c[0] - cx) * factor, cy + (c[1] - cy) * factor)
-                            
-            if getattr(shape, 'inner_points', None):
-                shape.inner_points = [(cx + (p[0] - cx) * factor, cy + (p[1] - cy) * factor) for p in shape.inner_points]
+                if sh.type == 'bezier_polygon':
+                    # Fix: use 'ctrl' instead of 'control_points' which might not exist in actual core
+                    if hasattr(sh, 'ctrl') and sh.ctrl:
+                        sh.ctrl = [(cx + (c[0] - cx) * f, cy + (c[1] - cy) * f) if c is not None else None for c in sh.ctrl]
+                    # Check for older/alternative attribute names just in case
+                    if hasattr(sh, 'control_points') and sh.control_points:
+                        sh.control_points = [(cx + (c[0] - cx) * f, cy + (c[1] - cy) * f) if c is not None else None for c in sh.control_points]
                 
-                if shape.type == 'bezier_polygon' and hasattr(shape, 'inner_control_points') and shape.inner_control_points:
-                    for i in range(len(shape.inner_control_points)):
-                        if shape.inner_control_points[i] is not None:
-                            c = shape.inner_control_points[i]
-                            shape.inner_control_points[i] = (cx + (c[0] - cx) * factor, cy + (c[1] - cy) * factor)
-                            
+                # Internal list-based inner_points (PolygonShape style)
+                if getattr(sh, 'inner_points', None):
+                    sh.inner_points = [(cx + (p[0] - cx) * f, cy + (p[1] - cy) * f) for p in sh.inner_points]
+                    if hasattr(sh, 'inner_control_points') and sh.inner_control_points:
+                        sh.inner_control_points = [(cx + (c[0] - cx) * f, cy + (c[1] - cy) * f) if c is not None else None for c in sh.inner_control_points]
+
+            # Recurse to object-based inner_shape
+            if getattr(sh, 'inner_shape', None):
+                do_scale(sh.inner_shape, f, cx, cy)
+
+        do_scale(self.selected_shape, factor, group_cx, group_cy)
         self.update()
             
     def keyPressEvent(self, event):
@@ -2441,6 +2569,7 @@ class AnnotationCanvas(QWidget):
                 self.drawing_inner_cutout = False
                 self.cutout_target_shape = None
                 self.polygon_points = []
+                self.annotation_changed.emit()  # AUTOSAVE INTEGRATION
                 self.update()
             else:
                 # Create polygon shape
@@ -2452,6 +2581,7 @@ class AnnotationCanvas(QWidget):
                 polygon.close_polygon()
                 self.save_state()  # Save state before adding
                 self.shapes.append(polygon)
+                self.annotation_changed.emit()  # AUTOSAVE INTEGRATION
                 print(f"✅ Polygon completed with {len(self.polygon_points)} points")
         
         # Reset polygon drawing state (unless template dialog is open)
@@ -2558,21 +2688,23 @@ class AnnotationCanvas(QWidget):
             from core.annotation import BoundingBox
             shape = BoundingBox(class_id=current_class.id, image_size=(cw, ch))
             cx, cy = self.stamp_center
-            w = native_params.get('w', 100) * ratio_x # roughly scaling by the drag ratio compared to base
-            h = native_params.get('h', 100) * ratio_y
-            shape.from_pixels(cx - w/2, cy - h/2, cx + w/2, cy + h/2)
+            # Correct scaling relative to the template's bounding box
+            w = native_params.get('w', info['orig_w']) * ratio_x
+            h = native_params.get('h', info['orig_h']) * ratio_y
+            shape.from_pixels(cx - w/2, cy - h/2, cx + w/2, cy + h/2, cw, ch)
             
         elif shape_type == 'circle':
             from core.circle_shape import CircleShape
             shape = CircleShape(class_id=current_class.id, image_size=(cw, ch))
-            r = native_params.get('r', 50) * ratio_x
+            # Circles scale by x drag by default
+            r = native_params.get('r', info['orig_w']/2) * ratio_x
             shape.from_pixels(self.stamp_center[0], self.stamp_center[1], r)
             
         elif shape_type == 'ellipse':
             from core.ellipse_shape import EllipseShape
             shape = EllipseShape(class_id=current_class.id, image_size=(cw, ch))
-            rx = native_params.get('rx', 50) * ratio_x
-            ry = native_params.get('ry', 50) * ratio_y
+            rx = native_params.get('rx', info['orig_w']/2) * ratio_x
+            ry = native_params.get('ry', info['orig_h']/2) * ratio_y
             shape.from_pixels(self.stamp_center[0], self.stamp_center[1], rx, ry)
             
         elif shape_type == 'frame':
@@ -2580,43 +2712,41 @@ class AnnotationCanvas(QWidget):
             shape = FrameShape(class_id=current_class.id, image_size=(cw, ch))
             cx, cy = self.stamp_center
             
-            # The original w/h stored was for rendering.
-            # When we drag to scale during stamp, the bounding box might change ratio slightly.
-            orig_w = native_params.get('w', 100)
-            orig_h = native_params.get('h', 100)
+            orig_w = native_params.get('w', info['orig_w'])
+            orig_h = native_params.get('h', info['orig_h'])
             target_w = orig_w * ratio_x
             target_h = orig_h * ratio_y
             
             shape.from_pixels(cx - target_w/2, cy - target_h/2, cx + target_w/2, cy + target_h/2)
             
             # Apply proportionally scaled thicknesses
-            w_ratio = target_w / max(orig_w, 1)
-            h_ratio = target_h / max(orig_h, 1)
-            
-            shape.t_top = native_params.get('t_top', 20.0) * h_ratio
-            shape.t_bottom = native_params.get('t_bottom', 20.0) * h_ratio
-            shape.t_left = native_params.get('t_left', 20.0) * w_ratio
-            shape.t_right = native_params.get('t_right', 20.0) * w_ratio
+            shape.t_top = native_params.get('t_top', 20.0) * ratio_y
+            shape.t_bottom = native_params.get('t_bottom', 20.0) * ratio_y
+            shape.t_left = native_params.get('t_left', 20.0) * ratio_x
+            shape.t_right = native_params.get('t_right', 20.0) * ratio_x
             
         elif shape_type == 'donut':
             from core.ring_shape import DonutShape
             shape = DonutShape(class_id=current_class.id, image_size=(cw, ch))
-            outer_r = native_params.get('outer_r', 50) * (scale_x / 50.0)
-            inner_r = native_params.get('inner_r', 25) * (scale_x / 50.0)
+            outer_r = native_params.get('outer_r', info['orig_w']/2) * ratio_x
+            inner_r_px = native_params.get('inner_r', info['orig_w']/4) * ratio_x
             shape.from_pixels(self.stamp_center[0], self.stamp_center[1], outer_r)
+            # donut.inner_r is normalized by min(W,H) usually, but from_pixels handles some setups.
+            # Let's manually set the normalized inner_r if needed, or assume from_pixels handles it.
+            # DonutShape.from_pixels only sets outer_radius.
             d = min(cw, ch)
-            shape.inner_r = inner_r / d
+            shape.inner_r = inner_r_px / d
             
         elif shape_type == 'hollow_ellipse':
             from core.ring_shape import HollowEllipseShape
             shape = HollowEllipseShape(class_id=current_class.id, image_size=(cw, ch))
-            outer_rx = native_params.get('outer_rx', 50) * (scale_x / 50.0)
-            outer_ry = native_params.get('outer_ry', 50) * (scale_y / 50.0)
-            inner_rx = native_params.get('inner_rx', 25) * (scale_x / 50.0)
-            inner_ry = native_params.get('inner_ry', 25) * (scale_y / 50.0)
+            outer_rx = native_params.get('outer_rx', info['orig_w']/2) * ratio_x
+            outer_ry = native_params.get('outer_ry', info['orig_h']/2) * ratio_y
+            inner_rx_px = native_params.get('inner_rx', info['orig_w']/4) * ratio_x
+            inner_ry_px = native_params.get('inner_ry', info['orig_h']/4) * ratio_y
             shape.from_pixels(self.stamp_center[0], self.stamp_center[1], outer_rx, outer_ry)
-            shape.inner_rx = inner_rx / cw
-            shape.inner_ry = inner_ry / ch
+            shape.inner_rx = inner_rx_px / cw
+            shape.inner_ry = inner_ry_px / ch
             
         else:
             # Fallback to polygon logic (including bezier_polygon)
@@ -2649,9 +2779,50 @@ class AnnotationCanvas(QWidget):
                 shape.close_polygon()
                 
         if shape is not None:
+            # Reconstruct inner shape for hallowed pairs (Box, Circle, Ellipse, Bezier)
+            inner_type = native_params.get('inner_type')
+            if inner_points and inner_type:
+                inner_shape = None
+                if inner_type == 'box':
+                    from core.annotation import BoundingBox
+                    ix1 = min(p[0] for p in inner_points); iy1 = min(p[1] for p in inner_points)
+                    ix2 = max(p[0] for p in inner_points); iy2 = max(p[1] for p in inner_points)
+                    inner_shape = BoundingBox(class_id=current_class.id, image_size=(cw, ch))
+                    inner_shape.from_pixels(ix1, iy1, ix2, iy2, cw, ch)
+                elif inner_type == 'circle':
+                    from core.circle_shape import CircleShape
+                    icx = sum(p[0] for p in inner_points) / len(inner_points)
+                    icy = sum(p[1] for p in inner_points) / len(inner_points)
+                    ir = math.hypot(inner_points[0][0] - icx, inner_points[0][1] - icy)
+                    inner_shape = CircleShape(class_id=current_class.id, image_size=(cw, ch))
+                    inner_shape.from_pixels(icx, icy, ir)
+                elif inner_type == 'ellipse':
+                    from core.ellipse_shape import EllipseShape
+                    icx = sum(p[0] for p in inner_points) / len(inner_points)
+                    icy = sum(p[1] for p in inner_points) / len(inner_points)
+                    irx = max(abs(p[0] - icx) for p in inner_points)
+                    iry = max(abs(p[1] - icy) for p in inner_points)
+                    inner_shape = EllipseShape(class_id=current_class.id, image_size=(cw, ch))
+                    inner_shape.from_pixels(icx, icy, irx, iry)
+                elif inner_type == 'bezier_polygon':
+                    from core.bezier_shape import BezierPolygonShape
+                    inner_shape = BezierPolygonShape(class_id=current_class.id, image_size=(cw, ch))
+                    inner_shape.from_pixel_points(inner_points)
+                    if inner_ctrl_points:
+                        inner_shape.ctrl = [(c[0]/cw, c[1]/ch) if c is not None else None for c in inner_ctrl_points]
+                    inner_shape.close_polygon()
+                elif inner_type == 'polygon':
+                    from core.polygon_shape import PolygonShape
+                    inner_shape = PolygonShape(class_id=current_class.id, image_size=(cw, ch))
+                    inner_shape.from_pixel_points(inner_points)
+                    inner_shape.close_polygon()
+                
+                if inner_shape:
+                    shape.attach_inner(inner_shape)
+
             self.save_state()
             self.shapes.append(shape)
-            print(f"✅ Stamp placed as natively constructed '{shape_type}'")
+            print(f"✅ Stamp placed as natively constructed '{shape_type}' (Hollow: {True if inner_type else False})")
             
             self.stamping = False
             self.stamp_center = None
@@ -2734,6 +2905,7 @@ class AnnotationCanvas(QWidget):
                 self.bezier_points = []
                 if hasattr(self, 'undone_bezier_points'):
                     self.undone_bezier_points = []
+                self.annotation_changed.emit()  # AUTOSAVE INTEGRATION
                 self.update()
             else:
                 current_class = self.class_manager.get_current_class()
@@ -2746,6 +2918,7 @@ class AnnotationCanvas(QWidget):
                     bezier.close_polygon()
                     self.save_state()
                     self.shapes.append(bezier)
+                    self.annotation_changed.emit()  # AUTOSAVE INTEGRATION
                     print(f"✅ Bezier polygon completed with {len(self.bezier_points)} points")
                 
         self.drawing_bezier = False
@@ -2794,6 +2967,7 @@ class AnnotationCanvas(QWidget):
             )
             self.save_state()  # Save state before adding
             self.shapes.append(circle)
+            self.annotation_changed.emit()  # AUTOSAVE INTEGRATION
             print(f"✅ Circle completed with radius {self.circle_radius}")
         
         # Reset circle drawing state
@@ -2842,6 +3016,7 @@ class AnnotationCanvas(QWidget):
             )
             self.save_state()  # Save state before adding
             self.shapes.append(ellipse)
+            self.annotation_changed.emit()  # AUTOSAVE INTEGRATION
             print(f"✅ Ellipse completed with radii ({self.ellipse_radius_x}, {self.ellipse_radius_y})")
         
         # Reset ellipse drawing state
@@ -2908,6 +3083,7 @@ class AnnotationCanvas(QWidget):
                 )
                 self.shapes.append(donut)
                 self.save_state()
+                self.annotation_changed.emit()  # AUTOSAVE INTEGRATION
                 print("✅ Donut created")
         
         # Reset all donut drawing states
@@ -2959,6 +3135,7 @@ class AnnotationCanvas(QWidget):
                 )
                 self.shapes.append(shape)
                 self.save_state()
+                self.annotation_changed.emit()  # AUTOSAVE INTEGRATION
                 print("✅ Hollow ellipse created")
         
         self.hollow_ellipse_center = None
@@ -3228,168 +3405,8 @@ class AnnotationCanvas(QWidget):
     
     def save_selected_as_template(self):
         """Save the selected shape as a reusable template"""
-        from PyQt5.QtWidgets import QInputDialog
-        import math
-        
-        if not self.selected_shape:
-            return
-            
-        name, ok = QInputDialog.getText(self, "Save as Template", "Template name:")
-        if not (ok and name and name.strip()):
-            return
-            
-        name = name.strip()
-        
-        # Convert the shape to pixel points
-        pixel_points = []
-        shape = self.selected_shape
-        t = shape.type
-        
-        if t == 'polygon':
-            if hasattr(shape, 'closed') and not shape.closed:
-                print("❌ Cannot save unclosed polygon as template")
-                return
-            pixel_points = shape.to_pixel_points()
-        elif t == 'bezier_polygon':
-            if hasattr(shape, 'closed') and not shape.closed:
-                print("❌ Cannot save unclosed bezier polygon as template")
-                return
-            pixel_points = shape.to_pixel_points()
-        elif t == 'box':
-            x1, y1, x2, y2 = shape.to_pixels()
-            pixel_points = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
-        elif t == 'circle':
-            cx, cy, r = shape.to_pixels()
-            for i in range(32):
-                angle = 2 * math.pi * i / 32
-                px = cx + r * math.cos(angle)
-                py = cy + r * math.sin(angle)
-                pixel_points.append((int(px), int(py)))
-        elif t == 'ellipse':
-            cx, cy, rx, ry = shape.to_pixels()
-            for i in range(32):
-                angle = 2 * math.pi * i / 32
-                px = cx + rx * math.cos(angle)
-                py = cy + ry * math.sin(angle)
-                pixel_points.append((int(px), int(py)))
-        elif t == 'frame':
-            x, y, w, h = shape.to_pixels()
-            pixel_points = [(x, y), (x+w, y), (x+w, y+h), (x, y+h)]
-            native = {
-                'w': w, 'h': h,
-                't_top': getattr(shape, 't_top', 20.0),
-                't_bottom': getattr(shape, 't_bottom', 20.0),
-                't_left': getattr(shape, 't_left', 20.0),
-                't_right': getattr(shape, 't_right', 20.0)
-            }
-        elif t == 'donut':
-            cx, cy, outer_r, inner_r = shape.to_pixels()
-            native = {'outer_r': outer_r, 'inner_r': inner_r}
-            for i in range(32):
-                angle = 2 * math.pi * i / 32
-                px = cx + outer_r * math.cos(angle)
-                py = cy + outer_r * math.sin(angle)
-                pixel_points.append((int(px), int(py)))
-        elif t == 'hollow_ellipse':
-            cx, cy, outer_rx, outer_ry, inner_rx, inner_ry = shape.to_pixels()
-            native = {'outer_rx': outer_rx, 'outer_ry': outer_ry, 'inner_rx': inner_rx, 'inner_ry': inner_ry}
-            for i in range(32):
-                angle = 2 * math.pi * i / 32
-                px = cx + outer_rx * math.cos(angle)
-                py = cy + outer_ry * math.sin(angle)
-                pixel_points.append((int(px), int(py)))
-            
-        if not pixel_points or len(pixel_points) < 3:
-            print("❌ Invalid shape for template")
-            return
-        
-        # Check for inner cutouts (hollow shapes)
-        inner_pixel_points = None
-        if getattr(shape, 'inner_points', None):
-            if hasattr(shape, '_norm_to_px'):
-                inner_pixel_points = [shape._norm_to_px(px, py) for px, py in shape.inner_points]
-            elif hasattr(shape, 'get_inner_pixel_points'):
-                inner_pixel_points = shape.get_inner_pixel_points()
-        elif t == 'hollow_ellipse':
-            # Pre-calculated in the loop above
-            inner_pixel_points = []
-            wirx = getattr(shape, 'inner_rx', 0)
-            wiry = getattr(shape, 'inner_ry', 0)
-            if wirx > 0 and wiry > 0:
-                for i in range(32):
-                    angle = 2 * math.pi * i / 32
-                    px = cx + wirx * math.cos(angle)
-                    py = cy + wiry * math.sin(angle)
-                    inner_pixel_points.append((int(px), int(py)))
-        elif t == 'donut':
-            inner_pixel_points = []
-            inner_r = getattr(shape, 'inner_radius', 0)
-            if inner_r > 0:
-                for i in range(32):
-                    angle = 2 * math.pi * i / 32
-                    px = cx + inner_r * math.cos(angle)
-                    py = cy + inner_r * math.sin(angle)
-                    inner_pixel_points.append((int(px), int(py)))
-                
-        ctrl_points = None
-        inner_ctrl_points = None
-        if t == 'bezier_polygon':
-            ctrl_points = []
-            for c in getattr(shape, 'ctrl', []):
-                if c is not None:
-                    ctrl_points.append((c[0] * self.image_width, c[1] * self.image_height))
-                else:
-                    ctrl_points.append(None)
-                    
-            if getattr(shape, 'inner_control_points', None):
-                inner_ctrl_points = []
-                for c in shape.inner_control_points:
-                    if c is not None:
-                        inner_ctrl_points.append((c[0] * self.image_width, c[1] * self.image_height))
-                    else:
-                        inner_ctrl_points.append(None)
-                
-        # Restore point loops for native parameters
-        native = {}
-        if t == 'box':
-            x1, y1, x2, y2 = shape.to_pixels()
-            native = {'w': x2 - x1, 'h': y2 - y1}
-        elif t == 'circle':
-            cx, cy, r = shape.to_pixels()
-            native = {'r': r}
-        elif t == 'ellipse':
-            cx, cy, rx, ry = shape.to_pixels()
-            native = {'rx': rx, 'ry': ry}
-        elif t == 'frame':
-            x, y, w, h = shape.to_pixels()
-            native = {
-                'w': w, 'h': h,
-                't_top': getattr(shape, 't_top', 20.0),
-                't_bottom': getattr(shape, 't_bottom', 20.0),
-                't_left': getattr(shape, 't_left', 20.0),
-                't_right': getattr(shape, 't_right', 20.0)
-            }
-        elif t == 'donut':
-            cx, cy, outer_r, inner_r = shape.to_pixels()
-            native = {'outer_r': outer_r, 'inner_r': inner_r}
-        elif t == 'hollow_ellipse':
-            cx, cy, outer_rx, outer_ry, inner_rx, inner_ry = shape.to_pixels()
-            native = {'outer_rx': outer_rx, 'outer_ry': outer_ry, 'inner_rx': inner_rx, 'inner_ry': inner_ry}
-                
-        success = self.template_manager.add_template(
-            name, pixel_points, self.image_width, self.image_height, 
-            inner_pixel_points=inner_pixel_points,
-            shape_type=t,
-            ctrl_points=ctrl_points,
-            inner_ctrl_points=inner_ctrl_points,
-            native_params=native
-        )
-        if success:
-            print(f"💾 Template '{name}' saved from selected shape")
-            if hasattr(self, 'parent_window') and self.parent_window:
-                self.parent_window.update_template_dropdown()
-        else:
-            print("❌ Failed to save template")
+        if self.selected_shape:
+            self.save_template_from_shape(self.selected_shape)
     
     def paste_at_cursor(self, pos):
         """Paste clipboard shape at cursor position"""

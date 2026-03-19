@@ -185,6 +185,115 @@ class BezierPolygonShape(Shape):
             
         return True
 
+    def _constrain_inner_points(self):
+        """Clamp each inner anchor so it stays inside the outer bezier polygon
+        and at least a small distance away from the outer boundary."""
+        if not getattr(self, 'inner_points', None) or len(self.points) < 3:
+            return
+
+        MIN_GAP_PX = 4.0
+
+        # Centroid of outer anchors (normalized)
+        cx = sum(p[0] for p in self.points) / len(self.points)
+        cy = sum(p[1] for p in self.points) / len(self.points)
+
+        # Approximate outer curve with straight segments between anchors.
+        outer_px = [self._norm_to_px(nx, ny) for (nx, ny) in self.points]
+
+        def _point_segment_distance(px, py, x1, y1, x2, y2):
+            dx = x2 - x1
+            dy = y2 - y1
+            if dx == 0 and dy == 0:
+                return math.hypot(px - x1, py - y1)
+            t = ((px - x1) * dx + (py - y1) * dy) / float(dx * dx + dy * dy)
+            t = max(0.0, min(1.0, t))
+            proj_x = x1 + t * dx
+            proj_y = y1 + t * dy
+            return math.hypot(px - proj_x, py - proj_y)
+
+        for i, (ix, iy) in enumerate(self.inner_points):
+            best_x, best_y = ix, iy
+
+            # Rough inside check using polygon made from outer anchors.
+            if not PolygonShape._point_in_polygon(best_x, best_y, self.points):
+                # Project toward centroid until inside or give up.
+                for t_int in range(1, 21):
+                    t = t_int / 20.0
+                    tx = ix + (cx - ix) * t
+                    ty = iy + (cy - iy) * t
+                    if PolygonShape._point_in_polygon(tx, ty, self.points):
+                        best_x, best_y = tx, ty
+                        break
+                else:
+                    best_x = ix + (cx - ix) * 0.9
+                    best_y = iy + (cy - iy) * 0.9
+
+            # Enforce minimum distance from outer boundary in pixel space.
+            for _ in range(10):
+                px, py = self._norm_to_px(best_x, best_y)
+                min_dist = float("inf")
+                for j in range(len(outer_px)):
+                    x1, y1 = outer_px[j]
+                    x2, y2 = outer_px[(j + 1) % len(outer_px)]
+                    dist = _point_segment_distance(px, py, x1, y1, x2, y2)
+                    if dist < min_dist:
+                        min_dist = dist
+                if min_dist >= MIN_GAP_PX:
+                    break
+                best_x = best_x + (cx - best_x) * 0.3
+                best_y = best_y + (cy - best_y) * 0.3
+
+            self.inner_points[i] = (best_x, best_y)
+
+    def _constrain_inner_shape_object(self):
+        """Constrain an attached inner_shape object so it stays inside the
+        outer bezier polygon's bounding box, with a small safety gap."""
+        inner = getattr(self, 'inner_shape', None)
+        if not inner or len(self.points) < 3:
+            return
+
+        MIN_GAP = 4  # pixels
+
+        # Compute outer polygon bounding box in pixel space
+        outer_px = self.to_pixel_points()
+        ox_min = min(p[0] for p in outer_px)
+        ox_max = max(p[0] for p in outer_px)
+        oy_min = min(p[1] for p in outer_px)
+        oy_max = max(p[1] for p in outer_px)
+
+        # Handle circle/ellipse-type inner shapes with (cx, cy, rx, ry)
+        if hasattr(inner, 'to_pixels'):
+            result = inner.to_pixels()
+            if isinstance(result, (list, tuple)) and len(result) == 4 and not isinstance(result[0], (list, tuple)):
+                cx, cy, rx, ry = result
+                max_rx = max(1, (ox_max - ox_min) // 2 - MIN_GAP)
+                max_ry = max(1, (oy_max - oy_min) // 2 - MIN_GAP)
+                rx = min(rx, max_rx)
+                ry = min(ry, max_ry)
+                cx = max(ox_min + rx + MIN_GAP, min(cx, ox_max - rx - MIN_GAP))
+                cy = max(oy_min + ry + MIN_GAP, min(cy, oy_max - ry - MIN_GAP))
+                if hasattr(inner, 'from_pixels'):
+                    inner.from_pixels(int(cx), int(cy), int(rx), int(ry))
+        # Handle polygon-type inner shapes
+        elif hasattr(inner, 'to_pixel_points') and hasattr(inner, 'move'):
+            pts = inner.to_pixel_points()
+            if pts:
+                ix_min = min(p[0] for p in pts)
+                ix_max = max(p[0] for p in pts)
+                iy_min = min(p[1] for p in pts)
+                iy_max = max(p[1] for p in pts)
+                shift_x = shift_y = 0
+                if ix_min < ox_min + MIN_GAP:
+                    shift_x = (ox_min + MIN_GAP - ix_min) / self.image_width
+                elif ix_max > ox_max - MIN_GAP:
+                    shift_x = (ox_max - MIN_GAP - ix_max) / self.image_width
+                if iy_min < oy_min + MIN_GAP:
+                    shift_y = (oy_min + MIN_GAP - iy_min) / self.image_height
+                elif iy_max > oy_max - MIN_GAP:
+                    shift_y = (oy_max - MIN_GAP - iy_max) / self.image_height
+                if shift_x or shift_y:
+                    inner.move(shift_x, shift_y)
+
     def resize_from_handle(self, handle_name, dx, dy):
         if handle_name.startswith('inner_') and getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'resize_from_handle'):
             inner_handle = handle_name.replace('inner_', '', 1)
@@ -194,12 +303,14 @@ class BezierPolygonShape(Shape):
         if self._resize_origin is None:
             return False
 
+        result = False
+
         if handle_name.startswith('vertex_'):
             idx = int(handle_name.split('_')[1])
             if 0 <= idx < len(self._resize_origin):
                 ox, oy = self._resize_origin[idx]
                 self.points[idx] = (ox + dx / self.image_width, oy + dy / self.image_height)
-                return True
+                result = True
 
         elif handle_name.startswith('ctrl_'):
             idx = int(handle_name.split('_')[1])
@@ -214,7 +325,7 @@ class BezierPolygonShape(Shape):
                     ox = (self.points[idx][0] + self.points[j][0]) / 2
                     oy = (self.points[idx][1] + self.points[j][1]) / 2
                 self.ctrl[idx] = (ox + dx / self.image_width, oy + dy / self.image_height)
-            return True
+                result = True
 
         elif handle_name.startswith('inner_'):
             idx = int(handle_name.split('_')[1])
@@ -234,8 +345,7 @@ class BezierPolygonShape(Shape):
                     if idx < len(inner_ctrl_orig) and inner_ctrl_orig[idx] is not None:
                         cox, coy = inner_ctrl_orig[idx]
                         self.inner_control_points[idx] = (cox + dx / self.image_width, coy + dy / self.image_height)
-                
-                return True
+                result = True
 
         elif handle_name.startswith('ctrl_inner_'):
             idx = int(handle_name.split('_')[2])
@@ -252,9 +362,17 @@ class BezierPolygonShape(Shape):
                 if not hasattr(self, 'inner_control_points'):
                     self.inner_control_points = [None] * len(self.inner_points)
                 self.inner_control_points[idx] = (ox + dx / self.image_width, oy + dy / self.image_height)
-                return True
+                result = True
 
-        return False
+        # If any inner or outer geometry changed and we have inner anchors/shapes,
+        # keep them constrained inside the outer curve.
+        if result:
+            if getattr(self, 'inner_points', None):
+                self._constrain_inner_points()
+            if getattr(self, 'inner_shape', None):
+                self._constrain_inner_shape_object()
+
+        return result
 
     def insert_vertex_at_ctrl(self, handle_name):
         """Insert a new vertex at the position of a control handle."""
