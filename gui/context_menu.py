@@ -95,9 +95,6 @@ class ShapeContextMenu(QMenu):
             # Save as Template
             save_tmpl_act = self.addAction("💾 Save as Template")
             save_tmpl_act.triggered.connect(lambda: self.request_save_template.emit(shape))
-            if not getattr(shape, 'is_hollow', False):
-                save_tmpl_act.setDisabled(True)
-                save_tmpl_act.setToolTip("Create inner/outer first")
 
             self.addSeparator()
         

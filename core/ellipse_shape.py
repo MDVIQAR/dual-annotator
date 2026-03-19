@@ -100,37 +100,46 @@ class EllipseShape(Shape):
         inner.from_pixels(int(new_cx), int(new_cy), int(new_rx), int(new_ry))
 
     def resize_from_handle(self, handle_name, dx, dy):
+        MIN_GAP = 4
+        MIN_R   = 4
+
+        # ── Inner handle drag ──────────────────────────────────────────
         if handle_name.startswith('inner_'):
             if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'resize_from_handle'):
                 inner_handle = handle_name.replace('inner_', '', 1)
                 result = self.inner_shape.resize_from_handle(inner_handle, dx, dy)
                 if result:
-                    self._constrain_inner_shape()
+                    # Clamp each axis: inner radius must stay inside outer radius
+                    _, _, outer_rx, outer_ry = self.to_pixels()
+                    _, _, inner_rx, inner_ry = self.inner_shape.to_pixels()
+                    if inner_rx >= outer_rx - MIN_GAP:
+                        clamped = max(MIN_R, outer_rx - MIN_GAP)
+                        self.inner_shape.radius_x = clamped / self.inner_shape.image_width
+                    if inner_ry >= outer_ry - MIN_GAP:
+                        clamped = max(MIN_R, outer_ry - MIN_GAP)
+                        self.inner_shape.radius_y = clamped / self.inner_shape.image_height
                 return result
             return False
-            
+
+        # ── Outer handle drag ──────────────────────────────────────────
         if self._resize_origin is None:
             return False
 
         orig_cx, orig_cy, orig_rx, orig_ry = self._resize_origin
 
-        left = orig_cx - orig_rx
-        right = orig_cx + orig_rx
-        top = orig_cy - orig_ry
+        left   = orig_cx - orig_rx
+        right  = orig_cx + orig_rx
+        top    = orig_cy - orig_ry
         bottom = orig_cy + orig_ry
 
         if handle_name == 'top_left':
-            left += dx
-            top += dy
+            left += dx;  top    += dy
         elif handle_name == 'top_right':
-            right += dx
-            top += dy
+            right += dx; top    += dy
         elif handle_name == 'bottom_left':
-            left += dx
-            bottom += dy
+            left += dx;  bottom += dy
         elif handle_name == 'bottom_right':
-            right += dx
-            bottom += dy
+            right += dx; bottom += dy
         else:
             return False
 
@@ -145,20 +154,18 @@ class EllipseShape(Shape):
         new_ry = (bottom - top) / 2
 
         min_size = 5
-        max_rx = self.image_width // 2
+        max_rx = self.image_width  // 2
         max_ry = self.image_height // 2
 
         new_rx = max(min_size, min(new_rx, max_rx))
         new_ry = max(min_size, min(new_ry, max_ry))
 
-        # Ensure outer contains inner + gap when hollow
-        min_gap = 4
-        if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'to_pixels'):
-            _, _, irx, iry = self.inner_shape.to_pixels()
-            new_rx = max(new_rx, irx + min_gap)
-            new_ry = max(new_ry, iry + min_gap)
-            new_rx = min(new_rx, max_rx)
-            new_ry = min(new_ry, max_ry)
+        # Clamp: outer radii must always be larger than inner radii + gap
+        if getattr(self, 'inner_shape', None):
+            _, _, inner_rx, inner_ry = self.inner_shape.to_pixels()
+            if new_rx <= inner_rx + MIN_GAP or new_ry <= inner_ry + MIN_GAP:
+                # Reject — outer would shrink inside inner on at least one axis
+                return False
 
         self.center_x = new_cx / self.image_width
         self.center_y = new_cy / self.image_height
