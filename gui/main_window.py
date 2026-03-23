@@ -225,7 +225,8 @@ class ShortcutBar(QFrame):
             ("F", "Frame"),
             ("O", "Donut"),
             ("H", "Hollow Ellipse"),
-            ("T", "Stamp")
+            ("T", "Stamp"),
+            ("Ctrl+E", "Export")
         ]
         
         for i, (key, desc) in enumerate(shortcuts):
@@ -336,6 +337,21 @@ class MainWindow(QMainWindow):
         if hasattr(self, "project_manager"):
             self.project_manager.flush_autosave()
         super().closeEvent(event)
+        
+    # EXPORT INTEGRATION
+    def open_export_dialog(self) -> None:
+        if not self.image_folder or not self.image_files:
+            return
+        if hasattr(self, 'project_manager'):
+            self.project_manager.flush_autosave()
+            
+        from core.export_manager import ExportManager
+        from gui.export_dialog import ExportDialog
+        
+        manager = ExportManager(self.project_manager, self.class_manager)
+        dlg = ExportDialog(self.project_manager, self.class_manager, self.image_folder, self.image_files, self.canvas.mode, self)
+        dlg.set_export_manager(manager)
+        dlg.exec_()
         
     def set_dark_theme(self):
         """Set dark theme for the application"""
@@ -671,6 +687,13 @@ class MainWindow(QMainWindow):
         
         shortcuts_menu.addSeparator()
         
+        export_shortcut_action = QAction('Export Annotations', self)
+        export_shortcut_action.setShortcut('Ctrl+E')
+        export_shortcut_action.triggered.connect(self.open_export_dialog)
+        shortcuts_menu.addAction(export_shortcut_action)
+        
+        shortcuts_menu.addSeparator()
+        
         # New Feature Shortcuts
         feature_title = shortcuts_menu.addAction('🆕 NEW FEATURES')
         feature_title.setEnabled(False)
@@ -688,6 +711,14 @@ class MainWindow(QMainWindow):
         undo_point_help.setEnabled(False)
         shortcuts_menu.addAction(undo_point_help)
         
+        # ===== EXPORT MENU =====
+        export_menu = menubar.addMenu('E&xport')
+        
+        export_menu_action = QAction('&Export Annotations...', self)
+        export_menu_action.setShortcut('Ctrl+E')
+        export_menu_action.triggered.connect(self.open_export_dialog)
+        export_menu.addAction(export_menu_action)
+
         # ===== HELP MENU =====
         help_menu = menubar.addMenu('&Help')
         

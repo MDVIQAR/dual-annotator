@@ -366,6 +366,7 @@ class ProjectManager(QObject):
                 "status": "in_progress",
                 "active_mode": mode,
                 "last_modified": datetime.now().isoformat(),
+                "last_exported_at": None,  # EXPORT INTEGRATION
                 "layers": {
                     "yolo": {"visible": mode == "yolo", "annotations": []},
                     "unet": {"visible": mode == "unet", "annotations": []}
@@ -440,6 +441,19 @@ class ProjectManager(QObject):
                 except Exception:
                     pass
         self.update_project_stats()
+
+    # EXPORT INTEGRATION
+    def mark_as_exported(self, image_filename: str) -> None:
+        if not self.annotations_dir: return
+        json_path = os.path.join(self.annotations_dir, f"{image_filename}.json")
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                data["last_exported_at"] = datetime.now().isoformat()
+                self._write_json_atomic(json_path, data)
+            except Exception:
+                pass
 
     def update_project_stats(self):
         if not self.project_data: return
