@@ -282,7 +282,6 @@ class MainWindow(QMainWindow):
         
         # Initialize class manager
         self.class_manager = ClassManager()
-        self.setup_default_classes()
         
         # Initialize UI
         self.setup_menu_bar()
@@ -290,10 +289,6 @@ class MainWindow(QMainWindow):
         self.setup_status_bar()
         self.setup_central_widget()
         
-        # Set keyboard shortcuts for navigation
-        QShortcut(QKeySequence('A'), self, self.prev_image)
-        QShortcut(QKeySequence('D'), self, self.next_image)   
-
         # Initialize toolbar visibility for default YOLO mode
         # Do NOT call switch_mode() here — canvas.mode is already 'yolo'
         # and the guard `if mode == current_mode: return` would skip it.
@@ -437,45 +432,12 @@ class MainWindow(QMainWindow):
             }
         """)
         
-    def setup_default_classes(self):
-        """Add some default classes for testing - only if no classes exist yet"""
-        if self.class_manager.get_all_classes():
-            return  # Don't overwrite existing classes
-        try:
-            self.class_manager.add_class("Car", "#FF6B6B")
-            self.class_manager.add_class("Person", "#4ECDC4")
-            self.class_manager.add_class("Bicycle", "#45B7D1")
-            self.class_manager.add_class("Dog", "#96CEB4")
-            print("Success: Default classes added")
-        except Exception as e:
-            print(f"Error: Could not add default classes: {e}")
-        
     def setup_menu_bar(self):
         """Create the menu bar with all menus and actions"""
         menubar = self.menuBar()
         
         # ===== FILE MENU =====
         file_menu = menubar.addMenu('&File')
-        
-        # New Project
-        new_action = QAction('&New Project', self)
-        new_action.setShortcut(QKeySequence.New)
-        new_action.triggered.connect(self.new_project)
-        file_menu.addAction(new_action)
-        
-        # Open Project
-        open_action = QAction('&Open Project', self)
-        open_action.setShortcut(QKeySequence.Open)
-        open_action.triggered.connect(self.open_project)
-        file_menu.addAction(open_action)
-        
-        # Save Project
-        save_action = QAction('&Save Project', self)
-        save_action.setShortcut(QKeySequence.Save)
-        save_action.triggered.connect(self.save_project)
-        file_menu.addAction(save_action)
-        
-        file_menu.addSeparator()
         
         # Open Image Folder
         open_folder_action = QAction('&Open Image Folder...', self)
@@ -561,9 +523,15 @@ class MainWindow(QMainWindow):
         nav_title.setEnabled(False)
         shortcuts_menu.addSeparator()
         
-
+        prev_action = QAction('Previous Image', self)
+        prev_action.setShortcut('A')
+        prev_action.triggered.connect(self.prev_image)
+        shortcuts_menu.addAction(prev_action)
         
-
+        next_action = QAction('Next Image', self)
+        next_action.setShortcut('D')
+        next_action.triggered.connect(self.next_image)
+        shortcuts_menu.addAction(next_action)
         
         pan_action = QAction('Toggle Pan Mode', self)
         pan_action.setShortcut('Space')
@@ -687,10 +655,10 @@ class MainWindow(QMainWindow):
         
         shortcuts_menu.addSeparator()
         
-        export_shortcut_action = QAction('Export Annotations', self)
-        export_shortcut_action.setShortcut('Ctrl+E')
-        export_shortcut_action.triggered.connect(self.open_export_dialog)
-        shortcuts_menu.addAction(export_shortcut_action)
+        self.export_action = QAction('Export Annotations', self)
+        self.export_action.setShortcut('Ctrl+E')
+        self.export_action.triggered.connect(self.open_export_dialog)
+        shortcuts_menu.addAction(self.export_action)
         
         shortcuts_menu.addSeparator()
         
@@ -713,11 +681,7 @@ class MainWindow(QMainWindow):
         
         # ===== EXPORT MENU =====
         export_menu = menubar.addMenu('E&xport')
-        
-        export_menu_action = QAction('&Export Annotations...', self)
-        export_menu_action.setShortcut('Ctrl+E')
-        export_menu_action.triggered.connect(self.open_export_dialog)
-        export_menu.addAction(export_menu_action)
+        export_menu.addAction(self.export_action)
 
         # ===== HELP MENU =====
         help_menu = menubar.addMenu('&Help')
@@ -1489,17 +1453,259 @@ class MainWindow(QMainWindow):
             self.project_manager.update_project_classes(classes)
 
     def show_about(self):
-        QMessageBox.about(
-            self,
-            "About Dual Annotator",
-            "<h2>Dual Annotator v1.0.0</h2>"
-            "<p>A unified annotation tool for YOLO and U-Net datasets.</p>"
-            "<p>Features:</p>"
-            "<ul>"
-            "<li>YOLO mode: Bounding box annotation</li>"
-            "<li>U-Net mode: Segmentation masks</li>"
-            "<li>Copy-paste with resize</li>"
-            "<li>Polygon and circle shapes</li>"
-            "</ul>"
-            "<p>Built with PyQt5 and Python 3.11</p>"
-        )
+        """Show detailed About dialog"""
+        from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QScrollArea,
+                                     QWidget, QLabel, QPushButton)
+        from PyQt5.QtCore import Qt
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("About DualAnnotator")
+        dlg.setFixedWidth(620)
+        dlg.setMinimumHeight(500)
+        dlg.setMaximumHeight(800)
+        dlg.setStyleSheet("""
+            QDialog { background-color: #1e1e1e; color: #ffffff; }
+            QScrollArea { border: none; background-color: #1e1e1e; }
+            QWidget#scroll_content { background-color: #1e1e1e; }
+            QLabel { color: #ffffff; background-color: transparent; }
+            QPushButton {
+                background-color: #2a4a6a;
+                color: #ffffff;
+                border: 1px solid #8ab4f8;
+                border-radius: 4px;
+                padding: 6px 24px;
+                font-size: 13px;
+            }
+            QPushButton:hover { background-color: #3a5a7a; }
+        """)
+
+        outer = QVBoxLayout(dlg)
+        outer.setContentsMargins(0, 0, 0, 10)
+        outer.setSpacing(0)
+
+        # ── Scrollable content ──
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        content = QWidget()
+        content.setObjectName("scroll_content")
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(28, 24, 28, 16)
+        layout.setSpacing(0)
+
+        html = """
+<style>
+  body  { font-family: Arial, sans-serif; font-size: 13px;
+          color: #e0e0e0; background: #1e1e1e; margin: 0; padding: 0; }
+  h1    { font-size: 20px; color: #8ab4f8; margin: 0 0 4px 0; }
+  h2    { font-size: 14px; color: #8ab4f8; margin: 18px 0 6px 0;
+          border-bottom: 1px solid #333; padding-bottom: 4px; }
+  h3    { font-size: 13px; color: #aac4f0; margin: 12px 0 4px 0; }
+  p     { margin: 4px 0 8px 0; line-height: 1.6; color: #cccccc; }
+  ul    { margin: 2px 0 8px 0; padding-left: 20px; }
+  li    { margin-bottom: 3px; line-height: 1.6; color: #cccccc; }
+  code  { background: #2a2a2a; color: #8ab4f8; padding: 1px 5px;
+          border-radius: 3px; font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+  th    { background: #2a3a5a; color: #8ab4f8; padding: 6px 10px;
+          text-align: left; font-size: 12px; }
+  td    { padding: 5px 10px; border-bottom: 1px solid #2a2a2a;
+          font-size: 12px; color: #cccccc; }
+  tr:hover td { background: #252525; }
+  .tag  { background: #2a4a2a; color: #6fcf97; padding: 1px 6px;
+          border-radius: 3px; font-size: 11px; }
+  .warn { color: #f0b429; }
+  .dim  { color: #888888; font-size: 11px; }
+</style>
+
+<h1>DualAnnotator &nbsp;<span class="dim">v1.0.0</span></h1>
+<p>A desktop annotation tool for building YOLO object detection and
+U-Net segmentation datasets. Built with Python and PyQt5.</p>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>Two Modes</h2>
+
+<h3>YOLO Mode — Object Detection</h3>
+<p>Draw bounding boxes around objects. Each box is saved with a class label
+and exported as a normalised <code>cx cy w h</code> line in a <code>.txt</code>
+file — the standard format for YOLOv5, YOLOv8, and YOLOv11 training.</p>
+
+<h3>UNet Mode — Segmentation</h3>
+<p>Draw precise shapes that follow object boundaries. Supports solid shapes
+(polygon, bezier, circle, ellipse) and hollow ring shapes (frame, donut,
+hollow ellipse) for annotating ring-like objects such as seals, caps, and
+gaskets. Switch modes via the <b>Mode</b> menu or the toolbar buttons.</p>
+
+<p class="warn">⚠ &nbsp;Switching modes on an image that already has
+annotations shows a dialog — choose <b>Keep both</b> to show both layers
+simultaneously, or <b>Hide previous</b> to work in one mode at a time.
+Both layers are always saved — nothing is deleted when you switch.</p>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>Shape Tools</h2>
+<table>
+  <tr><th>Key</th><th>Tool</th><th>How to draw</th><th>Mode</th></tr>
+  <tr><td><code>B</code></td><td>Box</td>
+      <td>Click and drag</td><td>YOLO + UNet</td></tr>
+  <tr><td><code>P</code></td><td>Polygon</td>
+      <td>Click points, Enter or click first point to close</td>
+      <td>UNet</td></tr>
+  <tr><td><code>Q</code></td><td>Bezier curve</td>
+      <td>Click anchor points, Enter to close. Drag midpoint handles to curve edges</td>
+      <td>UNet</td></tr>
+  <tr><td><code>C</code></td><td>Circle</td>
+      <td>Click centre, drag outward</td><td>UNet</td></tr>
+  <tr><td><code>E</code></td><td>Ellipse</td>
+      <td>Click centre, drag to set both radii</td><td>UNet</td></tr>
+  <tr><td><code>F</code></td><td>Frame (hollow rect)</td>
+      <td>Click and drag. Drag inner handles to adjust wall thickness</td>
+      <td>UNet</td></tr>
+  <tr><td><code>O</code></td><td>Donut (hollow circle)</td>
+      <td>Click centre, drag outward. Drag inner handles to adjust hole size</td>
+      <td>UNet</td></tr>
+  <tr><td><code>H</code></td><td>Hollow ellipse</td>
+      <td>Click centre, drag. Drag inner handles independently</td>
+      <td>UNet</td></tr>
+  <tr><td><code>N</code></td><td>Selection</td>
+      <td>Click to select, drag to move</td><td>YOLO + UNet</td></tr>
+  <tr><td><code>T</code></td><td>Stamp template</td>
+      <td>Select template from dropdown, click to place</td>
+      <td>YOLO + UNet</td></tr>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>Hollow Shapes — Inner / Outer Offset</h2>
+<p>Any drawn shape can be made hollow via right-click:</p>
+<ul>
+  <li><b>Right-click a shape → Create Inner Shape</b> — adds an inner cutout
+      inset from the outer boundary. A slider controls the gap with a live
+      dashed preview.</li>
+  <li><b>Right-click a shape → Create Outer Shape</b> — expands a new outer
+      boundary around the existing shape.</li>
+</ul>
+<p>After creating the hollow pair, both boundaries have independent resize
+handles. The inner shape is always constrained to stay inside the outer
+with a minimum gap. For YOLO export, hollow shapes export the
+<b>outer bounding box only</b>.</p>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>Templates (Stamp Tool)</h2>
+<p>Save any shape — including hollow pairs — as a reusable template:</p>
+<ul>
+  <li>Draw and configure a shape, then <b>right-click → Save as Template</b></li>
+  <li>Give it a name. The template thumbnail shows the actual shape.</li>
+  <li>Select it from the template dropdown, press <code>T</code>, and
+      click the canvas to stamp it at the original size.</li>
+  <li>Templates are session-only — they reset when the app closes.</li>
+</ul>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>Autosave &amp; Project Files</h2>
+<p>Every annotation change is saved automatically — there is no Save button.
+Saves happen 800 ms after the last action so they never interrupt drawing.</p>
+<p>Opening an image folder creates a hidden <code>.dualannotator/</code>
+folder inside it:</p>
+<ul>
+  <li><code>project.json</code> — class definitions, mode, image order</li>
+  <li><code>annotations/image_001.jpg.json</code> — one file per image
+      containing both YOLO and UNet layers</li>
+</ul>
+<p>When you reopen the same folder the app detects the existing project and
+asks whether to <b>Resume</b> (restore all annotations) or
+<b>Start Fresh</b> (delete everything and begin again).</p>
+<p class="warn">⚠ &nbsp;If a source image file is replaced or renamed after
+annotation, the status bar will show a hash mismatch warning when that image
+is loaded. Annotations are preserved — they may just not align to the new image.</p>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>Exporting (File → Export Annotations, Ctrl+E)</h2>
+<p>Exports the saved annotations — never the live canvas — so you can export
+at any time without interrupting your work.</p>
+
+<h3>YOLO format</h3>
+<p>Produces one <code>.txt</code> label file per image, a <code>data.yaml</code>
+training config, and a <code>classes.txt</code> index. All coordinates are
+normalised to <code>[0.0, 1.0]</code>. Format per line:
+<code>&lt;class_id&gt; &lt;cx&gt; &lt;cy&gt; &lt;w&gt; &lt;h&gt;</code></p>
+
+<h3>COCO format</h3>
+<p>Produces <code>instances_train.json</code> (and val/test) with pixel-space
+bounding boxes in standard COCO annotation format.</p>
+
+<h3>Pascal VOC format</h3>
+<p>Produces one <code>.xml</code> file per image with pixel bounding boxes in
+Pascal VOC format, compatible with older training pipelines.</p>
+
+<h3>Delta export</h3>
+<p>When <b>Only export changes since last export</b> is checked, images that
+have not changed since the previous export run are skipped. Only new or
+modified images are processed. The output folder uses a timestamped subfolder
+name (e.g. <code>yolo_2026-03-14_18-44/</code>) so each export run is
+preserved separately.</p>
+
+<h3>Train / Val / Test split</h3>
+<p>Annotated images are randomly distributed across train, val, and test
+folders according to the configured percentages. A fixed random seed
+(default 42) ensures the same image lands in the same split every time you
+export, which is essential for reproducible training results.</p>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>All Keyboard Shortcuts</h2>
+<table>
+  <tr><th>Key</th><th>Action</th><th>Key</th><th>Action</th></tr>
+  <tr><td><code>B</code></td><td>Box tool</td>
+      <td><code>Ctrl+Z</code></td><td>Undo</td></tr>
+  <tr><td><code>P</code></td><td>Polygon tool</td>
+      <td><code>Ctrl+Y</code></td><td>Redo</td></tr>
+  <tr><td><code>Q</code></td><td>Bezier tool</td>
+      <td><code>Ctrl+C</code></td><td>Copy shape</td></tr>
+  <tr><td><code>C</code></td><td>Circle tool</td>
+      <td><code>Ctrl+V</code></td><td>Paste shape</td></tr>
+  <tr><td><code>E</code></td><td>Ellipse tool</td>
+      <td><code>Del</code></td><td>Delete selected</td></tr>
+  <tr><td><code>F</code></td><td>Frame tool</td>
+      <td><code>Ctrl+E</code></td><td>Export annotations</td></tr>
+  <tr><td><code>O</code></td><td>Donut tool</td>
+      <td><code>Ctrl+Shift+O</code></td><td>Open image folder</td></tr>
+  <tr><td><code>H</code></td><td>Hollow ellipse</td>
+      <td><code>Ctrl+F</code></td><td>Fit to window</td></tr>
+  <tr><td><code>N</code></td><td>Selection mode</td>
+      <td><code>+</code></td><td>Zoom in</td></tr>
+  <tr><td><code>T</code></td><td>Stamp tool</td>
+      <td><code>-</code></td><td>Zoom out</td></tr>
+  <tr><td><code>A</code></td><td>Previous image</td>
+      <td><code>Space</code></td><td>Toggle pan mode</td></tr>
+  <tr><td><code>D</code></td><td>Next image</td>
+      <td><code>Enter</code></td><td>Finish polygon / bezier</td></tr>
+  <tr><td><code>Ctrl+drag</code></td><td>Clone shape</td>
+      <td><code>Esc</code></td><td>Cancel operation</td></tr>
+</table>
+
+<p class="dim" style="margin-top: 12px;">
+Built with Python 3.9+ and PyQt5 &nbsp;·&nbsp;
+Pillow &nbsp;·&nbsp; Shapely &nbsp;·&nbsp; PyYAML
+</p>
+"""
+
+        label = QLabel()
+        label.setTextFormat(Qt.RichText)
+        label.setWordWrap(True)
+        label.setText(html)
+        label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        layout.addWidget(label)
+
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+
+        # ── Close button ──
+        btn = QPushButton("Close")
+        btn.setFixedWidth(100)
+        btn.clicked.connect(dlg.accept)
+        btn_row = QWidget()
+        btn_layout = QVBoxLayout(btn_row)
+        btn_layout.setContentsMargins(0, 0, 10, 0)
+        btn_layout.addWidget(btn, alignment=Qt.AlignRight)
+        outer.addWidget(btn_row)
+
+        dlg.exec_()
