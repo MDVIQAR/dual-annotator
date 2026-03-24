@@ -77,6 +77,12 @@ class ToolButton(QPushButton):
                    QPointF(cx - s, cy - 2)]
             painter.drawPolygon(QPolygonF(pts))
         
+        elif name == "bezier":
+            path = QPainterPath()
+            path.moveTo(cx - s + 2, cy + s - 2)
+            path.cubicTo(cx - s + 2, cy - s, cx + s - 2, cy + s, cx + s - 2, cy - s + 2)
+            painter.drawPath(path)
+        
         elif name == "circle":
             painter.drawEllipse(QPointF(cx, cy), s, s)
         
@@ -171,6 +177,17 @@ class ToolButton(QPushButton):
             # Right arrow
             painter.drawLine(cx - 5, cy - s + 2, cx + 5, cy)
             painter.drawLine(cx + 5, cy, cx - 5, cy + s - 2)
+            
+        elif name == "delete_template":
+            # Trash can icon
+            painter.setPen(QPen(QColor(255, 138, 138), 2))
+            painter.drawLine(cx - 5, cy - s + 4, cx + 5, cy - s + 4) # lid
+            painter.drawLine(cx - 3, cy - s + 4, cx - 4, cy + s - 2) # left edge
+            painter.drawLine(cx + 3, cy - s + 4, cx + 4, cy + s - 2) # right edge
+            painter.drawLine(cx - 4, cy + s - 2, cx + 4, cy + s - 2) # bottom
+            painter.drawLine(cx - 2, cy - s + 4, cx - 2, cy - s + 1) # handle part 1
+            painter.drawLine(cx + 2, cy - s + 4, cx + 2, cy - s + 1) # handle part 2
+            painter.drawLine(cx - 2, cy - s + 1, cx + 2, cy - s + 1) # handle top
         
         else:
             # Fallback: draw the text
@@ -326,7 +343,47 @@ class MainWindow(QMainWindow):
             self.canvas.image_width,
             self.canvas.image_height
         )
+        # Update live shape count in status bar
+        count = len([s for s in self.canvas.shapes if getattr(s, 'hollow_role', None) != 'inner'])
+        self.shape_count_label.setText(f"✏️ {count} Shape{'s' if count != 1 else ''}")
+        # Auto-update status badge to in_progress if shapes exist but annotated wasn't manually set
+        current_status = self.project_manager.get_image_status(filename)
+        if shapes_copy and current_status == "unannotated":
+            self.project_manager.set_image_status(filename, "in_progress")
+            self.update_ui_status_badge(filename, "in_progress")
+        # Update annotation statistics panel
+        self.update_annotation_stats()
+
+    def update_annotation_stats(self):
+        """Update the annotation stats label in the right panel."""
+        if not hasattr(self, 'stats_label') or not hasattr(self, 'project_manager'):
+            return
+        stats = self.project_manager.get_project_stats()
+        total = len(self.image_files) if self.image_files else 0
+        annotated = stats.get("annotated_images", 0)
+        in_prog = stats.get("in_progress_images", 0)
+        skipped = stats.get("skipped_images", 0)
         
+        # Per-class shape counts on the current image
+        class_counts = ""
+        if hasattr(self, 'canvas') and self.canvas.shapes:
+            counts = {}
+            for s in self.canvas.shapes:
+                if getattr(s, 'hollow_role', None) == 'inner':
+                    continue
+                cid = getattr(s, 'class_id', None)
+                cls_obj = self.class_manager.get_class(cid) if cid else None
+                name = cls_obj.name if cls_obj else "?"
+                counts[name] = counts.get(name, 0) + 1
+            if counts:
+                parts = [f"{name}: {n}" for name, n in counts.items()]
+                class_counts = " \u00b7 ".join(parts)
+        
+        text = f"\ud83d\udcca {annotated}/{total} done \u00b7 {in_prog} wip \u00b7 {skipped} skip"
+        if class_counts:
+            text += f"\n\ud83c\udfaf {class_counts}"
+        self.stats_label.setText(text)
+
     def closeEvent(self, event):
         """Handle application close"""
         if hasattr(self, "project_manager"):
@@ -456,32 +513,32 @@ class MainWindow(QMainWindow):
         # ===== EDIT MENU =====
         edit_menu = menubar.addMenu('&Edit')
         
-        undo_action = QAction('&Undo', self)
-        undo_action.setShortcut(QKeySequence.Undo)
-        undo_action.triggered.connect(self.undo)
-        edit_menu.addAction(undo_action)
+        self.undo_action = QAction('&Undo', self)
+        self.undo_action.setShortcut(QKeySequence.Undo)
+        self.undo_action.triggered.connect(self.undo)
+        edit_menu.addAction(self.undo_action)
         
-        redo_action = QAction('&Redo', self)
-        redo_action.setShortcut(QKeySequence.Redo)
-        redo_action.triggered.connect(self.redo)
-        edit_menu.addAction(redo_action)
+        self.redo_action = QAction('&Redo', self)
+        self.redo_action.setShortcut(QKeySequence.Redo)
+        self.redo_action.triggered.connect(self.redo)
+        edit_menu.addAction(self.redo_action)
         
         edit_menu.addSeparator()
         
-        copy_action = QAction('&Copy', self)
-        copy_action.setShortcut(QKeySequence.Copy)
-        copy_action.triggered.connect(self.copy_selected)
-        edit_menu.addAction(copy_action)
+        self.copy_action = QAction('&Copy', self)
+        self.copy_action.setShortcut(QKeySequence.Copy)
+        self.copy_action.triggered.connect(self.copy_selected)
+        edit_menu.addAction(self.copy_action)
         
-        paste_action = QAction('&Paste', self)
-        paste_action.setShortcut(QKeySequence.Paste)
-        paste_action.triggered.connect(self.paste_shape)
-        edit_menu.addAction(paste_action)
+        self.paste_action = QAction('&Paste', self)
+        self.paste_action.setShortcut(QKeySequence.Paste)
+        self.paste_action.triggered.connect(self.paste_shape)
+        edit_menu.addAction(self.paste_action)
         
-        delete_action = QAction('&Delete', self)
-        delete_action.setShortcut(QKeySequence.Delete)
-        delete_action.triggered.connect(self.delete_selected)
-        edit_menu.addAction(delete_action)
+        self.delete_action = QAction('&Delete', self)
+        self.delete_action.setShortcut(QKeySequence.Delete)
+        self.delete_action.triggered.connect(self.delete_selected)
+        edit_menu.addAction(self.delete_action)
         
         # ===== VIEW MENU =====
         view_menu = menubar.addMenu('&View')
@@ -496,10 +553,10 @@ class MainWindow(QMainWindow):
         zoom_out_action.triggered.connect(self.zoom_out)
         view_menu.addAction(zoom_out_action)
         
-        fit_action = QAction('&Fit to Window', self)
-        fit_action.setShortcut('Ctrl+F')
-        fit_action.triggered.connect(self.fit_to_window)
-        view_menu.addAction(fit_action)
+        self.fit_action = QAction('&Fit to Window', self)
+        self.fit_action.setShortcut('Ctrl+F')
+        self.fit_action.triggered.connect(self.fit_to_window)
+        view_menu.addAction(self.fit_action)
         
         # ===== MODE MENU =====
         mode_menu = menubar.addMenu('&Mode')
@@ -548,10 +605,7 @@ class MainWindow(QMainWindow):
         zoom_out_shortcut.triggered.connect(self.zoom_out)
         shortcuts_menu.addAction(zoom_out_shortcut)
         
-        fit_shortcut = QAction('Fit to Window', self)
-        fit_shortcut.setShortcut('Ctrl+F')
-        fit_shortcut.triggered.connect(self.fit_to_window)
-        shortcuts_menu.addAction(fit_shortcut)
+        shortcuts_menu.addAction(self.fit_action)
         
         shortcuts_menu.addSeparator()
         
@@ -623,30 +677,20 @@ class MainWindow(QMainWindow):
         edit_title.setEnabled(False)
         shortcuts_menu.addSeparator()
         
-        delete_shortcut = QAction('Delete Selected', self)
-        delete_shortcut.setShortcut('Del')
-        delete_shortcut.triggered.connect(self.delete_selected)
-        shortcuts_menu.addAction(delete_shortcut)
+        shortcuts_menu.addAction(self.delete_action)
         
-        copy_shortcut = QAction('Copy', self)
-        copy_shortcut.setShortcut('Ctrl+C')
-        copy_shortcut.triggered.connect(self.copy_selected)
-        shortcuts_menu.addAction(copy_shortcut)
+        delete_all_shortcut = QAction('Delete All Annotations', self)
+        delete_all_shortcut.setShortcut('Ctrl+Del')
+        delete_all_shortcut.triggered.connect(self.delete_all_annotations)
+        shortcuts_menu.addAction(delete_all_shortcut)
         
-        paste_shortcut = QAction('Paste', self)
-        paste_shortcut.setShortcut('Ctrl+V')
-        paste_shortcut.triggered.connect(self.paste_shape)
-        shortcuts_menu.addAction(paste_shortcut)
+        shortcuts_menu.addAction(self.copy_action)
         
-        undo_shortcut = QAction('Undo', self)
-        undo_shortcut.setShortcut('Ctrl+Z')
-        undo_shortcut.triggered.connect(self.undo)
-        shortcuts_menu.addAction(undo_shortcut)
+        shortcuts_menu.addAction(self.paste_action)
         
-        redo_shortcut = QAction('Redo', self)
-        redo_shortcut.setShortcut('Ctrl+Y')
-        redo_shortcut.triggered.connect(self.redo)
-        shortcuts_menu.addAction(redo_shortcut)
+        shortcuts_menu.addAction(self.undo_action)
+        
+        shortcuts_menu.addAction(self.redo_action)
         
         cancel_shortcut = QAction('Cancel Operation', self)
         cancel_shortcut.setShortcut('Esc')
@@ -714,6 +758,11 @@ class MainWindow(QMainWindow):
         self.position_label.setStyleSheet("color: #ffffff;")
         self.status_bar.addPermanentWidget(self.position_label)
         
+        # Live shape count label
+        self.shape_count_label = QLabel("✏️ 0 Shapes")
+        self.shape_count_label.setStyleSheet("color: #8ab4f8; font-weight: bold; padding: 0 8px;")
+        self.status_bar.addPermanentWidget(self.shape_count_label)
+        
         # Image counter
         self.counter_label = QLabel("0/0")
         self.counter_label.setStyleSheet("color: #ffffff;")
@@ -756,6 +805,9 @@ class MainWindow(QMainWindow):
         right_panel = self.create_right_panel()
         right_panel.setFixedWidth(280)
         content_layout.addWidget(right_panel)
+        
+        # Link canvas reference into class panel for shape reassignment
+        self.class_panel._canvas = self.canvas
         
         main_vertical.addLayout(content_layout)
         
@@ -811,7 +863,7 @@ class MainWindow(QMainWindow):
         self.shape_btn_polygon.clicked.connect(lambda: self.set_shape_type('polygon'))
         layout.addWidget(self.shape_btn_polygon)
         
-        self.shape_btn_bezier = ToolButton("polygon", "Bezier Curve (Q)") # reuse polygon icon for now
+        self.shape_btn_bezier = ToolButton("bezier", "Bezier Curve (Q)")
         self.shape_btn_bezier.clicked.connect(lambda: self.set_shape_type('bezier_polygon'))
         layout.addWidget(self.shape_btn_bezier)
         
@@ -890,6 +942,12 @@ class MainWindow(QMainWindow):
         self.template_combo.currentIndexChanged.connect(self.on_template_selected)
         layout.addWidget(self.template_combo)
         
+        # Delete selected template button
+        self.btn_delete_template = ToolButton("delete_template", "Delete Selected Template")
+        self.btn_delete_template.setCheckable(False)
+        self.btn_delete_template.clicked.connect(self.delete_current_template)
+        layout.addWidget(self.btn_delete_template)
+        
         layout.addWidget(self.create_separator())
         
         # View tools section
@@ -961,37 +1019,95 @@ class MainWindow(QMainWindow):
                 text-transform: uppercase;
                 letter-spacing: 1px;
             }
+            QSplitter::handle {
+                background-color: #333;
+                height: 2px;
+                margin: 4px 0;
+            }
         """)
         
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(8, 10, 8, 10)
-        layout.setSpacing(10)
+        main_layout = QVBoxLayout(panel)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
         
-        # ===== CLASSES SECTION =====
-        classes_label = QLabel("CLASSES")
-        classes_label.setObjectName("section")
-        classes_label.setAlignment(Qt.AlignLeft)
-        layout.addWidget(classes_label)
+        splitter = QSplitter(Qt.Vertical)
+        splitter.setHandleWidth(8)
+        
+        # ===== UPPER SECTION (CLASSES + STATS) =====
+        upper_container = QWidget()
+        upper_container.setStyleSheet("border-left: none;") # remove global border-left inside splitter
+        upper_layout = QVBoxLayout(upper_container)
+        upper_layout.setContentsMargins(8, 10, 8, 5)
+        upper_layout.setSpacing(10)
         
         self.class_panel = ClassPanel(self.class_manager)
         self.class_panel.class_added.connect(self._on_classes_changed)
         self.class_panel.class_removed.connect(self._on_classes_changed)
         self.class_panel.class_edited.connect(self._on_classes_changed)
-        layout.addWidget(self.class_panel)
+        self.class_panel.class_selected.connect(self.on_class_selected)
+        self.class_panel.classes_reordered.connect(self._on_classes_changed)
+        upper_layout.addWidget(self.class_panel, 1)
         
-        layout.addWidget(self.create_separator())
+        upper_layout.addWidget(self.create_separator())
         
-        # ===== IMAGE FILES SECTION =====
+        # ANNOTATION STATS
+        self.stats_label = QLabel("📊 0/0 annotated")
+        self.stats_label.setStyleSheet("color: #8ab4f8; font-size: 10px; padding: 2px 4px; border: none;")
+        self.stats_label.setWordWrap(True)
+        upper_layout.addWidget(self.stats_label)
+        
+        # ===== LOWER SECTION (IMAGE FILES) =====
+        lower_container = QWidget()
+        lower_container.setStyleSheet("border-left: none;")
+        lower_layout = QVBoxLayout(lower_container)
+        lower_layout.setContentsMargins(8, 5, 8, 10)
+        lower_layout.setSpacing(10)
+        
+        lower_layout.addWidget(self.create_separator())
+        
         files_label = QLabel("IMAGE FILES")
         files_label.setObjectName("section")
         files_label.setAlignment(Qt.AlignLeft)
-        layout.addWidget(files_label)
+        files_label.setStyleSheet("border: none;")
+        lower_layout.addWidget(files_label)
+        
+        # Search Box
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText("🔍 Search images...")
+        self.search_box.textChanged.connect(self.filter_image_list)
+        self.search_box.setStyleSheet("""
+            QLineEdit { background-color: #2b2b2b; color: #ffffff; border: 1px solid #3a3a3a; border-radius: 3px; padding: 4px; font-size: 11px; }
+            QLineEdit:focus { border: 1px solid #8ab4f8; }
+        """)
+        lower_layout.addWidget(self.search_box)
         
         # File list widget
         self.file_list = QListWidget()
         self.file_list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.file_list.itemClicked.connect(self.on_file_selected)
-        layout.addWidget(self.file_list)
+        lower_layout.addWidget(self.file_list, 1) # Set stretch to 1 here
+        
+        # Image Action Buttons
+        image_actions_layout = QHBoxLayout()
+        image_actions_layout.setSpacing(5)
+        
+        self.skip_btn = QPushButton("⏭️ Skip")
+        self.skip_btn.setStyleSheet("""
+            QPushButton { background-color: #3b2b2b; color: #ff8a8a; border: 1px solid #4a3a3a; border-radius: 3px; padding: 6px; font-weight: bold; font-size: 11px; }
+            QPushButton:hover { background-color: #5a3a3a; }
+        """)
+        self.skip_btn.clicked.connect(self.mark_image_skipped)
+        image_actions_layout.addWidget(self.skip_btn)
+        
+        self.mark_done_btn = QPushButton("✅ Mark Done")
+        self.mark_done_btn.setStyleSheet("""
+            QPushButton { background-color: #2b3b2b; color: #8aff8a; border: 1px solid #3a4a3a; border-radius: 3px; padding: 6px; font-weight: bold; font-size: 11px; }
+            QPushButton:hover { background-color: #3a5a3a; }
+        """)
+        self.mark_done_btn.clicked.connect(self.mark_image_done)
+        image_actions_layout.addWidget(self.mark_done_btn)
+        
+        lower_layout.addLayout(image_actions_layout)
         
         # Import button
         import_btn = QPushButton("📂 Import Images")
@@ -1009,9 +1125,26 @@ class MainWindow(QMainWindow):
             }
         """)
         import_btn.clicked.connect(self.open_image_folder)
-        layout.addWidget(import_btn)
+        lower_layout.addWidget(import_btn)
+        
+        splitter.addWidget(upper_container)
+        splitter.addWidget(lower_container)
+        splitter.setStretchFactor(0, 1) # Upper section starts smaller
+        splitter.setStretchFactor(1, 2) # Lower section starts larger
+        
+        main_layout.addWidget(splitter)
         
         return panel
+        
+
+    def on_class_selected(self, class_id):
+        """Handle class selection from down the component tree."""
+        cls = self.class_manager.get_class(class_id)
+        if hasattr(self, 'status_bar') and cls:
+            if hasattr(self, 'canvas') and self.canvas.selected_shape:
+                self.status_bar.showMessage(f"Reassigned selected shape → {cls.name}", 2000)
+            else:
+                self.status_bar.showMessage(f"Selected Class: {cls.name}", 2000)
     
     def set_shape_type(self, shape_type):
         """Set the current shape type and update button states"""
@@ -1080,12 +1213,40 @@ class MainWindow(QMainWindow):
             self.canvas.stamp_template_name = name
             self.set_shape_type('stamp')
             self.status_bar.showMessage(f"Stamp mode: '{name}' — click center + drag to scale", 3000)
-    
-    def on_class_selected(self, class_id):
-        """Handle class selection"""
-        cls = self.class_manager.get_class(class_id)
-        if cls:
-            self.status_bar.showMessage(f"Selected class: {cls.name}", 2000)
+
+    def delete_current_template(self):
+        """Delete the currently selected template."""
+        if self.template_combo.currentIndex() <= 0:
+            QMessageBox.information(self, "No Template", "Please select a template from the dropdown to delete.")
+            return
+            
+        text = self.template_combo.currentText()
+        name = text.replace("📋 ", "")
+        
+        reply = QMessageBox.question(
+            self, "Confirm Delete", 
+            f"Are you sure you want to completely delete the template '{name}'?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+        if not hasattr(self, 'canvas') or not hasattr(self.canvas, 'template_manager'):
+            QMessageBox.warning(self, "Error", "Canvas or template manager not found.")
+            return
+            
+        tm = self.canvas.template_manager
+        if tm.delete_template(name):
+            # Remove from dropdown
+            self.template_combo.removeItem(self.template_combo.currentIndex())
+            # Switch to 'No template'
+            self.template_combo.setCurrentIndex(0)
+            self.status_bar.showMessage(f"Template '{name}' deleted.", 3000)
+            if hasattr(self, 'canvas'):
+                self.canvas.stamp_template_name = None
+                if self.canvas.current_shape_type == 'stamp':
+                    self.set_shape_type('none')
+        else:
+            QMessageBox.warning(self, "Error", f"Failed to delete template '{name}'.")
     
     def on_canvas_shape_selected(self, shape_type):
         """Handle shape selection from canvas to update toolbar"""
@@ -1255,17 +1416,36 @@ class MainWindow(QMainWindow):
                 if ext in image_extensions:
                     self.image_files.append(file)
                     
+            STATUS_COLORS = {
+                "annotated": "#8aff8a", "skipped": "#8ab4f8",
+                "in_progress": "#ffd54f", "unannotated": "#aaaaaa"
+            }
             for file in self.image_files:
-                item = QListWidgetItem(file)
+                status = self.project_manager.get_image_status(file)
+                badge = "✅" if status == "annotated" else "⏭️" if status == "skipped" else "🟡" if status == "in_progress" else "  "
+                item = QListWidgetItem(f"{badge} {file}")
+                item.setData(Qt.UserRole, file)
+                item.setForeground(QColor(STATUS_COLORS.get(status, "#aaaaaa")))
+                item.setToolTip(f"Status: {status.replace('_', ' ').title()}")
                 self.file_list.addItem(item)
                 
             self.update_image_counter()
+            self.filter_image_list(self.search_box.text())
             
             if self.image_files:
                 self.load_image(0)
                 
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load images: {str(e)}")
+
+    def filter_image_list(self, text):
+        """Filter the image list based on search text"""
+        text = text.lower()
+        for i in range(self.file_list.count()):
+            item = self.file_list.item(i)
+            filename = item.data(Qt.UserRole)
+            if filename:
+                item.setHidden(text not in filename.lower())
     
     def load_image(self, index):
         """Load image at specified index"""
@@ -1283,11 +1463,23 @@ class MainWindow(QMainWindow):
             if hasattr(self, "project_manager"):
                 self._restore_annotations(self.image_files[index])
                 
-            self.file_list.setCurrentRow(index)
+            # Find and select the matching item in the list
+            filename = self.image_files[index]
+            for i in range(self.file_list.count()):
+                item = self.file_list.item(i)
+                if item.data(Qt.UserRole) == filename:
+                    self.file_list.setCurrentItem(item)
+                    break
+                    
             self.update_image_counter()
             self.image_info_label.setText(self.image_files[index])
             self.setWindowTitle(f"Dual Annotator - {self.image_files[index]}")
             self.status_bar.showMessage(f"Loaded: {self.image_files[index]}", 2000)
+            # Reset shape count for new image (will be updated by _restore_annotations)
+            if hasattr(self, 'shape_count_label'):
+                count = len([s for s in self.canvas.shapes if getattr(s, 'hollow_role', None) != 'inner'])
+                self.shape_count_label.setText(f"✏️ {count} Shape{'s' if count != 1 else ''}")
+            self.update_annotation_stats()
 
     def _restore_annotations(self, filename):
         """Load saved annotations for an image and place them on canvas."""
@@ -1324,8 +1516,45 @@ class MainWindow(QMainWindow):
     
     def on_file_selected(self, item):
         """Handle file selection from list"""
-        row = self.file_list.row(item)
-        self.load_image(row)
+        filename = item.data(Qt.UserRole)
+        if filename and filename in self.image_files:
+            index = self.image_files.index(filename)
+            self.load_image(index)
+            
+    def mark_image_skipped(self):
+        if not self.image_files or getattr(self, 'current_image_index', -1) < 0: return
+        filename = self.image_files[self.current_image_index]
+        self.project_manager.set_image_status(filename, "skipped")
+        self.update_ui_status_badge(filename, "skipped")
+        self.next_image()
+        
+    def mark_image_done(self):
+        if not self.image_files or getattr(self, 'current_image_index', -1) < 0: return
+        filename = self.image_files[self.current_image_index]
+        self.project_manager.set_image_status(filename, "annotated")
+        self.update_ui_status_badge(filename, "annotated")
+        self.next_image()
+        
+    def update_ui_status_badge(self, filename, status):
+        STATUS_MAP = {
+            "annotated":   ("\u2705", "#8aff8a"),
+            "skipped":     ("\u23ed\ufe0f",  "#8ab4f8"),
+            "in_progress": ("\U0001f7e1", "#ffd54f"),
+            "unannotated": ("  ",     "#aaaaaa"),
+        }
+        badge, color = STATUS_MAP.get(status, ("  ", "#aaaaaa"))
+        for i in range(self.file_list.count()):
+            item = self.file_list.item(i)
+            if item.data(Qt.UserRole) == filename:
+                item.setText(f"{badge} {filename}")
+                item.setForeground(QColor(color))
+                # Update tooltip
+                count = len([s for s in self.canvas.shapes if getattr(s, 'hollow_role', None) != 'inner'])
+                if filename == (self.image_files[self.current_image_index] if self.current_image_index >= 0 else None):
+                    item.setToolTip(f"Status: {status.replace('_',' ').title()}\nShapes: {count}")
+                else:
+                    item.setToolTip(f"Status: {status.replace('_',' ').title()}")
+                break
     
     def next_image(self):
         """Load next image"""
@@ -1384,6 +1613,10 @@ class MainWindow(QMainWindow):
     def delete_selected(self):
         if hasattr(self, 'canvas'):
             self.canvas.delete_selected()
+            
+    def delete_all_annotations(self):
+        if hasattr(self, 'canvas'):
+            self.canvas.delete_all()
     
     def undo(self):
         if hasattr(self, 'canvas'):

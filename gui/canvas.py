@@ -214,17 +214,44 @@ class AnnotationCanvas(QWidget):
                 
                 self.update()
                 
+    def _zoom_at_cursor(self, zoom_factor):
+        if not self.pixmap or self.pixmap.isNull():
+            return
+            
+        # Get global mouse position and map it to the widget
+        global_pos = QCursor.pos()
+        cursor_pos = self.mapFromGlobal(global_pos)
+        
+        # If cursor is not within the canvas, default to center of canvas
+        if not self.rect().contains(cursor_pos):
+            cursor_pos = QPoint(self.width() // 2, self.height() // 2)
+
+        # Convert to image coordinates before zoom
+        image_pos = self.widget_to_image(cursor_pos)
+        
+        new_scale = self.scale * zoom_factor
+        new_scale = max(0.1, min(10.0, new_scale))
+        
+        if new_scale != self.scale:
+            # Current screen position of the image point
+            screen_x = image_pos[0] * self.scale + self.offset_x
+            screen_y = image_pos[1] * self.scale + self.offset_y
+            
+            self.scale = new_scale
+            
+            # Adjust offset so the image point stays at the same screen position
+            self.offset_x = screen_x - image_pos[0] * self.scale
+            self.offset_y = screen_y - image_pos[1] * self.scale
+            
+            self.update()
+
     def zoom_in(self):
-        """Zoom in by 20%"""
-        self.scale *= 1.2
-        self.scale = min(10.0, self.scale)
-        self.update()
+        """Zoom in by 20% at cursor position"""
+        self._zoom_at_cursor(1.2)
         
     def zoom_out(self):
-        """Zoom out by 20%"""
-        self.scale *= 0.8
-        self.scale = max(0.1, self.scale)
-        self.update()
+        """Zoom out by 20% at cursor position"""
+        self._zoom_at_cursor(0.8)
         
     def start_drawing(self, pos):
         """Start drawing a new shape"""
@@ -575,6 +602,17 @@ class AnnotationCanvas(QWidget):
             self.annotation_changed.emit()  # AUTOSAVE INTEGRATION
             self.update()
             print("🗑️ Deleted selected shape")
+            
+    def delete_all(self):
+        """Delete all shapes from the canvas"""
+        if self.shapes:
+            self.save_state()  # Save state before deleting all
+            self.shapes.clear()
+            self.selected_shape = None
+            self.shape_selected.emit("none")
+            self.annotation_changed.emit()  # AUTOSAVE INTEGRATION
+            self.update()
+            print("🗑️ Deleted all shapes")
         
     def paintEvent(self, event):
         """Handle painting events"""
@@ -2143,8 +2181,12 @@ class AnnotationCanvas(QWidget):
         
         # ===== DELETE =====
         elif key == Qt.Key_Delete or key == Qt.Key_Backspace:
-            if not self.drag_copy and not self.pan_mode and not self.moving:
-                self.delete_selected()
+            if event.modifiers() == Qt.ControlModifier and key == Qt.Key_Delete:
+                if not self.drag_copy and not self.pan_mode and not self.moving:
+                    self.delete_all()
+            else:
+                if not self.drag_copy and not self.pan_mode and not self.moving:
+                    self.delete_selected()
             return
         
         # ===== UNDO/REDO =====

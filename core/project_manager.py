@@ -142,11 +142,20 @@ class ProjectManager(QObject):
 
     def _serialize_shape(self, shape):
         ann_id = "ann_" + getattr(shape, "id", str(uuid.uuid4())[:8])
+        
+        # Look up the human-readable class name from project_data
+        resolved_class_name = ""
+        if self.project_data and "classes" in self.project_data:
+            for c in self.project_data["classes"]:
+                if c.get("id") == shape.class_id:
+                    resolved_class_name = c.get("name", "")
+                    break
+
         ann = {
             "id": ann_id,
             "shape_type": shape.type,
             "class_id": shape.class_id,
-            "class_name": "", # Normally set by looking up class_id, omit or fill later
+            "class_name": resolved_class_name,
             "is_hollow": getattr(shape, "is_hollow", False),
             "group_id": getattr(shape, "group_id", None),
             "hollow_role": getattr(shape, "hollow_role", None),
@@ -424,6 +433,10 @@ class ProjectManager(QObject):
                     self._write_json_atomic(json_path, data)
             except Exception:
                 pass
+
+    def get_image_status(self, image_filename):
+        if not self.project_data: return "unannotated"
+        return self.project_data.get("image_statuses", {}).get(image_filename, "unannotated")
 
     def set_image_status(self, image_filename, status, write_json=True):
         if not self.project_data: return
