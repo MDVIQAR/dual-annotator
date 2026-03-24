@@ -1,6 +1,7 @@
 # core/class_manager.py
 import json
 import uuid
+from collections import OrderedDict
 from typing import List, Dict, Optional
 from PyQt5.QtGui import QColor
 
@@ -55,7 +56,7 @@ class ClassManager:
     """Manages all classes/categories"""
     
     def __init__(self):
-        self.classes: Dict[str, ClassCategory] = {}
+        self.classes: OrderedDict[str, ClassCategory] = OrderedDict()
         self.current_class_id: Optional[str] = None
         
     def add_class(self, name: str, color: str = None) -> ClassCategory:
@@ -89,8 +90,27 @@ class ClassManager:
         return None
     
     def get_all_classes(self) -> List[ClassCategory]:
-        """Get all active classes"""
+        """Get all active classes in order"""
         return list(self.classes.values())
+
+    def get_class_index(self, class_id: str) -> int:
+        """Get zero-based YOLO index for a class"""
+        for i, cid in enumerate(self.classes.keys()):
+            if cid == class_id:
+                return i
+        return -1
+
+    def reorder_classes(self, ordered_ids: List[str]):
+        """Reorder classes to match the given list of IDs"""
+        new_order = OrderedDict()
+        for cid in ordered_ids:
+            if cid in self.classes:
+                new_order[cid] = self.classes[cid]
+        # Add any remaining classes not in the list (safety)
+        for cid, cls in self.classes.items():
+            if cid not in new_order:
+                new_order[cid] = cls
+        self.classes = new_order
     
     def set_current_class(self, class_id: str):
         """Set the currently active class"""
