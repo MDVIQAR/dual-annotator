@@ -6,6 +6,31 @@ class ModeSwitchDialog(QDialog):
         self.setWindowTitle(f"Switch to {to_mode.upper()} mode?")
         self.coexist = False
         
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #1e1e2e;
+                color: #d8e0f8;
+            }
+            QLabel, QRadioButton {
+                color: #d8e0f8;
+                font-size: 13px;
+            }
+            QPushButton {
+                background-color: #1e2640;
+                border: 1px solid #2e3a58;
+                border-radius: 4px;
+                padding: 6px 16px;
+                color: #ffffff;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #2e3a58;
+            }
+            QPushButton:pressed {
+                background-color: #4a6bff;
+            }
+        """)
+        
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(f"This image has {shape_count} {from_mode.upper()} annotations."))
         

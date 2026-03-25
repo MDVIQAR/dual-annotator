@@ -128,7 +128,31 @@ class PolygonShape(Shape):
             inner_handle = handle_name.replace('inner_', '', 1)
             # Avoid intercepting old hardcoded inner ring logic if inner_handle is just a digit '0', '1', etc 
             if not inner_handle.isdigit():
-                return self.inner_shape.resize_from_handle(inner_handle, dx, dy)
+                if hasattr(self.inner_shape, 'to_dict'):
+                    old_state = self.inner_shape.to_dict()
+                    res = self.inner_shape.resize_from_handle(inner_handle, dx, dy)
+                    if not res: return False
+                    
+                    # Ensure inner shape stays within outer
+                    from shapely.geometry import Polygon as ShapelyPolygon
+                    try:
+                        if len(self.points) >= 3 and hasattr(self.inner_shape, 'points') and len(self.inner_shape.points) >= 3:
+                            outer_poly = ShapelyPolygon(self.points)
+                            inner_poly = ShapelyPolygon(self.inner_shape.points)
+                            if not outer_poly.is_valid: outer_poly = outer_poly.buffer(0)
+                            if not inner_poly.is_valid: inner_poly = inner_poly.buffer(0)
+                            
+                            if not inner_poly.within(outer_poly.buffer(1e-5)):
+                                restored = self.inner_shape.__class__.from_dict(old_state, (self.image_width, self.image_height))
+                                for k, v in restored.__dict__.items():
+                                    if not k.startswith('_') and k != 'id':
+                                        setattr(self.inner_shape, k, v)
+                                return False
+                    except Exception:
+                        pass
+                    return True
+                else:
+                    return self.inner_shape.resize_from_handle(inner_handle, dx, dy)
                 
         if self._resize_origin is None:
             return False
@@ -177,8 +201,31 @@ class PolygonShape(Shape):
         
         # After any resize, constrain inner points/shape to stay within outer polygon
         if result and len(self.points) >= 3:
-            if self.inner_points:
-                self._constrain_inner_points()
+            from shapely.geometry import Polygon as ShapelyPolygon
+            try:
+                outer_poly = ShapelyPolygon(self.points)
+                if not outer_poly.is_valid: outer_poly = outer_poly.buffer(0)
+                
+                # Check inner object
+                if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'points') and len(self.inner_shape.points) >= 3:
+                    inner_poly = ShapelyPolygon(self.inner_shape.points)
+                    if not inner_poly.is_valid: inner_poly = inner_poly.buffer(0)
+                    if not inner_poly.within(outer_poly.buffer(1e-5)):
+                        self.points = list(self._resize_origin)
+                        return False
+                        
+                # Check legacy inner_points
+                if self.inner_points and len(self.inner_points) >= 3:
+                    inner_poly = ShapelyPolygon(self.inner_points)
+                    if not inner_poly.is_valid: inner_poly = inner_poly.buffer(0)
+                    if not inner_poly.within(outer_poly.buffer(1e-5)):
+                        self.points = list(self._resize_origin)
+                        if hasattr(self, '_inner_origin'):
+                            self.inner_points = list(self._inner_origin)
+                        return False
+            except Exception:
+                pass
+                
             if getattr(self, 'inner_shape', None):
                 self._constrain_inner_shape_object()
 

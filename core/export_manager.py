@@ -11,7 +11,7 @@ class ExportManager:
 
     def run_export(self,
                    output_dir: str,
-                   fmt: str,                   # "yolo" | "coco" | "voc"
+                   fmt: str,                   # "yolo" | "coco" | "voc" | "unet"
                    split: bool,
                    train_pct: int,
                    val_pct: int,
@@ -19,6 +19,7 @@ class ExportManager:
                    seed: int,
                    delta_only: bool,
                    draw_annotated: bool,
+                   unet_mask_mode: str = "binary_01",
                    progress_callback=None      # callable(current, total, message)
                    ) -> dict:                  # returns summary dict
         """
@@ -115,6 +116,11 @@ class ExportManager:
         elif fmt == "voc":
             from core.exporters.voc_exporter import VocExporter
             exporter = VocExporter(output_dir, split, ordered_classes)
+        elif fmt == "unet":
+            from core.exporters.unet_exporter import UNetExporter
+            exporter = UNetExporter(output_dir, split, ordered_classes,
+                                    mask_mode=unet_mask_mode,
+                                    class_manager=self.cm)
 
         total_images = len(exportable_images)
         current_idx = 0
@@ -154,6 +160,8 @@ class ExportManager:
                 exporter.write_classes_txt(output_dir)
             elif fmt == "coco":
                 exporter.finalize(output_dir)
+            elif fmt == "unet":
+                exporter.write_class_map(output_dir)
                 
         return summary
 

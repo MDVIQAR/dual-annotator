@@ -101,16 +101,39 @@ class ExportDialog(QDialog):
         self.radio_yolo = QRadioButton("YOLO")
         self.radio_coco = QRadioButton("COCO")
         self.radio_voc = QRadioButton("Pascal VOC")
+        self.radio_unet = QRadioButton("UNet Masks")
         self.radio_yolo.setChecked(True)
         self.fmt_group_btn = QButtonGroup(self)
         self.fmt_group_btn.addButton(self.radio_yolo, id=1)
         self.fmt_group_btn.addButton(self.radio_coco, id=2)
         self.fmt_group_btn.addButton(self.radio_voc, id=3)
+        self.fmt_group_btn.addButton(self.radio_unet, id=4)
         fmt_layout.addWidget(self.radio_yolo)
         fmt_layout.addWidget(self.radio_coco)
         fmt_layout.addWidget(self.radio_voc)
+        fmt_layout.addWidget(self.radio_unet)
         fmt_group.setLayout(fmt_layout)
         layout.addWidget(fmt_group)
+
+        # 1b. UNet mask mode sub-group (hidden unless UNet selected)
+        # Only scale: 0/1 (for training) or 0/255 (for visualization).
+        # Binary vs multiclass is auto-detected per image at export time.
+        self.unet_group = QGroupBox("UNet Mask Scale")
+        unet_layout = QHBoxLayout()
+        self.radio_bin01  = QRadioButton("0 / 1  (training)")
+        self.radio_bin255 = QRadioButton("0 / 255  (visualization)")
+        self.radio_bin01.setChecked(True)
+        self.mask_mode_group = QButtonGroup(self)
+        self.mask_mode_group.addButton(self.radio_bin01,  id=1)
+        self.mask_mode_group.addButton(self.radio_bin255, id=2)
+        unet_layout.addWidget(self.radio_bin01)
+        unet_layout.addWidget(self.radio_bin255)
+        self.unet_group.setLayout(unet_layout)
+        self.unet_group.setVisible(False)
+        layout.addWidget(self.unet_group)
+
+        # Wire format-change signal for all format buttons
+        self.fmt_group_btn.buttonClicked.connect(self._on_fmt_changed)
 
         # 2. Split Group
         split_group = QGroupBox("Dataset Split")
@@ -124,7 +147,7 @@ class ExportDialog(QDialog):
         pct_layout.addWidget(QLabel("Train %:"))
         self.spin_train = QSpinBox()
         self.spin_train.setRange(0, 100)
-        self.spin_train.setValue(70)
+        self.spin_train.setValue(80)
         pct_layout.addWidget(self.spin_train)
         
         pct_layout.addWidget(QLabel("Val %:"))
@@ -132,12 +155,6 @@ class ExportDialog(QDialog):
         self.spin_val.setRange(0, 100)
         self.spin_val.setValue(20)
         pct_layout.addWidget(self.spin_val)
-        
-        pct_layout.addWidget(QLabel("Test %:"))
-        self.spin_test = QSpinBox()
-        self.spin_test.setRange(0, 100)
-        self.spin_test.setValue(10)
-        pct_layout.addWidget(self.spin_test)
         
         pct_layout.addStretch()
         pct_layout.addWidget(QLabel("Seed:"))
@@ -156,7 +173,7 @@ class ExportDialog(QDialog):
         self.chk_delta = QCheckBox("Incremental/Delta Export (Skip unchanged)")
         self.chk_delta.setChecked(True)
         self.chk_annotated = QCheckBox("Draw annotations on images")
-        self.chk_annotated.setChecked(False)
+        self.chk_annotated.setChecked(True)   # default for YOLO
         self.chk_timestamp = QCheckBox("Use timestamped subfolder")
         self.chk_timestamp.setChecked(True)
         opt_layout.addWidget(self.chk_delta)
@@ -192,11 +209,31 @@ class ExportDialog(QDialog):
 
         self._read_counts()
 
+    def _on_fmt_changed(self, _button=None):
+        """Show/hide UNet panel and auto-adjust option checkboxes per format."""
+        is_unet = self.radio_unet.isChecked()
+        self.unet_group.setVisible(is_unet)
+
+        if is_unet:
+            # UNet: timestamp on, draw annotations off
+            self.chk_annotated.setChecked(False)
+            self.chk_annotated.setEnabled(False)
+            self.chk_timestamp.setChecked(True)
+        else:
+            self.chk_annotated.setEnabled(True)
+            if self.radio_yolo.isChecked():
+                # YOLO: both on by default
+                self.chk_annotated.setChecked(True)
+                self.chk_timestamp.setChecked(True)
+            else:
+                # COCO / VOC: timestamp on, annotations optional
+                self.chk_annotated.setChecked(False)
+                self.chk_timestamp.setChecked(True)
+
     def _toggle_split(self, state):
         enabled = state != 0
         self.spin_train.setEnabled(enabled)
         self.spin_val.setEnabled(enabled)
-        self.spin_test.setEnabled(enabled)
         self.spin_seed.setEnabled(enabled)
 
     def _read_counts(self):
@@ -237,15 +274,16 @@ class ExportDialog(QDialog):
         split_en = self.chk_split.isChecked()
         t_pct = self.spin_train.value()
         v_pct = self.spin_val.value()
-        te_pct = self.spin_test.value()
+        te_pct = 100 - t_pct - v_pct  # test gets the remainder
 
-        if split_en and (t_pct + v_pct + te_pct != 100):
-            QMessageBox.warning(self, "Validation Error", "Train, Val, and Test percentages must sum to 100%.")
+        if split_en and (t_pct + v_pct > 100):
+            QMessageBox.warning(self, "Validation Error", "Train % + Val % cannot exceed 100%.")
             return
 
         fmt = "yolo"
-        if self.radio_coco.isChecked(): fmt = "coco"
+        if self.radio_coco.isChecked():  fmt = "coco"
         elif self.radio_voc.isChecked(): fmt = "voc"
+        elif self.radio_unet.isChecked(): fmt = "unet"
 
         # Output dir selection logic
         ts = ""
@@ -266,11 +304,20 @@ class ExportDialog(QDialog):
             "draw_annotated": self.chk_annotated.isChecked()
         }
 
+        # UNet mask mode — auto-detect binary vs multiclass per image;
+        # the user only picks the pixel scale (0/1 or 0/255).
+        if fmt == "unet":
+            scale_255 = self.mask_mode_group.checkedId() == 2
+            kwargs["unet_mask_mode"] = "auto_255" if scale_255 else "auto_01"
+        else:
+            kwargs["unet_mask_mode"] = "binary_01"
+
         self.btn_export.setEnabled(False)
         self.chk_split.setEnabled(False)
         self.fmt_group_btn.button(1).setEnabled(False)
         self.fmt_group_btn.button(2).setEnabled(False)
         self.fmt_group_btn.button(3).setEnabled(False)
+        self.fmt_group_btn.button(4).setEnabled(False)
         self.chk_delta.setEnabled(False)
         self.chk_annotated.setEnabled(False)
         self.chk_timestamp.setEnabled(False)

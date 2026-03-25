@@ -2375,6 +2375,7 @@ class AnnotationCanvas(QWidget):
             self.resizing_handle = None
             self.paste_start_pos = None
             self.paste_confirmed = True
+            self.annotation_changed.emit()  # AUTOSAVE INTEGRATION
             self.update()
             return True
         return False   
@@ -2486,6 +2487,7 @@ class AnnotationCanvas(QWidget):
             self.drag_start_pos = None
             self.original_shape = None
             self.resizing = False
+            self.annotation_changed.emit()  # AUTOSAVE INTEGRATION
             self.update()
             return True
         return False
@@ -2864,6 +2866,7 @@ class AnnotationCanvas(QWidget):
 
             self.save_state()
             self.shapes.append(shape)
+            self.annotation_changed.emit()  # AUTOSAVE INTEGRATION
             print(f"✅ Stamp placed as natively constructed '{shape_type}' (Hollow: {True if inner_type else False})")
             
             self.stamping = False
