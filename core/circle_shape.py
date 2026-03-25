@@ -92,18 +92,39 @@ class CircleShape(Shape):
         if handle_name.startswith('inner_'):
             if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'resize_from_handle'):
                 inner_handle = handle_name.replace('inner_', '', 1)
-                result = self.inner_shape.resize_from_handle(inner_handle, dx, dy)
-                if result:
-                    # Clamp: inner radius must never reach or exceed outer radius
-                    _, _, outer_r = self.to_pixels()
-                    _, _, inner_r = self.inner_shape.to_pixels()
-                    if inner_r >= outer_r - MIN_GAP:
-                        max_allowed = max(MIN_R, outer_r - MIN_GAP)
-                        self.inner_shape.radius = (
-                            max_allowed / max(self.inner_shape.image_width,
-                                              self.inner_shape.image_height)
-                        )
-                return result
+                
+                if hasattr(self.inner_shape, 'to_dict'):
+                    old_state = self.inner_shape.to_dict()
+                    result = self.inner_shape.resize_from_handle(inner_handle, dx, dy)
+                    if not result: return False
+                    
+                    cx_o, cy_o, r_o = self.to_pixels()
+                    # It might be a circle, ellipse, or polygon inside
+                    if hasattr(self.inner_shape, 'to_pixels'):
+                        res = self.inner_shape.to_pixels()
+                        if len(res) == 3: # Circle
+                            cx_i, cy_i, r_i = res
+                            dist = math.hypot(cx_i - cx_o, cy_i - cy_o)
+                            if dist + r_i > r_o - MIN_GAP:
+                                restored = self.inner_shape.__class__.from_dict(old_state, (self.image_width, self.image_height))
+                                for k, v in restored.__dict__.items():
+                                    if not k.startswith('_') and k != 'id':
+                                        setattr(self.inner_shape, k, v)
+                                return False
+                        elif len(res) == 4: # Box or Ellipse
+                            ix1, iy1, ix2, iy2 = res
+                            bcx = (ix1 + ix2) / 2
+                            bcy = (iy1 + iy2) / 2
+                            br = math.hypot(ix1 - bcx, iy1 - bcy)
+                            if math.hypot(bcx - cx_o, bcy - cy_o) + br > r_o - MIN_GAP:
+                                restored = self.inner_shape.__class__.from_dict(old_state, (self.image_width, self.image_height))
+                                for k, v in restored.__dict__.items():
+                                    if not k.startswith('_') and k != 'id':
+                                        setattr(self.inner_shape, k, v)
+                                return False
+                    return True
+                else:
+                    return self.inner_shape.resize_from_handle(inner_handle, dx, dy)
             return False
 
         # ── Outer handle drag ──────────────────────────────────────────
@@ -142,11 +163,20 @@ class CircleShape(Shape):
         new_r = max(min_radius, min(new_r, max_radius))
 
         # Clamp: outer radius must always be larger than inner radius + gap
-        if getattr(self, 'inner_shape', None):
-            _, _, inner_r = self.inner_shape.to_pixels()
-            if new_r <= inner_r + MIN_GAP:
-                # Reject — outer would shrink inside inner
-                return False
+        if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'to_pixels'):
+            res = self.inner_shape.to_pixels()
+            if len(res) == 3: # Circle inside
+                cx_i, cy_i, r_i = res
+                dist = math.hypot(cx_i - new_cx, cy_i - new_cy)
+                if dist + r_i > new_r - MIN_GAP:
+                    return False
+            elif len(res) == 4: # Ellipse or Box inside
+                ix1, iy1, ix2, iy2 = res
+                bcx = (ix1 + ix2) / 2
+                bcy = (iy1 + iy2) / 2
+                br = math.hypot(ix1 - bcx, iy1 - bcy)
+                if math.hypot(bcx - new_cx, bcy - new_cy) + br > new_r - MIN_GAP:
+                    return False
 
         self.center_x = new_cx / self.image_width
         self.center_y = new_cy / self.image_height
@@ -165,6 +195,7 @@ class CircleShape(Shape):
             'radius': self.radius
         }
 
+    @classmethod
     def from_dict(cls, data, image_size):
         """Create from dictionary"""
         circle = cls(

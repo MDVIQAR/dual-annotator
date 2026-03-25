@@ -31,3 +31,5 @@ tmpclaude-*
 Ignore_Files/
 
 test_*.py
+
+*.zip

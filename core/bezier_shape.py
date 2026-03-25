@@ -298,8 +298,30 @@ class BezierPolygonShape(Shape):
         if handle_name.startswith('inner_') and getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'resize_from_handle'):
             inner_handle = handle_name.replace('inner_', '', 1)
             if not inner_handle.isdigit():
-                return self.inner_shape.resize_from_handle(inner_handle, dx, dy)
-                
+                if hasattr(self.inner_shape, 'to_dict'):
+                    old_state = self.inner_shape.to_dict()
+                    res = self.inner_shape.resize_from_handle(inner_handle, dx, dy)
+                    if not res: return False
+                    
+                    from shapely.geometry import Polygon as ShapelyPolygon
+                    try:
+                        if len(self.points) >= 3 and hasattr(self.inner_shape, 'points') and len(self.inner_shape.points) >= 3:
+                            outer_poly = ShapelyPolygon(self.points)
+                            inner_poly = ShapelyPolygon(self.inner_shape.points)
+                            if not outer_poly.is_valid: outer_poly = outer_poly.buffer(0)
+                            if not inner_poly.is_valid: inner_poly = inner_poly.buffer(0)
+                            
+                            if not inner_poly.within(outer_poly.buffer(1e-5)):
+                                restored = self.inner_shape.__class__.from_dict(old_state, (self.image_width, self.image_height))
+                                for k, v in restored.__dict__.items():
+                                    if not k.startswith('_') and k != 'id':
+                                        setattr(self.inner_shape, k, v)
+                                return False
+                    except Exception:
+                        pass
+                    return True
+                else:
+                    return self.inner_shape.resize_from_handle(inner_handle, dx, dy)
         if self._resize_origin is None:
             return False
 
@@ -366,9 +388,36 @@ class BezierPolygonShape(Shape):
 
         # If any inner or outer geometry changed and we have inner anchors/shapes,
         # keep them constrained inside the outer curve.
-        if result:
-            if getattr(self, 'inner_points', None):
-                self._constrain_inner_points()
+        if result and len(self.points) >= 3:
+            from shapely.geometry import Polygon as ShapelyPolygon
+            try:
+                outer_poly = ShapelyPolygon(self.points)
+                if not outer_poly.is_valid: outer_poly = outer_poly.buffer(0)
+                
+                # Check inner object
+                if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'points') and len(self.inner_shape.points) >= 3:
+                    inner_poly = ShapelyPolygon(self.inner_shape.points)
+                    if not inner_poly.is_valid: inner_poly = inner_poly.buffer(0)
+                    if not inner_poly.within(outer_poly.buffer(1e-5)):
+                        self.points = list(self._resize_origin)
+                        self.ctrl = list(self._ctrl_origin)
+                        return False
+                        
+                # Check legacy inner_points
+                if getattr(self, 'inner_points', None) and len(self.inner_points) >= 3:
+                    inner_poly = ShapelyPolygon(self.inner_points)
+                    if not inner_poly.is_valid: inner_poly = inner_poly.buffer(0)
+                    if not inner_poly.within(outer_poly.buffer(1e-5)):
+                        self.points = list(self._resize_origin)
+                        self.ctrl = list(self._ctrl_origin)
+                        if hasattr(self, '_inner_origin'):
+                            self.inner_points = list(self._inner_origin)
+                        if hasattr(self, '_inner_ctrl_origin'):
+                            self.inner_control_points = list(self._inner_ctrl_origin)
+                        return False
+            except Exception:
+                pass
+                
             if getattr(self, 'inner_shape', None):
                 self._constrain_inner_shape_object()
 

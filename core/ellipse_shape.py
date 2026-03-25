@@ -107,18 +107,39 @@ class EllipseShape(Shape):
         if handle_name.startswith('inner_'):
             if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'resize_from_handle'):
                 inner_handle = handle_name.replace('inner_', '', 1)
-                result = self.inner_shape.resize_from_handle(inner_handle, dx, dy)
-                if result:
-                    # Clamp each axis: inner radius must stay inside outer radius
-                    _, _, outer_rx, outer_ry = self.to_pixels()
-                    _, _, inner_rx, inner_ry = self.inner_shape.to_pixels()
-                    if inner_rx >= outer_rx - MIN_GAP:
-                        clamped = max(MIN_R, outer_rx - MIN_GAP)
-                        self.inner_shape.radius_x = clamped / self.inner_shape.image_width
-                    if inner_ry >= outer_ry - MIN_GAP:
-                        clamped = max(MIN_R, outer_ry - MIN_GAP)
-                        self.inner_shape.radius_y = clamped / self.inner_shape.image_height
-                return result
+                
+                if hasattr(self.inner_shape, 'to_dict'):
+                    old_state = self.inner_shape.to_dict()
+                    result = self.inner_shape.resize_from_handle(inner_handle, dx, dy)
+                    if not result: return False
+                    
+                    cx_o, cy_o, rx_o, ry_o = self.to_pixels()
+                    if hasattr(self.inner_shape, 'to_pixels'):
+                        res = self.inner_shape.to_pixels()
+                        if len(res) == 3: # Circle inside
+                            cx_i, cy_i, r_i = res
+                            # Quick rough bounding box check
+                            if abs(cx_i - cx_o) + r_i > rx_o - MIN_GAP or abs(cy_i - cy_o) + r_i > ry_o - MIN_GAP:
+                                restored = self.inner_shape.__class__.from_dict(old_state, (self.image_width, self.image_height))
+                                for k, v in restored.__dict__.items():
+                                    if not k.startswith('_') and k != 'id':
+                                        setattr(self.inner_shape, k, v)
+                                return False
+                        elif len(res) == 4: # Ellipse or Box inside
+                            ix1, iy1, ix2, iy2 = res
+                            bcx = (ix1 + ix2) / 2
+                            bcy = (iy1 + iy2) / 2
+                            brx = abs(ix2 - ix1) / 2
+                            bry = abs(iy2 - iy1) / 2
+                            if abs(bcx - cx_o) + brx > rx_o - MIN_GAP or abs(bcy - cy_o) + bry > ry_o - MIN_GAP:
+                                restored = self.inner_shape.__class__.from_dict(old_state, (self.image_width, self.image_height))
+                                for k, v in restored.__dict__.items():
+                                    if not k.startswith('_') and k != 'id':
+                                        setattr(self.inner_shape, k, v)
+                                return False
+                    return True
+                else:
+                    return self.inner_shape.resize_from_handle(inner_handle, dx, dy)
             return False
 
         # ── Outer handle drag ──────────────────────────────────────────
@@ -161,11 +182,20 @@ class EllipseShape(Shape):
         new_ry = max(min_size, min(new_ry, max_ry))
 
         # Clamp: outer radii must always be larger than inner radii + gap
-        if getattr(self, 'inner_shape', None):
-            _, _, inner_rx, inner_ry = self.inner_shape.to_pixels()
-            if new_rx <= inner_rx + MIN_GAP or new_ry <= inner_ry + MIN_GAP:
-                # Reject — outer would shrink inside inner on at least one axis
-                return False
+        if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'to_pixels'):
+            res = self.inner_shape.to_pixels()
+            if len(res) == 3: # Circle inside
+                cx_i, cy_i, r_i = res
+                if abs(cx_i - new_cx) + r_i > new_rx - MIN_GAP or abs(cy_i - new_cy) + r_i > new_ry - MIN_GAP:
+                    return False
+            elif len(res) == 4: # Ellipse or Box inside
+                ix1, iy1, ix2, iy2 = res
+                bcx = (ix1 + ix2) / 2
+                bcy = (iy1 + iy2) / 2
+                brx = abs(ix2 - ix1) / 2
+                bry = abs(iy2 - iy1) / 2
+                if abs(bcx - new_cx) + brx > new_rx - MIN_GAP or abs(bcy - new_cy) + bry > new_ry - MIN_GAP:
+                    return False
 
         self.center_x = new_cx / self.image_width
         self.center_y = new_cy / self.image_height
@@ -185,6 +215,7 @@ class EllipseShape(Shape):
             'radius_x': self.radius_x,
             'radius_y': self.radius_y
         }
+    @classmethod
     def from_dict(cls, data, image_size):
         """Create from dictionary"""
         ellipse = cls(
