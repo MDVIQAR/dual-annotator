@@ -25,7 +25,7 @@ class BoundingBox:
         self.is_hollow = False
 
     def copy(self):
-        """Create a copy of this bounding box"""
+        """Create a deep copy of this bounding box, including any hollow inner shape."""
         new_box = BoundingBox(
             x=self.x,
             y=self.y,
@@ -35,6 +35,21 @@ class BoundingBox:
             image_size=(self.image_width, self.image_height)
         )
         new_box.id = str(uuid.uuid4())[:8]
+        new_box.is_hollow = self.is_hollow
+        new_box.hollow_role = self.hollow_role
+
+        # Deep-copy the inner shape if this is a hollow pair
+        if self.inner_shape is not None and hasattr(self.inner_shape, 'copy'):
+            new_inner = self.inner_shape.copy()
+            new_gid = str(uuid.uuid4())[:8]
+            new_box.inner_shape = new_inner
+            new_box.group_id = new_gid
+            new_inner.hollow_role = 'inner'
+            new_inner.group_id = new_gid
+        else:
+            new_box.inner_shape = None
+            new_box.group_id = self.group_id
+
         return new_box
         
     def from_pixels(self, x1, y1, x2, y2, image_width, image_height):

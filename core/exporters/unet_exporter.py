@@ -1,7 +1,7 @@
 import os
 import json
 import shutil
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageEnhance
 
 
 class UNetExporter:
@@ -83,7 +83,9 @@ class UNetExporter:
         img.save(os.path.join(img_dir, stem + ".png"))
 
         # Step 6 — Generate overlay
-        overlay_base = img.convert("RGBA")
+        # Brighten the base image so annotations are visible on dark/thermal images
+        brightened = ImageEnhance.Brightness(img).enhance(1.8)
+        overlay_base = brightened.convert("RGBA")
         draw_layer = Image.new("RGBA", (iw, ih), (0, 0, 0, 0))
         overlay_draw = ImageDraw.Draw(draw_layer)
 
@@ -98,10 +100,10 @@ class UNetExporter:
             r = int(color_hex[1:3], 16)
             g = int(color_hex[3:5], 16)
             b = int(color_hex[5:7], 16)
-            # Semi-transparent fill at alpha 170 for visibility on thermal images
-            fill_rgba = (r, g, b, 170)
-            # Bright opaque outline for sharp boundary
-            outline_rgba = (255, 255, 255, 230)
+            # High-opacity fill for clear visibility on dark backgrounds
+            fill_rgba = (r, g, b, 200)
+            # Fully opaque bright outline for sharp boundary
+            outline_rgba = (255, 255, 255, 255)
             self._draw_ann_on_overlay(overlay_draw, ann, iw, ih, fill_rgba, outline_rgba)
 
         overlay = Image.alpha_composite(overlay_base, draw_layer).convert("RGB")
@@ -133,8 +135,12 @@ class UNetExporter:
                 # Binary: single foreground value
                 return scale
             else:
-                # Multiclass: spread evenly across [1 .. scale]
-                return max(1, round((class_idx + 1) / n * scale))
+                if use_255:
+                    # Multiclass 0-255: spread evenly across [1 .. 255]
+                    return max(1, round((class_idx + 1) / n * 255))
+                else:
+                    # Multiclass 0-N: each class gets its 1-based index
+                    return class_idx + 1
 
         # --- Legacy fixed modes ---
         if self.mask_mode == "binary_01":
@@ -146,6 +152,47 @@ class UNetExporter:
         elif self.mask_mode == "multiclass_255":
             return round((class_idx + 1) / n * 255)
         return 1
+
+    # ------------------------------------------------------------------
+    #  Bezier tessellation helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _tessellate_bezier(points, ctrl_points, steps=20):
+        """
+        Convert anchor points + per-edge quadratic bezier control points
+        into a dense polygon by sampling each curve segment.
+
+        points:      list of (x, y) anchor vertices
+        ctrl_points: list of (x, y)|None per edge; ctrl[i] controls edge from points[i] to points[(i+1)%n]
+        steps:       number of line segments per bezier curve
+
+        Returns a list of (x, y) tuples forming the dense polygon outline.
+        """
+        if not points or len(points) < 3:
+            return [tuple(p) for p in points] if points else []
+
+        n = len(points)
+        ctrls = ctrl_points or []
+        result = []
+
+        for i in range(n):
+            p0 = points[i]
+            p1 = points[(i + 1) % n]
+            ctrl = ctrls[i] if i < len(ctrls) else None
+
+            if ctrl is None:
+                # Straight line — just add the start point
+                result.append((float(p0[0]), float(p0[1])))
+            else:
+                # Quadratic bezier: P(t) = (1-t)^2 * P0 + 2(1-t)t * C + t^2 * P1
+                for s in range(steps):
+                    t = s / steps
+                    x = (1 - t) ** 2 * p0[0] + 2 * (1 - t) * t * ctrl[0] + t ** 2 * p1[0]
+                    y = (1 - t) ** 2 * p0[1] + 2 * (1 - t) * t * ctrl[1] + t ** 2 * p1[1]
+                    result.append((float(x), float(y)))
+
+        return result
 
     # ------------------------------------------------------------------
     #  Draw annotation on MASK (grayscale)
@@ -172,7 +219,7 @@ class UNetExporter:
             rx, ry = np_.get("rx", 0), np_.get("ry", 0)
             draw.ellipse([cx-rx, cy-ry, cx+rx, cy+ry], fill=pixel_value)
 
-        elif t in ("polygon", "bezier_polygon"):
+        elif t == "polygon":
             if len(pts) >= 3:
                 draw.polygon([tuple(p) for p in pts], fill=pixel_value)
             # Handle hollow cutout stored in nested inner_shape
@@ -181,6 +228,35 @@ class UNetExporter:
                 inner_pts = inner.get("points", [])
                 if len(inner_pts) >= 3:
                     draw.polygon([tuple(p) for p in inner_pts], fill=0)
+
+        elif t == "bezier_polygon":
+            ctrl_pts = ann.get("ctrl_points", [])
+            tessellated = self._tessellate_bezier(pts, ctrl_pts)
+            if len(tessellated) >= 3:
+                draw.polygon(tessellated, fill=pixel_value)
+            # Handle hollow cutout stored in nested inner_shape
+            inner = ann.get("inner_shape")
+            if inner:
+                inner_pts = inner.get("points", [])
+                inner_ctrl = inner.get("ctrl_points", [])
+                if inner_ctrl:
+                    inner_tess = self._tessellate_bezier(inner_pts, inner_ctrl)
+                elif len(inner_pts) >= 3:
+                    inner_tess = [tuple(p) for p in inner_pts]
+                else:
+                    inner_tess = []
+                if len(inner_tess) >= 3:
+                    draw.polygon(inner_tess, fill=0)
+            # Handle inner_points (legacy bezier inner)
+            inner_pts_legacy = ann.get("inner_points", [])
+            inner_ctrl_legacy = ann.get("inner_ctrl_points", [])
+            if inner_pts_legacy and len(inner_pts_legacy) >= 3:
+                if inner_ctrl_legacy:
+                    inner_tess = self._tessellate_bezier(inner_pts_legacy, inner_ctrl_legacy)
+                else:
+                    inner_tess = [tuple(p) for p in inner_pts_legacy]
+                if len(inner_tess) >= 3:
+                    draw.polygon(inner_tess, fill=0)
 
         elif t == "frame":
             x1 = np_.get("x1", 0); y1 = np_.get("y1", 0)
@@ -220,7 +296,7 @@ class UNetExporter:
         t   = ann.get("shape_type")
         np_ = ann.get("native_params", {})
         pts = ann.get("points", [])
-        ow  = 2  # outline width in pixels
+        ow  = 3  # outline width in pixels
 
         if t == "box":
             cx = np_.get("cx_norm", 0) * iw
@@ -252,7 +328,7 @@ class UNetExporter:
             if inner_ann and ann.get("hollow_role") == "outer":
                 self._cut_inner_from_overlay(draw, inner_ann, iw, ih)
 
-        elif t in ("polygon", "bezier_polygon"):
+        elif t == "polygon":
             if len(pts) >= 3:
                 flat = [tuple(p) for p in pts]
                 draw.polygon(flat, fill=rgba_color)
@@ -263,6 +339,36 @@ class UNetExporter:
                 inner_pts = inner.get("points", [])
                 if len(inner_pts) >= 3:
                     draw.polygon([tuple(p) for p in inner_pts], fill=(0, 0, 0, 0))
+
+        elif t == "bezier_polygon":
+            ctrl_pts = ann.get("ctrl_points", [])
+            tessellated = self._tessellate_bezier(pts, ctrl_pts)
+            if len(tessellated) >= 3:
+                draw.polygon(tessellated, fill=rgba_color)
+                if outline_color:
+                    draw.line(tessellated + [tessellated[0]], fill=outline_color, width=ow)
+            inner = ann.get("inner_shape") or ann.get("inner")
+            if inner:
+                inner_pts = inner.get("points", [])
+                inner_ctrl = inner.get("ctrl_points", [])
+                if inner_ctrl:
+                    inner_tess = self._tessellate_bezier(inner_pts, inner_ctrl)
+                elif len(inner_pts) >= 3:
+                    inner_tess = [tuple(p) for p in inner_pts]
+                else:
+                    inner_tess = []
+                if len(inner_tess) >= 3:
+                    draw.polygon(inner_tess, fill=(0, 0, 0, 0))
+            # Handle inner_points (legacy bezier inner)
+            inner_pts_legacy = ann.get("inner_points", [])
+            inner_ctrl_legacy = ann.get("inner_ctrl_points", [])
+            if inner_pts_legacy and len(inner_pts_legacy) >= 3:
+                if inner_ctrl_legacy:
+                    inner_tess = self._tessellate_bezier(inner_pts_legacy, inner_ctrl_legacy)
+                else:
+                    inner_tess = [tuple(p) for p in inner_pts_legacy]
+                if len(inner_tess) >= 3:
+                    draw.polygon(inner_tess, fill=(0, 0, 0, 0))
 
         elif t == "frame":
             x1 = np_.get("x1", 0); y1 = np_.get("y1", 0)
@@ -326,9 +432,14 @@ class UNetExporter:
             cx, cy = np_.get("cx", 0), np_.get("cy", 0)
             rx, ry = np_.get("rx", 0), np_.get("ry", 0)
             draw.ellipse([cx-rx, cy-ry, cx+rx, cy+ry], fill=0)
-        elif t in ("polygon", "bezier_polygon"):
+        elif t == "polygon":
             if len(pts) >= 3:
                 draw.polygon([tuple(p) for p in pts], fill=0)
+        elif t == "bezier_polygon":
+            ctrl_pts = inner_ann.get("ctrl_points", [])
+            tessellated = self._tessellate_bezier(pts, ctrl_pts)
+            if len(tessellated) >= 3:
+                draw.polygon(tessellated, fill=0)
 
     def _cut_inner_from_overlay(self, draw, inner_ann, iw, ih):
         """Erase the inner shape from the RGBA overlay (fill transparent) for outer/inner hollow pairs."""
@@ -349,9 +460,14 @@ class UNetExporter:
             cx, cy = np_.get("cx", 0), np_.get("cy", 0)
             rx, ry = np_.get("rx", 0), np_.get("ry", 0)
             draw.ellipse([cx-rx, cy-ry, cx+rx, cy+ry], fill=(0, 0, 0, 0))
-        elif t in ("polygon", "bezier_polygon"):
+        elif t == "polygon":
             if len(pts) >= 3:
                 draw.polygon([tuple(p) for p in pts], fill=(0, 0, 0, 0))
+        elif t == "bezier_polygon":
+            ctrl_pts = inner_ann.get("ctrl_points", [])
+            tessellated = self._tessellate_bezier(pts, ctrl_pts)
+            if len(tessellated) >= 3:
+                draw.polygon(tessellated, fill=(0, 0, 0, 0))
 
     # ------------------------------------------------------------------
     #  Write class map JSON

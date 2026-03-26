@@ -186,6 +186,9 @@ class ExportDialog(QDialog):
         self.lbl_counts = QLabel("Calculating...")
         layout.addWidget(self.lbl_counts)
 
+        # Apply initial formatting rules based on default 'YOLO' selection
+        self._on_fmt_changed()
+
         # Progress
         self.progress_lbl = QLabel("")
         self.progress_bar = QProgressBar()
@@ -212,23 +215,30 @@ class ExportDialog(QDialog):
     def _on_fmt_changed(self, _button=None):
         """Show/hide UNet panel and auto-adjust option checkboxes per format."""
         is_unet = self.radio_unet.isChecked()
+        is_yolo = self.radio_yolo.isChecked()
         self.unet_group.setVisible(is_unet)
 
         if is_unet:
-            # UNet: timestamp on, draw annotations off
+            # UNet: Only timestamp on, rest unchecked
+            self.chk_split.setChecked(False)
+            self.chk_delta.setChecked(False)
             self.chk_annotated.setChecked(False)
             self.chk_annotated.setEnabled(False)
             self.chk_timestamp.setChecked(True)
-        else:
+        elif is_yolo:
+            # YOLO: Draw annotations and timestamp on, rest unchecked
+            self.chk_split.setChecked(False)
+            self.chk_delta.setChecked(False)
+            self.chk_annotated.setChecked(True)
             self.chk_annotated.setEnabled(True)
-            if self.radio_yolo.isChecked():
-                # YOLO: both on by default
-                self.chk_annotated.setChecked(True)
-                self.chk_timestamp.setChecked(True)
-            else:
-                # COCO / VOC: timestamp on, annotations optional
-                self.chk_annotated.setChecked(False)
-                self.chk_timestamp.setChecked(True)
+            self.chk_timestamp.setChecked(True)
+        else:
+            # COCO / VOC: Only timestamp on, rest unchecked
+            self.chk_split.setChecked(False)
+            self.chk_delta.setChecked(False)
+            self.chk_annotated.setChecked(False)
+            self.chk_annotated.setEnabled(True)
+            self.chk_timestamp.setChecked(True)
 
     def _toggle_split(self, state):
         enabled = state != 0

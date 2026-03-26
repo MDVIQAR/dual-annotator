@@ -2450,31 +2450,13 @@ class AnnotationCanvas(QWidget):
         return True
 
     def update_drag_copy(self, pos):
-        """Update position of dragged copy"""
-        if self.drag_copy and self.drag_copy_shape:
+        """Update position of dragged copy using delta-based move() so inner shapes move together."""
+        if self.drag_copy and self.drag_copy_shape and self.drag_start_pos:
             image_x, image_y = self.widget_to_image(pos)
-            
-            # Update position based on shape type
-            if hasattr(self.drag_copy_shape, 'x') and hasattr(self.drag_copy_shape, 'y'):
-                # For boxes and frames
-                self.drag_copy_shape.x = image_x / self.image_width
-                self.drag_copy_shape.y = image_y / self.image_height
-            elif hasattr(self.drag_copy_shape, 'center_x') and hasattr(self.drag_copy_shape, 'center_y'):
-                # For circles and ellipses
-                self.drag_copy_shape.center_x = image_x / self.image_width
-                self.drag_copy_shape.center_y = image_y / self.image_height
-            elif hasattr(self.drag_copy_shape, 'cx') and hasattr(self.drag_copy_shape, 'cy'):
-                # For donuts
-                self.drag_copy_shape.cx = image_x / self.image_width
-                self.drag_copy_shape.cy = image_y / self.image_height
-            elif hasattr(self.drag_copy_shape, 'points'):
-                # For polygons - move all points
-                if self.drag_start_pos:
-                    dx = (image_x - self.drag_start_pos[0]) / self.image_width
-                    dy = (image_y - self.drag_start_pos[1]) / self.image_height
-                    self.drag_copy_shape.move(dx, dy)
-                    self.drag_start_pos = (image_x, image_y)
-            
+            dx = (image_x - self.drag_start_pos[0]) / self.image_width
+            dy = (image_y - self.drag_start_pos[1]) / self.image_height
+            self.drag_copy_shape.move(dx, dy)
+            self.drag_start_pos = (image_x, image_y)
             self.update()
 
     def finish_drag_copy(self):

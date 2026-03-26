@@ -45,19 +45,48 @@ class Shape(ABC):
         pass
     
     def copy(self):
-        """Create a deep copy of this shape"""
-        import copy as _copy
+        """Create a deep copy of this shape, preserving the full hollow structure."""
         new_shape = self.__class__.__new__(self.__class__)
         new_shape.__dict__ = {}
+
         for k, v in self.__dict__.items():
-            if isinstance(v, list):
-                new_shape.__dict__[k] = [
-                    tuple(item) if isinstance(item, (list, tuple)) else item
-                    for item in v
-                ]
+            if k == 'inner_shape':
+                # Will be handled below after the loop — skip for now
+                continue
+            elif isinstance(v, list):
+                # Deep-copy list: each element that is itself a list/tuple
+                # is converted to tuple; nested Shape objects are copied recursively
+                copied_list = []
+                for item in v:
+                    if isinstance(item, Shape):
+                        copied_list.append(item.copy())
+                    elif isinstance(item, (list, tuple)):
+                        copied_list.append(tuple(item))
+                    else:
+                        copied_list.append(item)
+                new_shape.__dict__[k] = copied_list
             else:
                 new_shape.__dict__[k] = v
+
+        # Give the new shape a fresh id
         new_shape.id = str(uuid.uuid4())[:8]
+
+        # Deep-copy inner_shape and re-attach with a fresh group_id so the
+        # new hollow pair is completely independent of the original.
+        orig_inner = self.__dict__.get('inner_shape')
+        if orig_inner is not None and hasattr(orig_inner, 'copy'):
+            new_inner = orig_inner.copy()
+            new_gid = str(uuid.uuid4())[:8]
+            # Wire up the relationship on the NEW shape only
+            new_shape.inner_shape = new_inner
+            new_shape.is_hollow = True
+            new_shape.hollow_role = 'outer'
+            new_shape.group_id = new_gid
+            new_inner.hollow_role = 'inner'
+            new_inner.group_id = new_gid
+        else:
+            new_shape.inner_shape = None
+
         return new_shape
         
     def attach_inner(self, inner_shape):
