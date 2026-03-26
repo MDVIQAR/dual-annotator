@@ -168,3 +168,31 @@ class TemplateManager:
                 inner_ctrl_result.append(None)
             
         return shape_type, outer_result, inner_result, ctrl_result, inner_ctrl_result, native_params
+
+    def save_to_file(self, filepath):
+        """Persist all templates to JSON."""
+        import json
+        try:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(self.templates, f, indent=2)
+            return True
+        except Exception as e:
+            print(f"❌ Failed to save templates: {e}")
+            return False
+
+    def load_from_file(self, filepath):
+        """Load templates from JSON if it exists."""
+        import json, os
+        if not os.path.exists(filepath):
+            return
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            # Basic validation
+            if isinstance(data, dict):
+                for name, tmpl in data.items():
+                    if isinstance(tmpl, dict) and 'points' in tmpl:
+                        self.templates[name] = tmpl
+            print(f"📋 Loaded {len(self.templates)} templates from {os.path.basename(filepath)}")
+        except Exception as e:
+            print(f"❌ Failed to load templates: {e}")
