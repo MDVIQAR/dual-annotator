@@ -106,6 +106,21 @@ class AnnotationCanvas(QWidget):
         self.paste_start_pos = None
         self.paste_confirmed = False
         
+        # Nudge step (pixels) — configurable via Edit > Nudge Step
+        self.nudge_step = 1
+
+        # Multi-selection state
+        self.selected_shapes = []           # All currently selected shapes
+        self.rubber_band_active = False     # Rubber band drag in progress
+        self.rubber_band_start = None       # QPoint where rubber band started (widget coords)
+        self.rubber_band_end = None         # QPoint current rubber band end (widget coords)
+        self.multi_moving = False           # Group move in progress
+        self.multi_move_start = None        # Image-coord (x,y) where group move started
+        self.multi_drag_copy = False        # Group Ctrl+drag-copy in progress
+        self.multi_drag_copies = []         # Copied shapes during drag-copy
+        self.multi_drag_originals = []      # Original shapes during drag-copy
+        self.clipboard_shapes = []          # Multi-shape clipboard (separate from clipboard_shape)
+        
         # Polygon drawing state
         self.drawing_polygon = False
         self.drawing_inner_cutout = False
@@ -175,6 +190,7 @@ class AnnotationCanvas(QWidget):
                 # Clear previous shapes when loading new image
                 self.shapes = []
                 self.selected_shape = None
+                self.selected_shapes = []
                 
                 # Reset all drawing states
                 self.reset_all_states()
@@ -321,6 +337,357 @@ class AnnotationCanvas(QWidget):
             if hasattr(shape, 'contains_point') and shape.contains_point(image_x, image_y):
                 return shape
         return None
+
+    # ==========================================
+    #  Multi-select helper methods
+    # ==========================================
+
+    def _get_shape_bbox_image(self, shape):
+        """Return (x1,y1,x2,y2) bounding box in image pixel coords for any shape type."""
+        t = getattr(shape, 'type', None)
+        if t == 'box':
+            return shape.to_pixels()  # returns (x1,y1,x2,y2)
+        elif t == 'circle':
+            cx, cy, r = shape.to_pixels()
+            return (cx - r, cy - r, cx + r, cy + r)
+        elif t == 'ellipse':
+            cx, cy, rx, ry = shape.to_pixels()
+            return (cx - rx, cy - ry, cx + rx, cy + ry)
+        elif t == 'frame':
+            x, y, w, h = shape.to_pixels()
+            return (x, y, x + w, y + h)
+        elif t in ('donut', 'hollow_ellipse'):
+            pts = shape.to_pixels()
+            cx, cy = pts[0], pts[1]
+            rx = pts[2]
+            ry = pts[3] if len(pts) > 3 else pts[2]
+            return (cx - rx, cy - ry, cx + rx, cy + ry)
+        elif t in ('polygon', 'bezier_polygon'):
+            px_pts = shape.to_pixel_points()
+            if not px_pts:
+                return None
+            xs = [p[0] for p in px_pts]
+            ys = [p[1] for p in px_pts]
+            return (min(xs), min(ys), max(xs), max(ys))
+        return None
+
+    def _rects_intersect(self, r1, r2):
+        """Return True if two (x1,y1,x2,y2) rects intersect."""
+        return not (r1[2] < r2[0] or r2[2] < r1[0] or r1[3] < r2[1] or r2[3] < r1[1])
+
+    def _clear_multi_selection(self):
+        """Deselect all shapes and clear multi-select state."""
+        for shape in self.selected_shapes:
+            shape.selected = False
+        self.selected_shapes = []
+        self.selected_shape = None
+
+    def _get_group_bounding_box(self):
+        """Return (wx1,wy1,wx2,wy2) group bbox in widget coords, or None."""
+        if not self.selected_shapes:
+            return None
+        all_x1, all_y1, all_x2, all_y2 = [], [], [], []
+        for shape in self.selected_shapes:
+            bbox = self._get_shape_bbox_image(shape)
+            if bbox:
+                all_x1.append(bbox[0]); all_y1.append(bbox[1])
+                all_x2.append(bbox[2]); all_y2.append(bbox[3])
+        if not all_x1:
+            return None
+        ix1, iy1 = min(all_x1), min(all_y1)
+        ix2, iy2 = max(all_x2), max(all_y2)
+        wx1 = int(ix1 * self.scale + self.offset_x)
+        wy1 = int(iy1 * self.scale + self.offset_y)
+        wx2 = int(ix2 * self.scale + self.offset_x)
+        wy2 = int(iy2 * self.scale + self.offset_y)
+        return (wx1, wy1, wx2, wy2)
+
+    def _finish_rubber_band_selection(self):
+        """Finalize rubber band: select all shapes intersecting the drag rect."""
+        if not self.rubber_band_start or not self.rubber_band_end:
+            self.rubber_band_active = False
+            return
+        w = abs(self.rubber_band_end.x() - self.rubber_band_start.x())
+        h = abs(self.rubber_band_end.y() - self.rubber_band_start.y())
+        if w < 5 and h < 5:
+            # Too small — treat as a deselect click
+            self._clear_multi_selection()
+            self.rubber_band_active = False
+            self.rubber_band_start = None
+            self.rubber_band_end = None
+            self.update()
+            return
+        # Build image-coord rect
+        sx = min(self.rubber_band_start.x(), self.rubber_band_end.x())
+        sy = min(self.rubber_band_start.y(), self.rubber_band_end.y())
+        ex = max(self.rubber_band_start.x(), self.rubber_band_end.x())
+        ey = max(self.rubber_band_start.y(), self.rubber_band_end.y())
+        x1, y1 = self.widget_to_image(QPoint(sx, sy))
+        x2, y2 = self.widget_to_image(QPoint(ex, ey))
+        band_rect = (x1, y1, x2, y2)
+        # Find intersecting shapes
+        newly_selected = []
+        for shape in self.shapes:
+            if getattr(shape, 'hollow_role', None) == 'inner':
+                continue
+            bbox = self._get_shape_bbox_image(shape)
+            if bbox and self._rects_intersect(band_rect, bbox):
+                newly_selected.append(shape)
+        # Apply selection
+        for shape in self.shapes:
+            shape.selected = False
+        self.selected_shape = None
+        self.selected_shapes = newly_selected
+        for shape in newly_selected:
+            shape.selected = True
+        if len(newly_selected) == 1:
+            self.selected_shape = newly_selected[0]
+        self.rubber_band_active = False
+        self.rubber_band_start = None
+        self.rubber_band_end = None
+        print(f"🔲 Rubber band selected {len(newly_selected)} shapes")
+        self.update()
+
+    def select_all(self):
+        """Select all non-inner shapes on the canvas."""
+        for shape in self.shapes:
+            shape.selected = False
+        self.selected_shapes = []
+        self.selected_shape = None
+        for shape in self.shapes:
+            if getattr(shape, 'hollow_role', None) == 'inner':
+                continue
+            shape.selected = True
+            self.selected_shapes.append(shape)
+        if len(self.selected_shapes) == 1:
+            self.selected_shape = self.selected_shapes[0]
+        self.update()
+        print(f"✅ Selected all: {len(self.selected_shapes)} shapes")
+
+    def delete_selected_group(self):
+        """Delete all shapes in selected_shapes."""
+        if not self.selected_shapes:
+            return
+        self.save_state()
+        ids_to_remove = set(id(s) for s in self.selected_shapes)
+        # Also remove any inner_shapes attached to selected outer shapes
+        extras = []
+        for shape in self.selected_shapes:
+            inner = getattr(shape, 'inner_shape', None)
+            if inner and id(inner) not in ids_to_remove:
+                extras.append(inner)
+        self.shapes = [s for s in self.shapes if id(s) not in ids_to_remove and s not in extras]
+        n = len(self.selected_shapes)
+        self._clear_multi_selection()
+        self.shape_selected.emit("none")
+        self.annotation_changed.emit()
+        self.update()
+        print(f"🗑️ Deleted group of {n} shapes")
+
+    def copy_selected_group(self):
+        """Copy all selected shapes into clipboard_shapes."""
+        if not self.selected_shapes:
+            return
+        self.clipboard_shapes = [s.copy() for s in self.selected_shapes]
+        print(f"📋 Copied {len(self.clipboard_shapes)} shapes to clipboard")
+
+    def paste_group(self):
+        """Paste clipboard_shapes with a small offset."""
+        if not getattr(self, 'clipboard_shapes', None):
+            if self.clipboard_shape and self.pixmap and not self.pixmap.isNull():
+                cursor_pos = self.mapFromGlobal(self.cursor().pos())
+                self.start_paste(cursor_pos)
+            return
+        self.save_state()
+        offset_x = 20 / max(self.image_width, 1)
+        offset_y = 20 / max(self.image_height, 1)
+        new_shapes = []
+        for s in self.clipboard_shapes:
+            c = s.copy()
+            new_shapes.append(c)
+        # Skip inner shapes whose outer is also being pasted (move() recurses)
+        new_ids = set(id(c) for c in new_shapes)
+        inner_ids_to_skip = set()
+        for c in new_shapes:
+            inner = getattr(c, 'inner_shape', None)
+            if inner and id(inner) in new_ids:
+                inner_ids_to_skip.add(id(inner))
+        for c in new_shapes:
+            if id(c) not in inner_ids_to_skip and getattr(c, 'hollow_role', None) != 'inner':
+                if hasattr(c, 'move'):
+                    c.move(offset_x, offset_y)
+        self._clear_multi_selection()
+        for s in new_shapes:
+            s.selected = True
+            self.shapes.append(s)
+        self.selected_shapes = new_shapes
+        if len(new_shapes) == 1:
+            self.selected_shape = new_shapes[0]
+        self.annotation_changed.emit()
+        self.update()
+        print(f"📋 Pasted {len(new_shapes)} shapes")
+
+    def start_multi_move(self, pos):
+        """Start moving all selected shapes as a group."""
+        self.multi_moving = True
+        self.multi_move_start = self.widget_to_image(pos)
+        self.setCursor(Qt.ClosedHandCursor)
+
+    def update_multi_move(self, pos):
+        """Update position of all selected shapes during group move."""
+        if not self.multi_moving or not self.multi_move_start:
+            return
+        current_pos = self.widget_to_image(pos)
+        dx = (current_pos[0] - self.multi_move_start[0]) / self.image_width
+        dy = (current_pos[1] - self.multi_move_start[1]) / self.image_height
+        # Build set of ids of all inner_shapes owned by selected outers.
+        # shape.move() already recurses into inner_shape, so skip inner shapes
+        # that are inner children of another selected shape to prevent double-move.
+        selected_ids = set(id(s) for s in self.selected_shapes)
+        inner_ids_to_skip = set()
+        for shape in self.selected_shapes:
+            inner = getattr(shape, 'inner_shape', None)
+            if inner and id(inner) in selected_ids:
+                inner_ids_to_skip.add(id(inner))
+        for shape in self.selected_shapes:
+            if id(shape) in inner_ids_to_skip:
+                continue
+            # Also skip bare 'inner' hollow-role shapes (inner of a non-selected outer)
+            if getattr(shape, 'hollow_role', None) == 'inner':
+                continue
+            if hasattr(shape, 'move'):
+                shape.move(dx, dy)
+        self.multi_move_start = current_pos
+        self.update()
+
+    def finish_multi_move(self):
+        """Finish group move and save state."""
+        if self.multi_moving:
+            self.save_state()
+            self.annotation_changed.emit()
+        self.multi_moving = False
+        self.multi_move_start = None
+        self.setCursor(Qt.ArrowCursor)
+        self.update()
+
+    def start_multi_drag_copy(self, pos):
+        """Start Ctrl+drag copy of all selected shapes."""
+        self.multi_drag_originals = list(self.selected_shapes)
+        self.multi_drag_copies = [s.copy() for s in self.selected_shapes]
+        self.multi_drag_copy = True
+        self.multi_move_start = self.widget_to_image(pos)
+        for s in self.multi_drag_originals:
+            s.selected = False
+        # Apply the same inner-skip logic as update_multi_move so copies
+        # don't double-move on first drag tick
+        selected_ids = set(id(s) for s in self.multi_drag_originals)
+        inner_ids_to_skip = set()
+        for shape in self.multi_drag_originals:
+            inner = getattr(shape, 'inner_shape', None)
+            if inner and id(inner) in selected_ids:
+                inner_ids_to_skip.add(id(inner))
+        # Give copies a small initial offset (10px) so they're visually
+        # distinct from originals immediately on Ctrl+click
+        init_dx = 10 / max(self.image_width, 1)
+        init_dy = 10 / max(self.image_height, 1)
+        for i, c in enumerate(self.multi_drag_copies):
+            orig = self.multi_drag_originals[i]
+            if id(orig) not in inner_ids_to_skip and getattr(orig, 'hollow_role', None) != 'inner':
+                if hasattr(c, 'move'):
+                    c.move(init_dx, init_dy)
+            c.selected = True
+            self.shapes.append(c)
+        self.selected_shapes = list(self.multi_drag_copies)
+        self.setCursor(Qt.ClosedHandCursor)
+        print(f"📋 Multi drag-copy started ({len(self.multi_drag_copies)} shapes)")
+
+    def finish_multi_drag_copy(self):
+        """Finish group drag-copy and save state."""
+        self.save_state()
+        self.multi_drag_copy = False
+        self.multi_drag_copies = []
+        self.multi_drag_originals = []
+        self.multi_moving = False
+        self.multi_move_start = None
+        self.annotation_changed.emit()
+        self.setCursor(Qt.ArrowCursor)
+        print("✅ Multi drag-copy completed")
+        self.update()
+
+    def cancel_multi_drag_copy(self):
+        """Cancel group drag-copy and restore originals."""
+        for c in self.multi_drag_copies:
+            if c in self.shapes:
+                self.shapes.remove(c)
+        for s in self.multi_drag_originals:
+            s.selected = True
+        self.selected_shapes = list(self.multi_drag_originals)
+        self.multi_drag_copy = False
+        self.multi_drag_copies = []
+        self.multi_drag_originals = []
+        self.multi_moving = False
+        self.multi_move_start = None
+        self.setCursor(Qt.ArrowCursor)
+        self.update()
+
+    def nudge_selected(self, dx_px, dy_px):
+        """Move selected shapes by pixel amount. Works for single or group selection."""
+        targets = self.selected_shapes if self.selected_shapes else (
+            [self.selected_shape] if self.selected_shape else []
+        )
+        if not targets:
+            return
+        self.save_state()
+        dx = dx_px / max(self.image_width, 1)
+        dy = dy_px / max(self.image_height, 1)
+        # Skip inner shapes owned by a selected outer (move() recurses into them)
+        target_ids = set(id(s) for s in targets)
+        inner_ids_to_skip = set()
+        for shape in targets:
+            inner = getattr(shape, 'inner_shape', None)
+            if inner and id(inner) in target_ids:
+                inner_ids_to_skip.add(id(inner))
+        for shape in targets:
+            if id(shape) in inner_ids_to_skip:
+                continue
+            if getattr(shape, 'hollow_role', None) == 'inner':
+                continue
+            if hasattr(shape, 'move'):
+                shape.move(dx, dy)
+        self.annotation_changed.emit()
+        self.update()
+
+    def _show_multi_select_context_menu(self, global_pos):
+        """Show right-click context menu when 2+ shapes are selected."""
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            "QMenu { background-color: #1e1e2e; color: #d8e0f8; border: 1px solid #2e3a58; }"
+            "QMenu::item { padding: 6px 20px; }"
+            "QMenu::item:selected { background-color: #2e3a58; }"
+            "QMenu::separator { height: 1px; background: #2e3a58; margin: 4px 0; }"
+        )
+        n = len(self.selected_shapes)
+        title_act = menu.addAction(f"  {n} shapes selected")
+        title_act.setEnabled(False)
+        menu.addSeparator()
+        act_copy     = menu.addAction("📋  Copy Group        Ctrl+C")
+        act_paste    = menu.addAction("📌  Paste Group       Ctrl+V")
+        act_delete   = menu.addAction("🗑️   Delete Group      Del")
+        menu.addSeparator()
+        act_desel    = menu.addAction("✖   Deselect All      Esc")
+        act_sel_all  = menu.addAction("☑   Select All        Ctrl+A")
+        chosen = menu.exec_(global_pos)
+        if chosen == act_copy:
+            self.copy_selected_group()
+        elif chosen == act_paste:
+            self.paste_group()
+        elif chosen == act_delete:
+            self.delete_selected_group()
+        elif chosen == act_desel:
+            self._clear_multi_selection()
+            self.update()
+        elif chosen == act_sel_all:
+            self.select_all()
 
     def show_thickness_dialog(self, mode, shape):
         if not hasattr(self, 'thickness_dialog'):
@@ -561,12 +928,14 @@ class AnnotationCanvas(QWidget):
         """Select a shape at the given position - only one shape at a time"""
         if not self.shapes:
             self.selected_shape = None
+            self.selected_shapes = []
             self.shape_selected.emit("none")
             return
             
-        # First, deselect ALL shapes
+        # First, deselect ALL shapes and clear multi-select
         for shape in self.shapes:
             shape.selected = False
+        self.selected_shapes = []
             
         # Check each shape (from top to bottom)
         image_x, image_y = self.widget_to_image(pos)
@@ -575,6 +944,7 @@ class AnnotationCanvas(QWidget):
             if hasattr(shape, 'contains_point') and shape.contains_point(image_x, image_y):
                 shape.selected = True
                 self.selected_shape = shape
+                self.selected_shapes = [shape]
                 selected = True
                 # Print selected shape info
                 if self.class_manager and shape.class_id:
@@ -587,6 +957,7 @@ class AnnotationCanvas(QWidget):
         
         if not selected:
             self.selected_shape = None
+            self.selected_shapes = []
             self.shape_selected.emit("none")
             print("👆 Clicked on empty area")
                     
@@ -682,6 +1053,35 @@ class AnnotationCanvas(QWidget):
             # Draw stamp preview if stamping
             if hasattr(self, 'stamping') and self.stamping and self.stamp_center and self.stamp_current_pos:
                 self.draw_stamp_preview(painter)
+            
+            # Draw group bounding box when 2+ shapes are selected
+            if len(self.selected_shapes) > 1:
+                bbox = self._get_group_bounding_box()
+                if bbox:
+                    x1, y1, x2, y2 = bbox
+                    painter.setPen(QPen(QColor(100, 180, 255), 1, Qt.DashLine))
+                    painter.setBrush(Qt.NoBrush)
+                    painter.drawRect(x1, y1, x2 - x1, y2 - y1)
+                    h = 6
+                    painter.setBrush(QBrush(QColor(100, 180, 255)))
+                    painter.setPen(Qt.NoPen)
+                    for hx, hy in [(x1, y1), (x2, y1), (x1, y2), (x2, y2)]:
+                        painter.drawRect(hx - h//2, hy - h//2, h, h)
+                    painter.setPen(QPen(QColor(100, 180, 255)))
+                    f = QFont()
+                    f.setPointSize(9)
+                    painter.setFont(f)
+                    painter.drawText(x1 + 4, y1 - 6, f"{len(self.selected_shapes)} selected")
+
+            # Draw rubber band selection rectangle
+            if self.rubber_band_active and self.rubber_band_start and self.rubber_band_end:
+                rx = min(self.rubber_band_start.x(), self.rubber_band_end.x())
+                ry = min(self.rubber_band_start.y(), self.rubber_band_end.y())
+                rw = abs(self.rubber_band_end.x() - self.rubber_band_start.x())
+                rh = abs(self.rubber_band_end.y() - self.rubber_band_start.y())
+                painter.setPen(QPen(QColor(100, 180, 255), 1, Qt.DashLine))
+                painter.setBrush(QBrush(QColor(100, 180, 255, 30)))
+                painter.drawRect(rx, ry, rw, rh)
                 
         # Draw mode indicator
         painter.setPen(QPen(QColor(200, 200, 200), 1))
@@ -1717,12 +2117,34 @@ class AnnotationCanvas(QWidget):
                 # Check if we have a selected class
                 current_class = self.class_manager.get_current_class() if self.class_manager else None
                 
-                # Check if Ctrl is pressed for drag-copy
+                # Check modifier keys
                 modifiers = QApplication.keyboardModifiers()
-                ctrl_pressed = modifiers == Qt.ControlModifier
+                ctrl_pressed = bool(modifiers & Qt.ControlModifier)
+                shift_pressed = bool(modifiers & Qt.ShiftModifier)
                 
-                # FIRST: Check if we're over a resize handle of selected shape
-                if self.selected_shape:
+                # ── MULTI-SELECT: Shift+click toggles a single shape ──
+                if shift_pressed and (not self.current_shape_type or self.current_shape_type == 'none'):
+                    image_x, image_y = self.widget_to_image(event.pos())
+                    clicked = None
+                    for shape in reversed(self.shapes):
+                        if getattr(shape, 'hollow_role', None) == 'inner':
+                            continue
+                        if hasattr(shape, 'contains_point') and shape.contains_point(image_x, image_y):
+                            clicked = shape
+                            break
+                    if clicked:
+                        if clicked in self.selected_shapes:
+                            self.selected_shapes.remove(clicked)
+                            clicked.selected = False
+                        else:
+                            self.selected_shapes.append(clicked)
+                            clicked.selected = True
+                        self.selected_shape = self.selected_shapes[-1] if self.selected_shapes else None
+                        self.update()
+                    return
+                
+                # FIRST: Check if we're over a resize handle of selected shape (only single-select)
+                if self.selected_shape and len(self.selected_shapes) <= 1:
                     handle = self.get_resize_handle_at_pos(event.pos(), self.selected_shape)
                     if handle:
                         # Start resizing
@@ -1752,17 +2174,23 @@ class AnnotationCanvas(QWidget):
                         break
                 
                 if clicked_shape:
-                    # If Ctrl is pressed, start drag-copy
+                    # If Ctrl is pressed, start drag-copy (single or group)
                     if ctrl_pressed:
-                        self.start_drag_copy(clicked_shape, event.pos())
+                        if len(self.selected_shapes) > 1 and clicked_shape in self.selected_shapes:
+                            self.start_multi_drag_copy(event.pos())
+                        else:
+                            self.start_drag_copy(clicked_shape, event.pos())
                         return
                     
-                    # If the clicked shape is already selected, start moving it
+                    # If the clicked shape is already selected, start moving it (single or group)
                     if clicked_shape.selected:
-                        self.start_move(clicked_shape, event.pos())
+                        if len(self.selected_shapes) > 1 and clicked_shape in self.selected_shapes:
+                            self.start_multi_move(event.pos())
+                        else:
+                            self.start_move(clicked_shape, event.pos())
                         return
                     else:
-                        # Just select the shape
+                        # Just select the shape (clears multi-select)
                         self.select_shape(event.pos())
                         return
                 
@@ -1794,8 +2222,12 @@ class AnnotationCanvas(QWidget):
                     elif self.current_shape_type == 'stamp':
                         self.start_stamp(event.pos())
                 else:
-                    # No tool selected, just click on empty area (deselect)
-                    self.select_shape(event.pos())
+                    # No tool selected — click on empty area starts rubber band
+                    self._clear_multi_selection()
+                    self.rubber_band_active = True
+                    self.rubber_band_start = event.pos()
+                    self.rubber_band_end = event.pos()
+                    self.update()
 
     def mouseMoveEvent(self, event):
         """Handle mouse move events"""
@@ -1805,6 +2237,22 @@ class AnnotationCanvas(QWidget):
         
         # Emit position signal
         self.position_changed.emit(image_x, image_y)
+        
+        # Rubber band update
+        if self.rubber_band_active and self.rubber_band_start:
+            self.rubber_band_end = event.pos()
+            self.update()
+            return
+        
+        # Multi-group move
+        if self.multi_moving:
+            self.update_multi_move(event.pos())
+            return
+        
+        # Multi drag-copy move
+        if self.multi_drag_copy:
+            self.update_multi_move(event.pos())  # selected_shapes already points to copies
+            return
         
         # Handle dragging for panning
         if self.dragging and self.last_mouse_pos:
@@ -1868,6 +2316,17 @@ class AnnotationCanvas(QWidget):
             self.setCursor(Qt.OpenHandCursor if self.pan_mode else Qt.ArrowCursor)
             
         elif event.button() == Qt.LeftButton:
+            # Multi-select release handlers
+            if self.rubber_band_active:
+                self._finish_rubber_band_selection()
+                return
+            if self.multi_moving:
+                self.finish_multi_move()
+                return
+            if self.multi_drag_copy:
+                self.finish_multi_drag_copy()
+                return
+            
             was_moving_or_resizing = self.moving or self.resizing  # AUTOSAVE INTEGRATION
             if self.moving:
                 self.finish_move()
@@ -2059,8 +2518,13 @@ class AnnotationCanvas(QWidget):
         key = event.key()
         key_text = event.text().upper()
         
+        # ===== CTRL+A SELECT ALL (must come before bare 'A' handler) =====
+        if key == Qt.Key_A and event.modifiers() == Qt.ControlModifier:
+            self.select_all()
+            return
+        
         # ===== SHAPE TOOL SHORTCUTS =====
-        if key_text == 'B':
+        elif key_text == 'B':
             if hasattr(self, 'parent_window') and self.parent_window:
                 self.parent_window.set_shape_type('box')
             print("🔷 Box tool selected")
@@ -2148,6 +2612,15 @@ class AnnotationCanvas(QWidget):
             if self.pan_mode:
                 self.pan_mode = False
                 self.setCursor(self.original_cursor or Qt.ArrowCursor)
+            elif self.multi_drag_copy:
+                self.cancel_multi_drag_copy()
+            elif self.multi_moving:
+                self.finish_multi_move()
+            elif self.rubber_band_active:
+                self.rubber_band_active = False
+                self.rubber_band_start = None
+                self.rubber_band_end = None
+                self.update()
             elif self.moving:
                 self.cancel_move()
             elif self.drag_copy:
@@ -2168,6 +2641,9 @@ class AnnotationCanvas(QWidget):
                 self.cancel_hollow_ellipse()
             elif self.bezier_points:
                 self.cancel_bezier()
+            elif self.selected_shapes:
+                self._clear_multi_selection()
+                self.update()
             print("❌ Operation cancelled")
             return
         
@@ -2181,11 +2657,12 @@ class AnnotationCanvas(QWidget):
         
         # ===== DELETE =====
         elif key == Qt.Key_Delete or key == Qt.Key_Backspace:
-            if event.modifiers() == Qt.ControlModifier and key == Qt.Key_Delete:
-                if not self.drag_copy and not self.pan_mode and not self.moving:
+            if not self.drag_copy and not self.pan_mode and not self.moving:
+                if len(self.selected_shapes) > 1:
+                    self.delete_selected_group()
+                elif event.modifiers() == Qt.ControlModifier and key == Qt.Key_Delete:
                     self.delete_all()
-            else:
-                if not self.drag_copy and not self.pan_mode and not self.moving:
+                else:
                     self.delete_selected()
             return
         
@@ -2200,14 +2677,31 @@ class AnnotationCanvas(QWidget):
         
         # ===== COPY/PASTE =====
         elif key == Qt.Key_C and event.modifiers() == Qt.ControlModifier:
-            self.copy_selected()
+            if len(self.selected_shapes) > 1:
+                self.copy_selected_group()
+            else:
+                self.copy_selected()
             return
         
         elif key == Qt.Key_V and event.modifiers() == Qt.ControlModifier:
-            if self.clipboard_shape and self.pixmap and not self.pixmap.isNull():
+            if getattr(self, 'clipboard_shapes', None):
+                self.paste_group()
+            elif self.clipboard_shape and self.pixmap and not self.pixmap.isNull():
                 cursor_pos = self.mapFromGlobal(self.cursor().pos())
                 self.start_paste(cursor_pos)
             return
+        
+        # ===== ARROW KEY NUDGE =====
+        elif key in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down):
+            if self.selected_shape or self.selected_shapes:
+                step = self.nudge_step * 10 if event.modifiers() == Qt.ShiftModifier else self.nudge_step
+                dx = dy = 0
+                if key == Qt.Key_Left:  dx = -step
+                if key == Qt.Key_Right: dx =  step
+                if key == Qt.Key_Up:    dy = -step
+                if key == Qt.Key_Down:  dy =  step
+                self.nudge_selected(dx, dy)
+                return
         
         super().keyPressEvent(event)
 
@@ -2244,6 +2738,16 @@ class AnnotationCanvas(QWidget):
         self.ring_inner_points = []
         self.ring_outer_center = None
         self.ring_outer_radius = 0
+        
+        # Multi-select interaction states (do NOT clear selected_shapes — tool switch should not deselect)
+        self.rubber_band_active = False
+        self.rubber_band_start = None
+        self.rubber_band_end = None
+        self.multi_moving = False
+        self.multi_move_start = None
+        self.multi_drag_copy = False
+        self.multi_drag_copies = []
+        self.multi_drag_originals = []
         
         print("🔄 All states reset")       
         
@@ -3289,6 +3793,10 @@ class AnnotationCanvas(QWidget):
         
         # Deselect any selected shape to prevent issues
         self.selected_shape = None
+        self.selected_shapes = []
+        
+        # Notify UI and trigger autosave
+        self.annotation_changed.emit()
         
         self.update()
         print(f"↩ Undo completed (undo: {len(self.undo_stack)}, redo: {len(self.redo_stack)})")
@@ -3308,6 +3816,10 @@ class AnnotationCanvas(QWidget):
         
         # Deselect any selected shape to prevent issues
         self.selected_shape = None
+        self.selected_shapes = []
+        
+        # Notify UI and trigger autosave
+        self.annotation_changed.emit()
         
         self.update()
         print(f"↪ Redo completed (undo: {len(self.undo_stack)}, redo: {len(self.redo_stack)})")
@@ -3379,6 +3891,11 @@ class AnnotationCanvas(QWidget):
         self._invoke_context_menu(event.globalPos(), event.pos())
         
     def _invoke_context_menu(self, global_pos, local_pos):
+        # Group context menu when 2+ shapes selected
+        if len(self.selected_shapes) > 1:
+            self._show_multi_select_context_menu(global_pos)
+            return
+        
         if not hasattr(self, 'canvas_context_menu'):
             from gui.context_menu import ShapeContextMenu
             self.canvas_context_menu = ShapeContextMenu(self)

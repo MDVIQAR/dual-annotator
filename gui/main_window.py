@@ -243,6 +243,7 @@ class ShortcutBar(QFrame):
             ("O", "Donut"),
             ("H", "Hollow Ellipse"),
             ("T", "Stamp"),
+            ("Tab", "Next Unannotated"),
             ("Ctrl+E", "Export")
         ]
         
@@ -329,6 +330,9 @@ class MainWindow(QMainWindow):
         self.project_manager = ProjectManager()
         self.canvas.annotation_changed.connect(self._on_annotation_changed)
 
+        # Keyboard shortcuts
+        QShortcut(QKeySequence('Tab'), self, self.next_unannotated)
+
     def _on_annotation_changed(self):
         """Called every time a shape is added, moved, deleted, or modified."""
         if not self.image_folder or self.current_image_index < 0:
@@ -385,9 +389,15 @@ class MainWindow(QMainWindow):
         self.stats_label.setText(text)
 
     def closeEvent(self, event):
-        """Handle application close"""
+        """Handle application close and save templates"""
         if hasattr(self, "project_manager"):
             self.project_manager.flush_autosave()
+            
+            # Persist templates to the project folder
+            if self.project_manager.project_dir:
+                tmpl_path = os.path.join(self.project_manager.project_dir, 'templates.json')
+                self.canvas.template_manager.save_to_file(tmpl_path)
+                
         super().closeEvent(event)
         
     # EXPORT INTEGRATION
@@ -539,6 +549,13 @@ class MainWindow(QMainWindow):
         self.delete_action.setShortcut(QKeySequence.Delete)
         self.delete_action.triggered.connect(self.delete_selected)
         edit_menu.addAction(self.delete_action)
+
+        edit_menu.addSeparator()
+
+        nudge_step_action = QAction('Nudge Step...', self)
+        nudge_step_action.setToolTip("Set arrow key nudge distance in pixels")
+        nudge_step_action.triggered.connect(self._show_nudge_step_dialog)
+        edit_menu.addAction(nudge_step_action)
         
         # ===== VIEW MENU =====
         view_menu = menubar.addMenu('&View')
@@ -589,6 +606,11 @@ class MainWindow(QMainWindow):
         next_action.setShortcut('D')
         next_action.triggered.connect(self.next_image)
         shortcuts_menu.addAction(next_action)
+        
+        next_un_action = QAction('Next Unannotated', self)
+        next_un_action.setShortcut('Tab')
+        next_un_action.triggered.connect(self.next_unannotated)
+        shortcuts_menu.addAction(next_un_action)
         
         pan_action = QAction('Toggle Pan Mode', self)
         pan_action.setShortcut('Space')
@@ -767,7 +789,40 @@ class MainWindow(QMainWindow):
         self.counter_label = QLabel("0/0")
         self.counter_label.setStyleSheet("color: #ffffff;")
         self.status_bar.addPermanentWidget(self.counter_label)
-        
+
+        # Nudge step control
+        from PyQt5.QtWidgets import QSpinBox
+        nudge_container = QWidget()
+        nudge_layout = QHBoxLayout(nudge_container)
+        nudge_layout.setContentsMargins(6, 0, 6, 0)
+        nudge_layout.setSpacing(4)
+        nudge_lbl = QLabel("Nudge:")
+        nudge_lbl.setStyleSheet("color: #aaaaaa; font-size: 11px;")
+        self.nudge_step_spin = QSpinBox()
+        self.nudge_step_spin.setRange(1, 100)
+        self.nudge_step_spin.setValue(1)
+        self.nudge_step_spin.setSuffix(" px")
+        self.nudge_step_spin.setFixedWidth(72)
+        self.nudge_step_spin.setToolTip(
+            "Arrow key nudge step (px).\nShift+Arrow = 10x this value."
+        )
+        self.nudge_step_spin.setStyleSheet("""
+            QSpinBox {
+                background-color: #2b2b2b;
+                color: #ffffff;
+                border: 1px solid #444;
+                border-radius: 3px;
+                padding: 1px 4px;
+                font-size: 11px;
+            }
+            QSpinBox:hover { border: 1px solid #4a7ab5; }
+            QSpinBox::up-button, QSpinBox::down-button { width: 14px; }
+        """)
+        self.nudge_step_spin.valueChanged.connect(self._on_nudge_step_changed)
+        nudge_layout.addWidget(nudge_lbl)
+        nudge_layout.addWidget(self.nudge_step_spin)
+        self.status_bar.addPermanentWidget(nudge_container)
+
         self.status_bar.showMessage("Ready")
         
     def setup_central_widget(self):
@@ -1383,6 +1438,12 @@ class MainWindow(QMainWindow):
         saved_mode = project_data.get("active_mode", "yolo")
         self.switch_mode(saved_mode)
         
+        # Load persisted templates
+        if self.project_manager.project_dir:
+            tmpl_path = os.path.join(self.project_manager.project_dir, 'templates.json')
+            self.canvas.template_manager.load_from_file(tmpl_path)
+            self.update_template_dropdown()
+        
         self.status_bar.showMessage(f"Loaded: {folder_path}")
         
     def _restore_classes(self, classes_data):
@@ -1562,6 +1623,38 @@ class MainWindow(QMainWindow):
             self.load_image(self.current_image_index + 1)
         else:
             self.status_bar.showMessage("Already at last image", 1000)
+            
+    def next_unannotated(self):
+        """Jump forward to the next image with no annotations."""
+        if not self.image_files or not hasattr(self, 'project_manager') or self.current_image_index < 0:
+            return
+        import os, json as _json
+        start = self.current_image_index + 1
+        # Loop through all images starting from the next one
+        order = list(range(start, len(self.image_files))) + list(range(0, start))
+        for i in order:
+            filename = self.image_files[i]
+            json_path = os.path.join(
+                self.project_manager.annotations_dir, f"{filename}.json")
+            
+            # If JSON doesn't exist, it's definitely unannotated
+            if not os.path.exists(json_path):
+                self.load_image(i)
+                self.status_bar.showMessage(f"→ Next unannotated: {filename}", 2000)
+                return
+                
+            try:
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    data = _json.load(f)
+                # Check status field in the JSON
+                if data.get('status', 'unannotated') == 'unannotated':
+                    self.load_image(i)
+                    self.status_bar.showMessage(f"→ Next unannotated: {filename}", 2000)
+                    return
+            except Exception:
+                continue
+        
+        self.status_bar.showMessage("✓ All images annotated!", 3000)
     
     def prev_image(self):
         """Load previous image"""
@@ -1591,6 +1684,55 @@ class MainWindow(QMainWindow):
     def zoom_out(self):
         if hasattr(self, 'canvas'):
             self.canvas.zoom_out()
+
+    def _on_nudge_step_changed(self, value):
+        """Sync nudge step spinbox value into the canvas."""
+        if hasattr(self, 'canvas'):
+            self.canvas.nudge_step = value
+
+    def _show_nudge_step_dialog(self):
+        """Open a small dialog to set the nudge step value."""
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QSpinBox, QPushButton
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Nudge Step")
+        dlg.setFixedWidth(260)
+        dlg.setStyleSheet("""
+            QDialog { background-color: #1e1e2e; color: #d8e0f8; }
+            QLabel  { color: #d8e0f8; }
+            QSpinBox {
+                background-color: #161c2e; color: #ffffff;
+                border: 1px solid #2e3a58; border-radius: 4px; padding: 4px;
+            }
+            QPushButton {
+                background-color: #1e2640; border: 1px solid #2e3a58;
+                border-radius: 4px; padding: 6px 12px; color: #ffffff;
+            }
+            QPushButton:hover { background-color: #2e3a58; }
+        """)
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(QLabel("Arrow key nudge distance (px):"))
+        layout.addWidget(QLabel("Shift+Arrow moves 10× this value."))
+        spin = QSpinBox()
+        spin.setRange(1, 100)
+        current = getattr(self.canvas, 'nudge_step', 1) if hasattr(self, 'canvas') else 1
+        spin.setValue(current)
+        spin.setSuffix(" px")
+        layout.addWidget(spin)
+        btns = QHBoxLayout()
+        ok_btn = QPushButton("OK")
+        ok_btn.setStyleSheet("background-color: #4a6bff; border: none; font-weight: bold;")
+        cancel_btn = QPushButton("Cancel")
+        ok_btn.clicked.connect(dlg.accept)
+        cancel_btn.clicked.connect(dlg.reject)
+        btns.addWidget(cancel_btn)
+        btns.addWidget(ok_btn)
+        layout.addLayout(btns)
+        if dlg.exec_() == QDialog.Accepted:
+            new_val = spin.value()
+            if hasattr(self, 'canvas'):
+                self.canvas.nudge_step = new_val
+            if hasattr(self, 'nudge_step_spin'):
+                self.nudge_step_spin.setValue(new_val)
     
     def fit_to_window(self):
         if hasattr(self, 'canvas'):
@@ -1615,8 +1757,24 @@ class MainWindow(QMainWindow):
             self.canvas.delete_selected()
             
     def delete_all_annotations(self):
-        if hasattr(self, 'canvas'):
+        """Delete all annotations on the current image with confirmation."""
+        if not hasattr(self, 'canvas') or not self.canvas.shapes:
+            return
+            
+        # Count non-inner shapes for a more accurate user count
+        count = len([s for s in self.canvas.shapes 
+                     if getattr(s, 'hollow_role', None) != 'inner'])
+                     
+        reply = QMessageBox.question(
+            self, "Delete All Annotations",
+            f"Are you sure you want to delete all {count} annotation(s) on this image?\n"
+            "Autosave will immediately save the empty state.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
             self.canvas.delete_all()
+            self.status_bar.showMessage(f"Deleted all {count} annotations", 3000)
     
     def undo(self):
         if hasattr(self, 'canvas'):
@@ -1649,29 +1807,6 @@ class MainWindow(QMainWindow):
             self.canvas.keyPressEvent(event)
     
     # ===== PROJECT METHODS =====
-    def new_project(self):
-        self.status_bar.showMessage("Creating new project...")
-    
-    def open_project(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Open Project", "", "Project Files (*.json)"
-        )
-        if file_path:
-            self.status_bar.showMessage(f"Opened: {file_path}")
-    
-    def save_project(self):
-        if self.current_file:
-            self.status_bar.showMessage(f"Saving to: {self.current_file}")
-        else:
-            self.save_project_as()
-    
-    def save_project_as(self):
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Project As", "", "Project Files (*.json)"
-        )
-        if file_path:
-            self.current_file = file_path
-            self.status_bar.showMessage(f"Saved to: {file_path}")
     
     def _on_classes_changed(self):
         """Called when classes are added, removed, or edited to keep project.json in sync."""
@@ -1904,15 +2039,23 @@ export, which is essential for reproducible training results.</p>
   <tr><td><code>H</code></td><td>Hollow ellipse</td>
       <td><code>Ctrl+F</code></td><td>Fit to window</td></tr>
   <tr><td><code>N</code></td><td>Selection mode</td>
-      <td><code>+</code></td><td>Zoom in</td></tr>
+      <td><code>Ctrl+F</code></td><td>Fit to window</td></tr>
   <tr><td><code>T</code></td><td>Stamp tool</td>
-      <td><code>-</code></td><td>Zoom out</td></tr>
+      <td><code>+</code></td><td>Zoom in</td></tr>
   <tr><td><code>A</code></td><td>Previous image</td>
-      <td><code>Space</code></td><td>Toggle pan mode</td></tr>
+      <td><code>-</code></td><td>Zoom out</td></tr>
   <tr><td><code>D</code></td><td>Next image</td>
+      <td><code>Space</code></td><td>Toggle pan mode</td></tr>
+  <tr><td><code>Tab</code></td><td>Next unannotated</td>
       <td><code>Enter</code></td><td>Finish polygon / bezier</td></tr>
-  <tr><td><code>Ctrl+drag</code></td><td>Clone shape</td>
-      <td><code>Esc</code></td><td>Cancel operation</td></tr>
+  <tr><td><code>Del / Backspace</code></td><td>Delete selected</td>
+      <td><code>Esc</code></td><td>Cancel / Deselect all</td></tr>
+  <tr><td><code>Ctrl+Del</code></td><td>Delete all annotations</td>
+      <td><code>Ctrl+drag</code></td><td>Clone shape(s)</td></tr>
+  <tr><td><code>Ctrl+A</code></td><td>Select all shapes</td>
+      <td><code>Shift+Click</code></td><td>Toggle shape in selection</td></tr>
+  <tr><td><code>Arrow keys</code></td><td>Nudge shape (1px)</td>
+      <td><code>Shift+Arrow</code></td><td>Nudge shape (10px)</td></tr>
 </table>
 
 <p class="dim" style="margin-top: 12px;">
