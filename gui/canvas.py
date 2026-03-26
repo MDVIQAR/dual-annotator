@@ -2512,6 +2512,15 @@ class AnnotationCanvas(QWidget):
         do_scale(self.selected_shape, factor, group_cx, group_cy)
         self.update()
             
+    def event(self, event):
+        from PyQt5.QtCore import QEvent
+        if event.type() in (QEvent.KeyPress, QEvent.ShortcutOverride):
+            if hasattr(event, 'key') and event.key() == Qt.Key_Tab:
+                if hasattr(self, 'parent_window') and self.parent_window:
+                    self.parent_window.next_unannotated()
+                return True
+        return super().event(event)
+
     def keyPressEvent(self, event):
         """Handle keyboard events"""
         # Get the key and convert to uppercase for comparison
