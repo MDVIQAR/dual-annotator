@@ -330,8 +330,7 @@ class MainWindow(QMainWindow):
         self.project_manager = ProjectManager()
         self.canvas.annotation_changed.connect(self._on_annotation_changed)
 
-        # Keyboard shortcuts
-        QShortcut(QKeySequence('Tab'), self, self.next_unannotated)
+        # Keyboard shortcuts (Tab handled by menu action to avoid ambiguity)
 
     def _on_annotation_changed(self):
         """Called every time a shape is added, moved, deleted, or modified."""
@@ -609,6 +608,7 @@ class MainWindow(QMainWindow):
         
         next_un_action = QAction('Next Unannotated', self)
         next_un_action.setShortcut('Tab')
+        next_un_action.setShortcutContext(Qt.ApplicationShortcut)
         next_un_action.triggered.connect(self.next_unannotated)
         shortcuts_menu.addAction(next_un_action)
         
@@ -1646,12 +1646,24 @@ class MainWindow(QMainWindow):
             try:
                 with open(json_path, 'r', encoding='utf-8') as f:
                     data = _json.load(f)
-                # Check status field in the JSON
-                if data.get('status', 'unannotated') == 'unannotated':
+                    
+                status = data.get('status', 'unannotated')
+                
+                # Check if it has any actual shapes saved
+                is_empty = True
+                if 'layers' in data:
+                    total_shapes = 0
+                    for layer in data['layers'].values():
+                        total_shapes += len(layer.get('annotations', []))
+                    if total_shapes > 0:
+                        is_empty = False
+                        
+                if status == 'unannotated' or is_empty:
                     self.load_image(i)
                     self.status_bar.showMessage(f"→ Next unannotated: {filename}", 2000)
                     return
-            except Exception:
+            except Exception as e:
+                print(f"Error reading {json_path}: {e}")
                 continue
         
         self.status_bar.showMessage("✓ All images annotated!", 3000)
