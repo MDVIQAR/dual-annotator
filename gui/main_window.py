@@ -1125,8 +1125,9 @@ class MainWindow(QMainWindow):
         
         # ANNOTATION STATS
         self.stats_label = QLabel("📊 0/0 annotated")
-        self.stats_label.setStyleSheet("color: #8ab4f8; font-size: 10px; padding: 2px 4px; border: none;")
+        self.stats_label.setStyleSheet("color: #8ab4f8; font-size: 12px; font-weight: bold; padding: 8px 4px; border: none;")
         self.stats_label.setWordWrap(True)
+        self.stats_label.setMinimumHeight(50)
         upper_layout.addWidget(self.stats_label)
         
         # ===== LOWER SECTION (IMAGE FILES) =====
