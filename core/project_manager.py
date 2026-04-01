@@ -339,7 +339,7 @@ class ProjectManager(QObject):
         if not self.annotations_dir: return None
         json_path = os.path.join(self.annotations_dir, f"{image_filename}.json")
         if not os.path.exists(json_path):
-            return {"hash_mismatch": False, "layers": {"yolo": {"visible": False, "annotations": []}, "unet": {"visible": True, "annotations": []}}}
+            return {"hash_mismatch": False, "layers": {"yolo": {"visible": False, "annotations": []}, "unet": {"visible": True, "annotations": []}, "concentric": {"visible": False, "annotations": []}}}  # CONCENTRIC INTEGRATION
         
         try:
             with open(json_path, "r", encoding="utf-8") as f:
@@ -356,7 +356,7 @@ class ProjectManager(QObject):
             return data
         except Exception as e:
             print(f"Error loading {json_path}: {e}")
-            return {"hash_mismatch": False, "layers": {"yolo": {"visible": False, "annotations": []}, "unet": {"visible": True, "annotations": []}}}
+            return {"hash_mismatch": False, "layers": {"yolo": {"visible": False, "annotations": []}, "unet": {"visible": True, "annotations": []}, "concentric": {"visible": False, "annotations": []}}}  # CONCENTRIC INTEGRATION
 
     def save_image_annotations(self, image_filename, canvas_shapes, mode, width, height):
         if not self.annotations_dir: return
@@ -377,8 +377,9 @@ class ProjectManager(QObject):
                 "last_modified": datetime.now().isoformat(),
                 "last_exported_at": None,  # EXPORT INTEGRATION
                 "layers": {
-                    "yolo": {"visible": mode == "yolo", "annotations": []},
-                    "unet": {"visible": mode == "unet", "annotations": []}
+                    "yolo":        {"visible": mode == "yolo",        "annotations": []},
+                    "unet":        {"visible": mode == "unet",        "annotations": []},
+                    "concentric":  {"visible": mode == "concentric",  "annotations": []}  # CONCENTRIC INTEGRATION
                 }
             }
         
@@ -391,6 +392,13 @@ class ProjectManager(QObject):
                 continue # Handled by outer
             layer_data.append(self._serialize_shape(sh))
             
+        # CONCENTRIC INTEGRATION — backfill missing layer for older JSON files
+        if "concentric" not in data.get("layers", {}):
+            data.setdefault("layers", {})["concentric"] = {
+                "visible": False, "annotations": []}
+        if "unet" not in data.get("layers", {}):
+            data["layers"]["unet"] = {"visible": False, "annotations": []}
+
         data["layers"][mode]["annotations"] = layer_data
         
         prev_status = data.get("status", "unannotated")

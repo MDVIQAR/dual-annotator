@@ -529,6 +529,7 @@ class AnnotationCanvas(QWidget):
 
     def start_multi_move(self, pos):
         """Start moving all selected shapes as a group."""
+        self.save_state()  # Save BEFORE moving so undo restores original positions
         self.multi_moving = True
         self.multi_move_start = self.widget_to_image(pos)
         self.setCursor(Qt.ClosedHandCursor)
@@ -563,7 +564,6 @@ class AnnotationCanvas(QWidget):
     def finish_multi_move(self):
         """Finish group move and save state."""
         if self.multi_moving:
-            self.save_state()
             self.annotation_changed.emit()
         self.multi_moving = False
         self.multi_move_start = None
@@ -1012,8 +1012,16 @@ class AnnotationCanvas(QWidget):
                 self.scaled_pixmap
             )
             
-            # Draw all shapes
-            self.draw_shapes(painter)
+            # Draw all shapes  # CONCENTRIC INTEGRATION
+            if self.mode == 'concentric':
+                from gui.concentric_renderer import ConcentricRenderer
+                ConcentricRenderer.draw(
+                    painter, self.shapes, self.class_manager,
+                    self.scale, self.offset_x, self.offset_y,
+                    self.handle_size
+                )
+            else:
+                self.draw_shapes(painter)
             
             # Draw current shape if drawing
             if self.drawing and self.current_shape:
@@ -3696,6 +3704,7 @@ class AnnotationCanvas(QWidget):
         if not shape or not shape.selected:
             return False
         
+        self.save_state()  # Save BEFORE moving so undo restores original position
         print(f"↔️ Starting move operation")
         self.moving = True
         self.selected_shape = shape
@@ -3741,7 +3750,6 @@ class AnnotationCanvas(QWidget):
     def finish_move(self):
         """Finish moving shape"""
         if self.moving and self.selected_shape:
-            self.save_state()  # Save state for undo
             print("✅ Move completed")
         
         self.moving = False

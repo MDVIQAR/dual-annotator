@@ -102,23 +102,26 @@ class ExportDialog(QDialog):
         self.radio_coco = QRadioButton("COCO")
         self.radio_voc = QRadioButton("Pascal VOC")
         self.radio_unet = QRadioButton("UNet Masks")
+        self.radio_concentric = QRadioButton("Concentric Masks")  # CONCENTRIC INTEGRATION
         self.radio_yolo.setChecked(True)
         self.fmt_group_btn = QButtonGroup(self)
         self.fmt_group_btn.addButton(self.radio_yolo, id=1)
         self.fmt_group_btn.addButton(self.radio_coco, id=2)
         self.fmt_group_btn.addButton(self.radio_voc, id=3)
         self.fmt_group_btn.addButton(self.radio_unet, id=4)
+        self.fmt_group_btn.addButton(self.radio_concentric, id=5)  # CONCENTRIC INTEGRATION
         fmt_layout.addWidget(self.radio_yolo)
         fmt_layout.addWidget(self.radio_coco)
         fmt_layout.addWidget(self.radio_voc)
         fmt_layout.addWidget(self.radio_unet)
+        fmt_layout.addWidget(self.radio_concentric)  # CONCENTRIC INTEGRATION
         fmt_group.setLayout(fmt_layout)
         layout.addWidget(fmt_group)
 
-        # 1b. UNet mask mode sub-group (hidden unless UNet selected)
+        # 1b. Mask scale sub-group (hidden unless UNet or Concentric selected)
         # Only scale: 0/1 (for training) or 0/255 (for visualization).
         # Binary vs multiclass is auto-detected per image at export time.
-        self.unet_group = QGroupBox("UNet Mask Scale")
+        self.unet_group = QGroupBox("Mask Scale")
         unet_layout = QHBoxLayout()
         self.radio_bin01  = QRadioButton("0 / 1  (training)")
         self.radio_bin255 = QRadioButton("0 / 255  (visualization)")
@@ -213,13 +216,15 @@ class ExportDialog(QDialog):
         self._read_counts()
 
     def _on_fmt_changed(self, _button=None):
-        """Show/hide UNet panel and auto-adjust option checkboxes per format."""
+        """Show/hide mask-scale panel and auto-adjust option checkboxes per format."""
         is_unet = self.radio_unet.isChecked()
+        is_concentric = self.radio_concentric.isChecked()  # CONCENTRIC INTEGRATION
+        is_mask_fmt = is_unet or is_concentric
         is_yolo = self.radio_yolo.isChecked()
-        self.unet_group.setVisible(is_unet)
+        self.unet_group.setVisible(is_mask_fmt)
 
-        if is_unet:
-            # UNet: Only timestamp on, rest unchecked
+        if is_mask_fmt:
+            # UNet / Concentric: Only timestamp on, rest unchecked
             self.chk_split.setChecked(False)
             self.chk_delta.setChecked(False)
             self.chk_annotated.setChecked(False)
@@ -294,6 +299,7 @@ class ExportDialog(QDialog):
         if self.radio_coco.isChecked():  fmt = "coco"
         elif self.radio_voc.isChecked(): fmt = "voc"
         elif self.radio_unet.isChecked(): fmt = "unet"
+        elif self.radio_concentric.isChecked(): fmt = "concentric"  # CONCENTRIC INTEGRATION
 
         # Output dir selection logic
         ts = ""
@@ -314,9 +320,9 @@ class ExportDialog(QDialog):
             "draw_annotated": self.chk_annotated.isChecked()
         }
 
-        # UNet mask mode — auto-detect binary vs multiclass per image;
+        # Mask mode — auto-detect binary vs multiclass per image;
         # the user only picks the pixel scale (0/1 or 0/255).
-        if fmt == "unet":
+        if fmt in ("unet", "concentric"):  # CONCENTRIC INTEGRATION
             scale_255 = self.mask_mode_group.checkedId() == 2
             kwargs["unet_mask_mode"] = "auto_255" if scale_255 else "auto_01"
         else:
@@ -328,6 +334,7 @@ class ExportDialog(QDialog):
         self.fmt_group_btn.button(2).setEnabled(False)
         self.fmt_group_btn.button(3).setEnabled(False)
         self.fmt_group_btn.button(4).setEnabled(False)
+        self.fmt_group_btn.button(5).setEnabled(False)  # CONCENTRIC INTEGRATION
         self.chk_delta.setEnabled(False)
         self.chk_annotated.setEnabled(False)
         self.chk_timestamp.setEnabled(False)

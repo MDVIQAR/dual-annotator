@@ -121,6 +121,11 @@ class ExportManager:
             exporter = UNetExporter(output_dir, split, ordered_classes,
                                     mask_mode=unet_mask_mode,
                                     class_manager=self.cm)
+        elif fmt == "concentric":  # CONCENTRIC INTEGRATION
+            from core.exporters.concentric_exporter import ConcentricExporter
+            exporter = ConcentricExporter(output_dir, split, ordered_classes,
+                                          mask_mode=unet_mask_mode,
+                                          class_manager=self.cm)
 
         total_images = len(exportable_images)
         current_idx = 0
@@ -161,6 +166,8 @@ class ExportManager:
             elif fmt == "coco":
                 exporter.finalize(output_dir)
             elif fmt == "unet":
+                exporter.write_class_map(output_dir)
+            elif fmt == "concentric":  # CONCENTRIC INTEGRATION
                 exporter.write_class_map(output_dir)
                 
         return summary
