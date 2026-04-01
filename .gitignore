@@ -33,3 +33,6 @@ Ignore_Files/
 test_*.py
 
 *.zip
+
+!README.md
+!requirements.txt
