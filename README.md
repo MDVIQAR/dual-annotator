@@ -40,14 +40,14 @@ Saves annotated image copies with bounding boxes drawn on them
 Additional formats: COCO JSON, Pascal VOC XML
 
 ## Installation
-Requirements
+**Requirements:**
+- Python 3.9 or higher
+- Windows, macOS, or Linux
 
-Python 3.9 or higher
-Windows, macOS, or Linux
-
+```bash
 # 1. Clone the repository
-git clone https://github.com/yourusername/DualAnnotator.git
-cd DualAnnotator
+git clone https://github.com/MDVIQAR/dual-annotator.git
+cd dual-annotator
 
 # 2. Create a virtual environment
 python -m venv venv
@@ -63,6 +63,7 @@ pip install -r requirements.txt
 
 # 5. Run
 python main.py
+```
 
 DualAnnotator/
 ├── main.py                        ← entry point
