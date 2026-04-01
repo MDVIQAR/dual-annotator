@@ -139,6 +139,12 @@ class ToolButton(QPushButton):
             painter.setBrush(QBrush(QColor(pen.color().red(), pen.color().green(), pen.color().blue(), 60)))
             painter.drawPath(path)
         
+        elif name == "concentric":  # CONCENTRIC INTEGRATION
+            # Three concentric rings icon
+            painter.drawEllipse(QPointF(cx, cy), s, s)
+            painter.drawEllipse(QPointF(cx, cy), int(s * 0.65), int(s * 0.65))
+            painter.drawEllipse(QPointF(cx, cy), int(s * 0.3), int(s * 0.3))
+        
         elif name == "zoom_in":
             # Magnifying glass with +
             painter.drawEllipse(QPointF(cx - 2, cy - 2), 8, 8)
@@ -588,6 +594,13 @@ class MainWindow(QMainWindow):
         self.unet_mode_action.triggered.connect(lambda: self.switch_mode('unet'))
         mode_menu.addAction(self.unet_mode_action)
         
+        # CONCENTRIC INTEGRATION
+        self.concentric_mode_action = QAction('&Concentric Zones', self)
+        self.concentric_mode_action.setCheckable(True)
+        self.concentric_mode_action.triggered.connect(
+            lambda: self.switch_mode('concentric'))
+        mode_menu.addAction(self.concentric_mode_action)
+        
         # ===== SHORTCUTS MENU =====
         shortcuts_menu = menubar.addMenu('&Shortcuts')
         
@@ -901,6 +914,11 @@ class MainWindow(QMainWindow):
         self.mode_btn_unet = ToolButton("unet", "U-Net Segmentation Mode")
         self.mode_btn_unet.clicked.connect(lambda: self.switch_mode('unet'))
         layout.addWidget(self.mode_btn_unet)
+        
+        # CONCENTRIC INTEGRATION
+        self.mode_btn_concentric = ToolButton("concentric", "Concentric Zone Mode")
+        self.mode_btn_concentric.clicked.connect(lambda: self.switch_mode('concentric'))
+        layout.addWidget(self.mode_btn_concentric)
         
         layout.addWidget(self.create_separator())
         
@@ -1324,7 +1342,7 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(f"{shape_type} selected - 'None' mode activated", 2000)
     
     def switch_mode(self, mode):
-        """Switch between YOLO and U-Net modes"""
+        """Switch between YOLO, U-Net, and Concentric modes"""  # CONCENTRIC INTEGRATION
         if not hasattr(self, 'canvas'): return
         current_mode = self.canvas.mode
         if mode == current_mode:
@@ -1338,50 +1356,62 @@ class MainWindow(QMainWindow):
             from PyQt5.QtWidgets import QDialog
             dlg = ModeSwitchDialog(current_mode, mode, len(self.canvas.shapes), self)
             if dlg.exec_() != QDialog.Accepted:
-                # Revert ratio buttons visually
-                is_unet = (current_mode == 'unet')
-                self.yolo_mode_action.setChecked(not is_unet)
-                self.unet_mode_action.setChecked(is_unet)
-                self.mode_btn_yolo.setChecked(not is_unet)
-                self.mode_btn_unet.setChecked(is_unet)
+                # Revert buttons visually  # CONCENTRIC INTEGRATION
+                self.yolo_mode_action.setChecked(current_mode == 'yolo')
+                self.unet_mode_action.setChecked(current_mode == 'unet')
+                if hasattr(self, 'concentric_mode_action'):
+                    self.concentric_mode_action.setChecked(
+                        current_mode == 'concentric')
+                self.mode_btn_yolo.setChecked(current_mode == 'yolo')
+                self.mode_btn_unet.setChecked(current_mode == 'unet')
+                if hasattr(self, 'mode_btn_concentric'):
+                    self.mode_btn_concentric.setChecked(
+                        current_mode == 'concentric')
                 return
             coexist = dlg.coexist
             
-        is_unet = (mode == 'unet')
+        is_unet        = (mode == 'unet')  # CONCENTRIC INTEGRATION
+        is_concentric  = (mode == 'concentric')
+        is_unet_like   = is_unet or is_concentric  # both show UNet shape tools
         
         # Update menu actions
-        self.yolo_mode_action.setChecked(not is_unet)
-        self.unet_mode_action.setChecked(is_unet)
+        self.yolo_mode_action.setChecked(mode == 'yolo')
+        self.unet_mode_action.setChecked(mode == 'unet')
+        if hasattr(self, 'concentric_mode_action'):
+            self.concentric_mode_action.setChecked(is_concentric)
         
         # Update mode buttons
-        self.mode_btn_yolo.setChecked(not is_unet)
-        self.mode_btn_unet.setChecked(is_unet)
+        self.mode_btn_yolo.setChecked(mode == 'yolo')
+        self.mode_btn_unet.setChecked(mode == 'unet')
+        if hasattr(self, 'mode_btn_concentric'):
+            self.mode_btn_concentric.setChecked(is_concentric)
         
         # Update status bar
-        self.mode_label.setText(f"Mode: {'U-Net' if is_unet else 'YOLO'}")
+        mode_names = {'yolo': 'YOLO', 'unet': 'U-Net', 'concentric': 'Concentric'}
+        self.mode_label.setText(f"Mode: {mode_names.get(mode, mode.upper())}")
         
         # Update canvas mode
         self.canvas.set_mode(mode)
         
-        # Show/Hide hollow shape options
+        # Show/Hide hollow shape options (available in UNet AND Concentric)
         # Buttons
-        self.shape_btn_frame.setVisible(is_unet)
-        self.shape_btn_donut.setVisible(is_unet)
-        self.shape_btn_hollow_ellipse.setVisible(is_unet)
+        self.shape_btn_frame.setVisible(is_unet_like)
+        self.shape_btn_donut.setVisible(is_unet_like)
+        self.shape_btn_hollow_ellipse.setVisible(is_unet_like)
         
         # Menu Shortcuts
         if hasattr(self, 'frame_action'):
-            self.frame_action.setVisible(is_unet)
+            self.frame_action.setVisible(is_unet_like)
         if hasattr(self, 'donut_action'):
-            self.donut_action.setVisible(is_unet)
+            self.donut_action.setVisible(is_unet_like)
         if hasattr(self, 'hollow_ellipse_action'):
-            self.hollow_ellipse_action.setVisible(is_unet)
+            self.hollow_ellipse_action.setVisible(is_unet_like)
             
         # Shortcut Bar Items
         if hasattr(self, 'shortcut_bar'):
-            self.shortcut_bar.set_item_visible('frame', is_unet)
-            self.shortcut_bar.set_item_visible('donut', is_unet)
-            self.shortcut_bar.set_item_visible('hollow_ellipse', is_unet)
+            self.shortcut_bar.set_item_visible('frame', is_unet_like)
+            self.shortcut_bar.set_item_visible('donut', is_unet_like)
+            self.shortcut_bar.set_item_visible('hollow_ellipse', is_unet_like)
             
         # After switching: update layer visibility in saved JSON
         if hasattr(self, "project_manager") and self.current_image_index >= 0:
@@ -1394,7 +1424,7 @@ class MainWindow(QMainWindow):
             self._restore_annotations(self.image_files[self.current_image_index])
             
         # If in YOLO and a hollow shape was selected, switch back to Box
-        if not is_unet and hasattr(self, 'canvas'):
+        if mode == 'yolo' and hasattr(self, 'canvas'):
             current_tool = getattr(self.canvas, 'current_shape_type', None)
             if current_tool in ('frame', 'donut', 'hollow_ellipse'):
                 self.set_shape_type('box')
