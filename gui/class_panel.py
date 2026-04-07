@@ -291,11 +291,15 @@ class ClassPanel(QWidget):
             else:
                 item.setSelected(False)
         
-        # If a shape is currently selected on the canvas, reassign it
-        if self._canvas and self._canvas.selected_shape:
-            old_class_id = self._canvas.selected_shape.class_id
-            if old_class_id != class_id:
-                self._canvas.selected_shape.class_id = class_id
+        # If shapes are currently selected on the canvas, reassign them all
+        if self._canvas and getattr(self._canvas, 'selected_shapes', []):
+            changed = False
+            for shape in self._canvas.selected_shapes:
+                if getattr(shape, 'class_id', None) != class_id:
+                    shape.class_id = class_id
+                    changed = True
+            
+            if changed:
                 self._canvas.update()
                 if hasattr(self._canvas, 'annotation_changed'):
                     self._canvas.annotation_changed.emit()

@@ -195,6 +195,13 @@ class ToolButton(QPushButton):
             painter.drawLine(cx + 2, cy - s + 4, cx + 2, cy - s + 1) # handle part 2
             painter.drawLine(cx - 2, cy - s + 1, cx + 2, cy - s + 1) # handle top
         
+        elif name == "auto_detect":
+            # Magnifying glass with plus (auto-detect icon)
+            painter.drawEllipse(cx - 8, cy - 8, 13, 13)
+            painter.drawLine(cx + 4, cy + 4, cx + s, cy + s)
+            painter.drawLine(cx - 4, cy - 1, cx + 4, cy - 1)
+            painter.drawLine(cx, cy - 5, cx, cy + 3)
+            
         else:
             # Fallback: draw the text
             painter.drawText(self.rect(), Qt.AlignCenter, name)
@@ -879,6 +886,15 @@ class MainWindow(QMainWindow):
         
         main_vertical.addLayout(content_layout)
         
+    def _open_template_matching(self, shape):
+        if not hasattr(self, '_auto_panel'):
+            from gui.auto_annotate_panel import AutoAnnotatePanel
+            self._auto_panel = AutoAnnotatePanel(self.canvas, self.canvas)
+        self._auto_panel.template_shapes = [shape]
+        self._auto_panel._update_template_ui()
+        self._auto_panel.show_panel()
+        self._auto_panel.run_detection()
+
     def create_vertical_toolbar(self):
         """Create vertical toolbar on the left side with icons only"""
         toolbar_widget = QWidget()
