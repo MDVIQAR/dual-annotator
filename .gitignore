@@ -36,3 +36,8 @@ test_*.py
 
 !README.md
 !requirements.txt
+
+# PyInstaller
+dist/
+build/
+*.spec

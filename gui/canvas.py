@@ -3926,6 +3926,12 @@ class AnnotationCanvas(QWidget):
             self.canvas_context_menu.request_redo.connect(self.redo)
             self.canvas_context_menu.request_paste.connect(lambda p: getattr(self, 'paste_at_cursor', lambda x: None)(p))
             
+            def _trigger_template_matching(shape):
+                if hasattr(self, 'parent_window') and self.parent_window:
+                    if hasattr(self.parent_window, '_open_template_matching'):
+                        self.parent_window._open_template_matching(shape)
+            self.canvas_context_menu.request_template_matching.connect(_trigger_template_matching)
+            
             self.canvas_context_menu.request_undo_pt.connect(self.undo_last_point)
             self.canvas_context_menu.request_redo_pt.connect(lambda: self.redo_last_point())
             self.canvas_context_menu.request_finish.connect(lambda: self.finish_bezier() if getattr(self, 'drawing_bezier', False) else self.finish_polygon())

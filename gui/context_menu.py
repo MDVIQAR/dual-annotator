@@ -11,6 +11,7 @@ class ShapeContextMenu(QMenu):
     request_undo = pyqtSignal()
     request_redo = pyqtSignal()
     request_paste = pyqtSignal(QPoint)
+    request_template_matching = pyqtSignal(object)
     
     # Polygon drawing signals
     request_undo_pt = pyqtSignal()
@@ -95,6 +96,11 @@ class ShapeContextMenu(QMenu):
             # Save as Template
             save_tmpl_act = self.addAction("💾 Save as Template")
             save_tmpl_act.triggered.connect(lambda: self.request_save_template.emit(shape))
+            
+            self.addSeparator()
+
+            match_act = self.addAction("🎯 Template Matching...")
+            match_act.triggered.connect(lambda: self.request_template_matching.emit(shape))
 
             self.addSeparator()
         
