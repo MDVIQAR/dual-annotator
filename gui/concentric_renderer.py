@@ -245,7 +245,13 @@ class ConcentricRenderer:
         except Exception:
             return
 
-        for handle_name, (hx, hy) in handles.items():
+        if isinstance(handles, dict):
+            iterator = handles.items()
+        else:
+            iterator = enumerate(handles)
+
+        for handle_idx_or_name, (hx, hy) in iterator:
+            handle_name = str(handle_idx_or_name)
             whx = int(float(hx) * scale + offset_x)
             why = int(float(hy) * scale + offset_y)
             if 'mid' in handle_name:
@@ -266,6 +272,19 @@ class ConcentricRenderer:
                 painter.setPen(QPen(QColor(0, 0, 0), 1))
             else:
                 painter.drawRect(whx - half, why - half, handle_size, handle_size)
+                
+        # Draw inner handles for concentric adjustment (in cyan)
+        if hasattr(shape, 'get_inner_handles'):
+            try:
+                inner_handles = shape.get_inner_handles()
+                painter.setBrush(QBrush(QColor(0, 255, 255)))
+                for hx, hy in inner_handles:
+                    whx = int(float(hx) * scale + offset_x)
+                    why = int(float(hy) * scale + offset_y)
+                    painter.drawRect(whx - half, why - half, handle_size, handle_size)
+                painter.setBrush(QBrush(QColor(255, 255, 255)))
+            except Exception:
+                pass
 
     @staticmethod
     def _draw_label(painter, shape, class_manager, scale, offset_x, offset_y):

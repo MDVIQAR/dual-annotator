@@ -575,6 +575,7 @@ class AnnotationCanvas(QWidget):
         self.multi_drag_originals = list(self.selected_shapes)
         self.multi_drag_copies = [s.copy() for s in self.selected_shapes]
         self.multi_drag_copy = True
+        self.multi_moving = True
         self.multi_move_start = self.widget_to_image(pos)
         for s in self.multi_drag_originals:
             s.selected = False
@@ -2151,8 +2152,12 @@ class AnnotationCanvas(QWidget):
                         self.update()
                     return
                 
+                # Check if we are actively mid-draw (polygon/bezier points exist)
+                is_active_poly = len(self.polygon_points) > 0 or len(self.bezier_points) > 0
+                is_actively_drawing = is_active_poly or self.drawing_inner_cutout or self.drawing or self.stamping
+                
                 # FIRST: Check if we're over a resize handle of selected shape (only single-select)
-                if self.selected_shape and len(self.selected_shapes) <= 1:
+                if self.selected_shape and len(self.selected_shapes) <= 1 and not is_actively_drawing:
                     handle = self.get_resize_handle_at_pos(event.pos(), self.selected_shape)
                     if handle:
                         # Start resizing
@@ -2174,12 +2179,14 @@ class AnnotationCanvas(QWidget):
                 # SECOND: Check if we're clicking on a shape (for moving or selecting)
                 image_x, image_y = self.widget_to_image(event.pos())
                 clicked_shape = None
-                for shape in reversed(self.shapes):
-                    if getattr(shape, 'hollow_role', None) == 'inner':
-                        continue
-                    if hasattr(shape, 'contains_point') and shape.contains_point(image_x, image_y):
-                        clicked_shape = shape
-                        break
+                
+                if not is_actively_drawing:
+                    for shape in reversed(self.shapes):
+                        if getattr(shape, 'hollow_role', None) == 'inner':
+                            continue
+                        if hasattr(shape, 'contains_point') and shape.contains_point(image_x, image_y):
+                            clicked_shape = shape
+                            break
                 
                 if clicked_shape:
                     # If Ctrl is pressed, start drag-copy (single or group)
@@ -2685,11 +2692,17 @@ class AnnotationCanvas(QWidget):
         
         # ===== UNDO/REDO =====
         elif key == Qt.Key_Z and event.modifiers() == Qt.ControlModifier:
-            self.undo()
+            if self.polygon_points or self.bezier_points:
+                self.undo_last_point()
+            else:
+                self.undo()
             return
         
         elif key == Qt.Key_Y and event.modifiers() == Qt.ControlModifier:
-            self.redo()
+            if self.polygon_points or self.bezier_points:
+                self.redo_last_point()
+            else:
+                self.redo()
             return
         
         # ===== COPY/PASTE =====
@@ -2778,8 +2791,8 @@ class AnnotationCanvas(QWidget):
         image_y = (pos.y() - self.offset_y) / self.scale
         
         # Clamp to image boundaries
-        image_x = max(0, min(self.image_width - 1, int(image_x)))
-        image_y = max(0, min(self.image_height - 1, int(image_y)))
+        image_x = max(0, min(self.image_width - 1, int(round(image_x))))
+        image_y = max(0, min(self.image_height - 1, int(round(image_y))))
         
         return image_x, image_y
         
@@ -3074,6 +3087,10 @@ class AnnotationCanvas(QWidget):
         if self.class_manager and self.class_manager.get_current_class():
             image_x, image_y = self.widget_to_image(pos)
             
+            # Clear point-redo stack when starting a new shape or manually adding a new point
+            if hasattr(self, 'undone_polygon_points'):
+                self.undone_polygon_points = []
+                
             # If this is the first point, create a new polygon
             if not self.polygon_points:
                 self.polygon_points = [(image_x, image_y)]
@@ -3083,7 +3100,7 @@ class AnnotationCanvas(QWidget):
                 first_x, first_y = self.polygon_points[0]
                 distance = math.sqrt((image_x - first_x)**2 + (image_y - first_y)**2)
                 
-                if distance < 10 and len(self.polygon_points) >= 3:
+                if distance < (3.0 / self.scale) and len(self.polygon_points) >= 3:
                     self.finish_polygon()
                 else:
                     self.polygon_points.append((image_x, image_y))
@@ -3409,8 +3426,8 @@ class AnnotationCanvas(QWidget):
             if len(self.bezier_points) >= 3:
                 first_pos = self.bezier_points[0]
                 dist = math.hypot(img_pos[0] - first_pos[0], img_pos[1] - first_pos[1])
-                # If closer than 10 pixels (scaled)
-                if dist < 10.0 / self.scale:
+                # If closer than 3 pixels (scaled)
+                if dist < 3.0 / self.scale:
                     self.finish_bezier()
                     return
             
