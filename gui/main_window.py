@@ -4,7 +4,8 @@ from PyQt5.QtWidgets import (
     QStatusBar, QLabel, QWidget, QVBoxLayout,
     QHBoxLayout, QMessageBox, QFileDialog, QSplitter,
     QListWidget, QListWidgetItem, QAbstractItemView, 
-    QComboBox, QFrame, QPushButton, QShortcut, QTextEdit, QLineEdit, QScrollArea
+    QComboBox, QFrame, QPushButton, QShortcut, QTextEdit, QLineEdit, QScrollArea,
+    QTabWidget
 )
 from PyQt5.QtCore import Qt, QSize, pyqtSignal
 from PyQt5.QtGui import QIcon, QKeySequence, QFont, QColor, QPalette, QPolygonF
@@ -316,7 +317,6 @@ class MainWindow(QMainWindow):
         
         # Initialize UI
         self.setup_menu_bar()
-        self.setup_shortcut_bar()
         self.setup_status_bar()
         self.setup_central_widget()
         
@@ -333,10 +333,7 @@ class MainWindow(QMainWindow):
             self.donut_action.setVisible(False)
         if hasattr(self, 'hollow_ellipse_action'):
             self.hollow_ellipse_action.setVisible(False)
-        if hasattr(self, 'shortcut_bar'):
-            self.shortcut_bar.set_item_visible('frame', False)
-            self.shortcut_bar.set_item_visible('donut', False)
-            self.shortcut_bar.set_item_visible('hollow_ellipse', False)
+
 
         # AUTOSAVE INTEGRATION
         from core.project_manager import ProjectManager
@@ -509,6 +506,36 @@ class MainWindow(QMainWindow):
                 border: 1px solid #555555;
                 padding: 4px;
             }
+            /* ---- Top-level Tab Bar ---- */
+            QTabWidget::pane {
+                border: none;
+                background-color: #1e1e1e;
+            }
+            QTabBar {
+                background-color: #16161e;
+                border-bottom: 1px solid #2a2a3a;
+            }
+            QTabBar::tab {
+                background-color: #1e1e2e;
+                color: #888;
+                padding: 10px 24px;
+                margin: 0px;
+                border: none;
+                border-bottom: 3px solid transparent;
+                font-size: 13px;
+                font-weight: bold;
+                min-width: 120px;
+            }
+            QTabBar::tab:selected {
+                color: #8ab4f8;
+                background-color: #1e1e1e;
+                border-bottom: 3px solid #8ab4f8;
+            }
+            QTabBar::tab:hover:!selected {
+                color: #aaa;
+                background-color: #252535;
+                border-bottom: 3px solid #444;
+            }
         """)
         
     def setup_menu_bar(self):
@@ -532,60 +559,30 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
         
-        # ===== EDIT MENU =====
-        edit_menu = menubar.addMenu('&Edit')
-        
+        # Initialize persistent editing actions used by the Shortcuts menu
         self.undo_action = QAction('&Undo', self)
         self.undo_action.setShortcut(QKeySequence.Undo)
         self.undo_action.triggered.connect(self.undo)
-        edit_menu.addAction(self.undo_action)
         
         self.redo_action = QAction('&Redo', self)
         self.redo_action.setShortcut(QKeySequence.Redo)
         self.redo_action.triggered.connect(self.redo)
-        edit_menu.addAction(self.redo_action)
-        
-        edit_menu.addSeparator()
         
         self.copy_action = QAction('&Copy', self)
         self.copy_action.setShortcut(QKeySequence.Copy)
         self.copy_action.triggered.connect(self.copy_selected)
-        edit_menu.addAction(self.copy_action)
         
         self.paste_action = QAction('&Paste', self)
         self.paste_action.setShortcut(QKeySequence.Paste)
         self.paste_action.triggered.connect(self.paste_shape)
-        edit_menu.addAction(self.paste_action)
         
         self.delete_action = QAction('&Delete', self)
         self.delete_action.setShortcut(QKeySequence.Delete)
         self.delete_action.triggered.connect(self.delete_selected)
-        edit_menu.addAction(self.delete_action)
-
-        edit_menu.addSeparator()
-
-        nudge_step_action = QAction('Nudge Step...', self)
-        nudge_step_action.setToolTip("Set arrow key nudge distance in pixels")
-        nudge_step_action.triggered.connect(self._show_nudge_step_dialog)
-        edit_menu.addAction(nudge_step_action)
-        
-        # ===== VIEW MENU =====
-        view_menu = menubar.addMenu('&View')
-        
-        zoom_in_action = QAction('Zoom &In', self)
-        zoom_in_action.setShortcut(QKeySequence.ZoomIn)
-        zoom_in_action.triggered.connect(self.zoom_in)
-        view_menu.addAction(zoom_in_action)
-        
-        zoom_out_action = QAction('Zoom &Out', self)
-        zoom_out_action.setShortcut(QKeySequence.ZoomOut)
-        zoom_out_action.triggered.connect(self.zoom_out)
-        view_menu.addAction(zoom_out_action)
         
         self.fit_action = QAction('&Fit to Window', self)
         self.fit_action.setShortcut('Ctrl+F')
         self.fit_action.triggered.connect(self.fit_to_window)
-        view_menu.addAction(self.fit_action)
         
         # ===== MODE MENU =====
         mode_menu = menubar.addMenu('&Mode')
@@ -611,159 +608,169 @@ class MainWindow(QMainWindow):
         # ===== SHORTCUTS MENU =====
         shortcuts_menu = menubar.addMenu('&Shortcuts')
         
-        # Navigation Section
-        nav_title = shortcuts_menu.addAction('🔍 NAVIGATION')
-        nav_title.setEnabled(False)
-        shortcuts_menu.addSeparator()
+        # 1. Navigation & View Sub-menu
+        nav_menu = shortcuts_menu.addMenu('🔍 Navigation & View')
         
         prev_action = QAction('Previous Image', self)
         prev_action.setShortcut('A')
         prev_action.triggered.connect(self.prev_image)
-        shortcuts_menu.addAction(prev_action)
+        nav_menu.addAction(prev_action)
         
         next_action = QAction('Next Image', self)
         next_action.setShortcut('D')
         next_action.triggered.connect(self.next_image)
-        shortcuts_menu.addAction(next_action)
+        nav_menu.addAction(next_action)
         
         next_un_action = QAction('Next Unannotated', self)
         next_un_action.setShortcut('Tab')
         next_un_action.setShortcutContext(Qt.ApplicationShortcut)
         next_un_action.triggered.connect(self.next_unannotated)
-        shortcuts_menu.addAction(next_un_action)
+        nav_menu.addAction(next_un_action)
         
         pan_action = QAction('Toggle Pan Mode', self)
         pan_action.setShortcut('Space')
         pan_action.triggered.connect(self.toggle_pan_mode)
-        shortcuts_menu.addAction(pan_action)
+        nav_menu.addAction(pan_action)
         
         zoom_in_shortcut = QAction('Zoom In', self)
         zoom_in_shortcut.setShortcut('+')
         zoom_in_shortcut.triggered.connect(self.zoom_in)
-        shortcuts_menu.addAction(zoom_in_shortcut)
+        nav_menu.addAction(zoom_in_shortcut)
         
         zoom_out_shortcut = QAction('Zoom Out', self)
         zoom_out_shortcut.setShortcut('-')
         zoom_out_shortcut.triggered.connect(self.zoom_out)
-        shortcuts_menu.addAction(zoom_out_shortcut)
+        nav_menu.addAction(zoom_out_shortcut)
         
-        shortcuts_menu.addAction(self.fit_action)
+        nav_menu.addAction(self.fit_action)
         
-        shortcuts_menu.addSeparator()
         
-        # Shape Tools Section
-        shape_title = shortcuts_menu.addAction('🖌️ SHAPE TOOLS')
-        shape_title.setEnabled(False)
-        shortcuts_menu.addSeparator()
+        # 2. Drawing Tools Sub-menu
+        shape_menu = shortcuts_menu.addMenu('🖌️ Drawing Tools')
         
         box_shortcut = QAction('Box Tool', self)
         box_shortcut.setShortcut('B')
         box_shortcut.triggered.connect(lambda: self.set_shape_type('box'))
-        shortcuts_menu.addAction(box_shortcut)
+        shape_menu.addAction(box_shortcut)
         
         polygon_shortcut = QAction('Polygon Tool', self)
         polygon_shortcut.setShortcut('P')
         polygon_shortcut.triggered.connect(lambda: self.set_shape_type('polygon'))
-        shortcuts_menu.addAction(polygon_shortcut)
+        shape_menu.addAction(polygon_shortcut)
         
         bezier_shortcut = QAction('Bezier Curve', self)
         bezier_shortcut.setShortcut('Q')
         bezier_shortcut.triggered.connect(lambda: self.set_shape_type('bezier_polygon'))
-        shortcuts_menu.addAction(bezier_shortcut)
+        shape_menu.addAction(bezier_shortcut)
         
         circle_shortcut = QAction('Circle Tool', self)
         circle_shortcut.setShortcut('C')
         circle_shortcut.triggered.connect(lambda: self.set_shape_type('circle'))
-        shortcuts_menu.addAction(circle_shortcut)
+        shape_menu.addAction(circle_shortcut)
         
         ellipse_shortcut = QAction('Ellipse Tool', self)
         ellipse_shortcut.setShortcut('E')
         ellipse_shortcut.triggered.connect(lambda: self.set_shape_type('ellipse'))
-        shortcuts_menu.addAction(ellipse_shortcut)
+        shape_menu.addAction(ellipse_shortcut)
         
-        self.frame_action = QAction('Frame Tool', self)
+        self.frame_action = QAction('Frame Tool (Hollow)', self)
         self.frame_action.setShortcut('F')
         self.frame_action.triggered.connect(lambda: self.set_shape_type('frame'))
-        shortcuts_menu.addAction(self.frame_action)
+        shape_menu.addAction(self.frame_action)
         
-        self.donut_action = QAction('Donut Tool', self)
+        self.donut_action = QAction('Donut Tool (Hollow)', self)
         self.donut_action.setShortcut('O')
         self.donut_action.triggered.connect(lambda: self.set_shape_type('donut'))
-        shortcuts_menu.addAction(self.donut_action)
+        shape_menu.addAction(self.donut_action)
         
         self.hollow_ellipse_action = QAction('Hollow Ellipse Tool', self)
         self.hollow_ellipse_action.setShortcut('H')
         self.hollow_ellipse_action.triggered.connect(lambda: self.set_shape_type('hollow_ellipse'))
-        shortcuts_menu.addAction(self.hollow_ellipse_action)
-
+        shape_menu.addAction(self.hollow_ellipse_action)
         
-        template_shortcut = QAction('Template Tool', self)
+        template_shortcut = QAction('Template Stamp', self)
         template_shortcut.setShortcut('T')
         template_shortcut.triggered.connect(lambda: self.set_shape_type('template'))
-        shortcuts_menu.addAction(template_shortcut)
+        shape_menu.addAction(template_shortcut)
         
-        none_shortcut = QAction('None (Selection Mode)', self)
+        none_shortcut = QAction('Pointer (Selection Mode)', self)
         none_shortcut.setShortcut('N')
         none_shortcut.triggered.connect(lambda: self.set_shape_type(None))
-        shortcuts_menu.addAction(none_shortcut)
+        shape_menu.addAction(none_shortcut)
         
-        finish_polygon_shortcut = QAction('Finish Polygon', self)
+        # 3. Canvas Editing Sub-menu
+        edit_tab = shortcuts_menu.addMenu('✏️ Canvas Editing')
+        
+        finish_polygon_shortcut = QAction('Finish Polygon Shape', self)
         finish_polygon_shortcut.setShortcut('Enter')
         finish_polygon_shortcut.triggered.connect(lambda: self.canvas.finish_polygon() if hasattr(self, 'canvas') else None)
-        shortcuts_menu.addAction(finish_polygon_shortcut)
+        edit_tab.addAction(finish_polygon_shortcut)
         
-        shortcuts_menu.addSeparator()
-        
-        # Editing Section
-        edit_title = shortcuts_menu.addAction('✏️ EDITING')
-        edit_title.setEnabled(False)
-        shortcuts_menu.addSeparator()
-        
-        shortcuts_menu.addAction(self.delete_action)
-        
-        delete_all_shortcut = QAction('Delete All Annotations', self)
-        delete_all_shortcut.setShortcut('Ctrl+Del')
-        delete_all_shortcut.triggered.connect(self.delete_all_annotations)
-        shortcuts_menu.addAction(delete_all_shortcut)
-        
-        shortcuts_menu.addAction(self.copy_action)
-        
-        shortcuts_menu.addAction(self.paste_action)
-        
-        shortcuts_menu.addAction(self.undo_action)
-        
-        shortcuts_menu.addAction(self.redo_action)
-        
-        cancel_shortcut = QAction('Cancel Operation', self)
+        cancel_shortcut = QAction('Cancel Current Operation', self)
         cancel_shortcut.setShortcut('Esc')
         cancel_shortcut.triggered.connect(self.cancel_operation)
-        shortcuts_menu.addAction(cancel_shortcut)
+        edit_tab.addAction(cancel_shortcut)
         
-        shortcuts_menu.addSeparator()
+        edit_tab.addSeparator()
         
-        self.export_action = QAction('Export Annotations', self)
+        edit_tab.addAction(self.undo_action)
+        edit_tab.addAction(self.redo_action)
+        
+        edit_tab.addSeparator()
+        
+        edit_tab.addAction(self.copy_action)
+        edit_tab.addAction(self.paste_action)
+        
+        edit_tab.addSeparator()
+        
+        edit_tab.addAction(self.delete_action)
+        
+        delete_all_shortcut = QAction('Wipe Entire Canvas', self)
+        delete_all_shortcut.setShortcut('Ctrl+Del')
+        delete_all_shortcut.triggered.connect(self.delete_all_annotations)
+        edit_tab.addAction(delete_all_shortcut)
+        
+        # 4. Advanced Interaction & Missing Features
+        feature_tab = shortcuts_menu.addMenu('⚙️ Advanced Binding References')
+        
+        class_mgr_help = QAction('Open Class Manager (Shift+C)', self)
+        class_mgr_help.setEnabled(False)
+        feature_tab.addAction(class_mgr_help)
+        
+        class_equip_help = QAction('Quick Equip Class (Numbers 1-9)', self)
+        class_equip_help.setEnabled(False)
+        feature_tab.addAction(class_equip_help)
+        
+        scale_help = QAction('Scale Shape (Shift + Scroll Wheel)', self)
+        scale_help.setEnabled(False)
+        feature_tab.addAction(scale_help)
+        
+        drag_copy_help = QAction('Clone Selection (Ctrl + Drag Shape)', self)
+        drag_copy_help.setEnabled(False)
+        feature_tab.addAction(drag_copy_help)
+        
+        undo_point_help = QAction('Undo Mid-Draw Point (Ctrl + Z)', self)
+        undo_point_help.setEnabled(False)
+        feature_tab.addAction(undo_point_help)
+        
+        multiselect_help = QAction('Multi-Select Shapes (Shift + Left Click)', self)
+        multiselect_help.setEnabled(False)
+        feature_tab.addAction(multiselect_help)
+        
+        nudge_help = QAction('Macro Nudge Shape (Shift + Arrows)', self)
+        nudge_help.setEnabled(False)
+        feature_tab.addAction(nudge_help)
+        
+        cutout_help = QAction('Create Hollow Inner Shape (Right-Click)', self)
+        cutout_help.setEnabled(False)
+        feature_tab.addAction(cutout_help)
+        
+        feature_tab.addSeparator()
+        
+        self.export_action = QAction('Open Data Exporter (Ctrl+E)', self)
         self.export_action.setShortcut('Ctrl+E')
         self.export_action.triggered.connect(self.open_export_dialog)
-        shortcuts_menu.addAction(self.export_action)
-        
-        shortcuts_menu.addSeparator()
-        
-        # New Feature Shortcuts
-        feature_title = shortcuts_menu.addAction('🆕 NEW FEATURES')
-        feature_title.setEnabled(False)
-        shortcuts_menu.addSeparator()
-        
-        scale_help = QAction('Scale Pattern/Shape (Shift+Scroll)', self)
-        scale_help.setEnabled(False)
-        shortcuts_menu.addAction(scale_help)
-        
-        drag_copy_help = QAction('Clone Shape (Ctrl + Drag)', self)
-        drag_copy_help.setEnabled(False)
-        shortcuts_menu.addAction(drag_copy_help)
-        
-        undo_point_help = QAction('Undo Last Point (Right-Click Menu)', self)
-        undo_point_help.setEnabled(False)
-        shortcuts_menu.addAction(undo_point_help)
+        feature_tab.addAction(self.export_action)
         
         # ===== EXPORT MENU =====
         export_menu = menubar.addMenu('E&xport')
@@ -846,17 +853,28 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage("Ready")
         
     def setup_central_widget(self):
-        """Create the redesigned central widget"""
-        central = QWidget()
-        self.setCentralWidget(central)
+        """Create the tabbed central widget"""
+        # ── Top-level tab widget ──
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setDocumentMode(True)  # cleaner look
+        self.setCentralWidget(self.tab_widget)
         
+        # ── Tab 1: Annotate ──
+        self.annotate_tab = QWidget()
+        self._build_annotate_tab(self.annotate_tab)
+        self.tab_widget.addTab(self.annotate_tab, "✏️  Annotate")
+        
+        # ── Tab 2: RAW → PNG ──
+        from gui.tabs.raw_to_png_tab import RawToPngTab
+        self.raw_to_png_tab = RawToPngTab()
+        self.tab_widget.addTab(self.raw_to_png_tab, "🖼️  RAW → PNG")
+
+    def _build_annotate_tab(self, container):
+        """Build the annotation workspace inside *container*."""
         # Main vertical layout
-        main_vertical = QVBoxLayout(central)
+        main_vertical = QVBoxLayout(container)
         main_vertical.setContentsMargins(0, 0, 0, 0)
         main_vertical.setSpacing(0)
-        
-        # Add shortcut bar
-        main_vertical.addWidget(self.shortcut_bar)
         
         # Main horizontal layout for content
         content_layout = QHBoxLayout()
@@ -893,7 +911,6 @@ class MainWindow(QMainWindow):
         self._auto_panel.template_shapes = [shape]
         self._auto_panel._update_template_ui()
         self._auto_panel.show_panel()
-        self._auto_panel.run_detection()
 
     def create_vertical_toolbar(self):
         """Create vertical toolbar on the left side with icons only"""
@@ -1424,11 +1441,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'hollow_ellipse_action'):
             self.hollow_ellipse_action.setVisible(is_unet_like)
             
-        # Shortcut Bar Items
-        if hasattr(self, 'shortcut_bar'):
-            self.shortcut_bar.set_item_visible('frame', is_unet_like)
-            self.shortcut_bar.set_item_visible('donut', is_unet_like)
-            self.shortcut_bar.set_item_visible('hollow_ellipse', is_unet_like)
+
             
         # After switching: update layer visibility in saved JSON
         if hasattr(self, "project_manager") and self.current_image_index >= 0:
@@ -1880,267 +1893,299 @@ class MainWindow(QMainWindow):
             self.project_manager.update_project_classes(classes)
 
     def show_about(self):
-        """Show detailed About dialog"""
-        from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QScrollArea,
-                                     QWidget, QLabel, QPushButton)
-        from PyQt5.QtCore import Qt
+        """Show detailed Help / About dialog"""
+        from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
+                                     QWidget, QPushButton, QListWidget, QSplitter, QTextBrowser)
+        from PyQt5.QtCore import Qt, QTimer
 
         dlg = QDialog(self)
-        dlg.setWindowTitle("About DualAnnotator")
-        dlg.setFixedWidth(620)
-        dlg.setMinimumHeight(500)
-        dlg.setMaximumHeight(800)
+        dlg.setWindowTitle("DualAnnotator Help & Reference")
+        dlg.resize(1100, 800) # Maximum detailed window size
         dlg.setStyleSheet("""
             QDialog { background-color: #1e1e1e; color: #ffffff; }
-            QScrollArea { border: none; background-color: #1e1e1e; }
-            QWidget#scroll_content { background-color: #1e1e1e; }
-            QLabel { color: #ffffff; background-color: transparent; }
-            QPushButton {
-                background-color: #2a4a6a;
-                color: #ffffff;
-                border: 1px solid #8ab4f8;
-                border-radius: 4px;
-                padding: 6px 24px;
-                font-size: 13px;
-            }
+            QListWidget { background-color: #161616; color: #aaa; border: 1px solid #333; font-size: 14px; padding: 5px; outline: none; }
+            QListWidget::item { padding: 12px; border-radius: 4px; margin-bottom: 2px;}
+            QListWidget::item:selected { background-color: #2a4a6a; color: white; font-weight: bold; }
+            QListWidget::item:hover { background-color: #2a2a2a; }
+            QTextBrowser { background-color: #1e1e1e; color: #e0e0e0; border: none; font-size: 14px; padding: 20px; line-height: 1.6;}
+            QPushButton { background-color: #2a4a6a; color: #ffffff; border: 1px solid #8ab4f8; border-radius: 4px; padding: 8px 30px; font-size: 14px; font-weight: bold;}
             QPushButton:hover { background-color: #3a5a7a; }
         """)
 
         outer = QVBoxLayout(dlg)
-        outer.setContentsMargins(0, 0, 0, 10)
-        outer.setSpacing(0)
+        
+        splitter = QSplitter(Qt.Horizontal)
+        
+        # Left navigation panel
+        nav_list = QListWidget()
+        nav_list.setFixedWidth(280)
+        nav_items = [
+            "0. ℹ️ About DualAnnotator",
+            "1. 📚 Getting Started",
+            "2. 🏷️ Class Management",
+            "3. 🖱️ Canvas Navigation",
+            "4. 🎨 Drawing Tools",
+            "5. ⭕ Hollow Shapes",
+            "6. 💾 Autosave & Projects",
+            "7. 📋 Auto-Annotation",
+            "8. 📤 Exporting Data",
+            "9. 🔥 RAW → PNG",
+            "10. ⌨️ Keyboard Shortcuts"
+        ]
+        nav_list.addItems(nav_items)
+        
+        # Right content panel
+        browser = QTextBrowser()
+        browser.setOpenExternalLinks(True)
+        # Prevent tracking issues during programmatic clicks
+        browser._programmatic_scroll = False
+        
+        html_content = """
+        <style>
+            body { font-family: 'Segoe UI', Arial, sans-serif; }
+            h1 { color: #8ab4f8; font-size: 24px; border-bottom: 1px solid #333; padding-bottom: 6px; margin-top: 35px; margin-bottom: 10px;}
+            h2 { color: #aac4f0; font-size: 17px; margin-top: 20px; margin-bottom: 8px;}
+            p, li { font-size: 14px; line-height: 1.5; color: #cccccc; margin-bottom: 8px; margin-top: 4px;}
+            code { background-color: #2a2a2a; color: #8ab4f8; padding: 2px 5px; border-radius: 4px; font-family: 'Consolas', monospace; font-size: 13px;}
+            .ui-btn { background-color: #333; color: white; border: 1px solid #555; padding: 1px 6px; border-radius: 3px; font-size: 12px; font-weight: bold; }
+            .important { color: #f0b429; font-weight: bold; }
+            ul { margin-top: 0px; padding-left: 20px;}
+            table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+            th { border-bottom: 2px solid #555; padding: 8px; text-align: left; color: #8ab4f8; font-size: 14px;}
+            td { border-bottom: 1px solid #333; padding: 8px; color: #ccc;}
+        </style>
+        
+        <h1 id="about" style="margin-top: 0px;">0. About DualAnnotator</h1>
+        <p>DualAnnotator is an advanced, high-performance desktop annotation tool designed specifically for building top-tier <b>YOLO Object Detection</b> and <b>U-Net Segmentation</b> datasets. It was created to solve the need for pixel-perfect contours and precise hollow topologies (like seals and gaskets) that web-based annotators struggle with.</p>
+        <p>Built purely in Python and PyQt5, it natively handles seamless UI manipulation across massive images, scientific thermal processing, and AI template matching.</p>
 
-        # ── Scrollable content ──
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        <h1 id="getting-started">1. Getting Started & The Three Modes</h1>
+        <p>Welcome! DualAnnotator runs three entirely distinct rendering modes simultaneously. You can switch between them using the top toolbar: [Mode: YOLO / UNet / Concentric].</p>
+        
+        <h2>YOLO Mode (Object Detection)</h2>
+        <p>Purely for creating rapid bounding boxes. When exporting, it flattens everything and outputs identical <code>[Class X Y W H]</code> text files used natively by YOLO AI architectures.</p>
+        
+        <h2>U-Net Mode (Segmentation)</h2>
+        <p>For drawing pixel-perfect polygons and hollow geometric shapes. Outputs exact binary black-and-white (or multi-color) PNG Masks representing the real topography of the shapes.</p>
 
-        content = QWidget()
-        content.setObjectName("scroll_content")
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(28, 24, 28, 16)
-        layout.setSpacing(0)
+        <h2>Concentric Zones Mode (Advanced Segmentation)</h2>
+        <p>A specialized rendering mode leveraging an <b>inner-wins cutout rule</b>. Any shape drawn will automatically "cut away" or subtract the territory of all previously-drawn shapes inside of it. It operates identical to U-Net's masking visually, but you can layer massive overlapping zones and the system mathematically handles the physical segmentation borders for you!</p>
+        
+        <p class="important">Note: Switching modes on an image asks if you want to 'Keep Both' or 'Hide Previous'. No data is lost! It simply hides irrelevant shapes so you can visually focus on what you're doing.</p>
 
-        html = """
-<style>
-  body  { font-family: Arial, sans-serif; font-size: 13px;
-          color: #e0e0e0; background: #1e1e1e; margin: 0; padding: 0; }
-  h1    { font-size: 20px; color: #8ab4f8; margin: 0 0 4px 0; }
-  h2    { font-size: 14px; color: #8ab4f8; margin: 18px 0 6px 0;
-          border-bottom: 1px solid #333; padding-bottom: 4px; }
-  h3    { font-size: 13px; color: #aac4f0; margin: 12px 0 4px 0; }
-  p     { margin: 4px 0 8px 0; line-height: 1.6; color: #cccccc; }
-  ul    { margin: 2px 0 8px 0; padding-left: 20px; }
-  li    { margin-bottom: 3px; line-height: 1.6; color: #cccccc; }
-  code  { background: #2a2a2a; color: #8ab4f8; padding: 1px 5px;
-          border-radius: 3px; font-size: 12px; }
-  table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
-  th    { background: #2a3a5a; color: #8ab4f8; padding: 6px 10px;
-          text-align: left; font-size: 12px; }
-  td    { padding: 5px 10px; border-bottom: 1px solid #2a2a2a;
-          font-size: 12px; color: #cccccc; }
-  tr:hover td { background: #252525; }
-  .tag  { background: #2a4a2a; color: #6fcf97; padding: 1px 6px;
-          border-radius: 3px; font-size: 11px; }
-  .warn { color: #f0b429; }
-  .dim  { color: #888888; font-size: 11px; }
-</style>
+        <h1 id="class-management">2. Class Management Deep Dive</h1>
+        <p>Before you pick up a drawing tool immediately, you must specify what class you are targeting using the <b>Class Sidebar Panel</b>!</p>
 
-<h1>DualAnnotator &nbsp;<span class="dim">v1.0.0</span></h1>
-<p>A desktop annotation tool for building YOLO object detection and
-U-Net segmentation datasets. Built with Python and PyQt5.</p>
+        <h2>Assigning & Reassigning Shapes</h2>
+        <ul>
+            <li><b>To Start Drawing:</b> Simply click a Class in the left sidebar. Any new polygons or boxes you draw will now belong to that class instantly.</li>
+            <li><b>To Reassign a Shape:</b> If you trace a huge shape and realize it's under the wrong name, select the shape with the pointer tool (<code>N</code>), and then literally <b>click the correct class in the left panel</b>. The shape's color will swap immediately, reassigning its memory!</li>
+        </ul>
 
-<!-- ═══════════════════════════════════════════════════════ -->
-<h2>Two Modes</h2>
+        <h2>Managing the List</h2>
+        <ul>
+            <li><b>Edit & Colors:</b> Hitting the [Edit] button dynamically updates all shapes mapped to that class across entirely active canvas seamlessly.</li>
+            <li><b>Dangerous Deletes:</b> If you delete a class in the manager, the app scans everything. Any existing geometries using that identity will become 'unassigned' and must be corrected!</li>
+            <li><b>Drag and Drop Priority:</b> Classes can be click-and-dragged up and down in the list to reorder them logically.</li>
+            <li><b>Automatic Hotkeys (1-9):</b> The system automatically maps keyboard numbers <code>1</code> through <code>9</code> to the first 9 positions in your list. Pressing <code>1</code> on your keyboard instantly equips the first class without mouse movement!</li>
+        </ul>
 
-<h3>YOLO Mode — Object Detection</h3>
-<p>Draw bounding boxes around objects. Each box is saved with a class label
-and exported as a normalised <code>cx cy w h</code> line in a <code>.txt</code>
-file — the standard format for YOLOv5, YOLOv8, and YOLOv11 training.</p>
+        <h1 id="canvas-navigation">3. Canvas Navigation & Selection Secrets</h1>
+        <p>There are several hidden features for manipulating the workspace completely fluidly without clicking UI buttons.</p>
 
-<h3>UNet Mode — Segmentation</h3>
-<p>Draw precise shapes that follow object boundaries. Supports solid shapes
-(polygon, bezier, circle, ellipse) and hollow ring shapes (frame, donut,
-hollow ellipse) for annotating ring-like objects such as seals, caps, and
-gaskets. Switch modes via the <b>Mode</b> menu or the toolbar buttons.</p>
+        <h2>Pan Mode (Moving the Image)</h2>
+        <p>If you are zoomed into a massive 4K image, you don't need to use the scrollbars:</p>
+        <ul>
+            <li><b>Middle Mouse Button:</b> Simply click and hold your <b>Scroll Wheel (Mouse 3)</b> anywhere on the canvas and drag your mouse to pan around instantly!</li>
+            <li><b>Spacebar:</b> Hold <code>Spacebar</code> on your keyboard, then Left-Click and drag.</li>
+        </ul>
 
-<p class="warn">⚠ &nbsp;Switching modes on an image that already has
-annotations shows a dialog — choose <b>Keep both</b> to show both layers
-simultaneously, or <b>Hide previous</b> to work in one mode at a time.
-Both layers are always saved — nothing is deleted when you switch.</p>
+        <h2>Advanced Selection Tool (N)</h2>
+        <p>Select the pointer arrow from the toolbar. You can click on objects to highlight them.</p>
+        <ul>
+            <li><b>Shift + Click:</b> Hold <code>Shift</code> and click multiple different shapes. They will all highlight at once, allowing you to move or delete the entire group simultaneously.</li>
+            <li><b>Marquee Select:</b> Left-click on an empty part of the background and drag your mouse to cast a dotted "Selection Box". Any shape caught inside the box will be added to your group selection!</li>
+            <li><b>Cloning:</b> Hold <code>Ctrl</code>, click an active shape, and drag it. An identical clone will peel off instantly!</li>
+        </ul>
 
-<!-- ═══════════════════════════════════════════════════════ -->
-<h2>Shape Tools</h2>
-<table>
-  <tr><th>Key</th><th>Tool</th><th>How to draw</th><th>Mode</th></tr>
-  <tr><td><code>B</code></td><td>Box</td>
-      <td>Click and drag</td><td>YOLO + UNet</td></tr>
-  <tr><td><code>P</code></td><td>Polygon</td>
-      <td>Click points, Enter or click first point to close</td>
-      <td>UNet</td></tr>
-  <tr><td><code>Q</code></td><td>Bezier curve</td>
-      <td>Click anchor points, Enter to close. Drag midpoint handles to curve edges</td>
-      <td>UNet</td></tr>
-  <tr><td><code>C</code></td><td>Circle</td>
-      <td>Click centre, drag outward</td><td>UNet</td></tr>
-  <tr><td><code>E</code></td><td>Ellipse</td>
-      <td>Click centre, drag to set both radii</td><td>UNet</td></tr>
-  <tr><td><code>F</code></td><td>Frame (hollow rect)</td>
-      <td>Click and drag. Drag inner handles to adjust wall thickness</td>
-      <td>UNet</td></tr>
-  <tr><td><code>O</code></td><td>Donut (hollow circle)</td>
-      <td>Click centre, drag outward. Drag inner handles to adjust hole size</td>
-      <td>UNet</td></tr>
-  <tr><td><code>H</code></td><td>Hollow ellipse</td>
-      <td>Click centre, drag. Drag inner handles independently</td>
-      <td>UNet</td></tr>
-  <tr><td><code>N</code></td><td>Selection</td>
-      <td>Click to select, drag to move</td><td>YOLO + UNet</td></tr>
-  <tr><td><code>T</code></td><td>Stamp template</td>
-      <td>Select template from dropdown, click to place</td>
-      <td>YOLO + UNet</td></tr>
-</table>
+        <h2>Nudging & Scaling (Keyboard Precision)</h2>
+        <p>Don't use your mouse if you need pixel-perfect accuracy.</p>
+        <ul>
+            <li><b>Micro Nudge:</b> Select a shape and tap the <code>Arrow Keys</code>. It will move exactly 1 pixel per tap.</li>
+            <li><b>Macro Nudge:</b> Hold <code>Shift + Arrow Keys</code> to jump 10 pixels per tap.</li>
+            <li><b>Live Scaling:</b> Select a shape, hold <code>Shift</code>, and scroll your <b>Mouse Wheel</b>. The shape will artificially inflate or deflate smoothly!</li>
+        </ul>
 
-<!-- ═══════════════════════════════════════════════════════ -->
-<h2>Hollow Shapes — Inner / Outer Offset</h2>
-<p>Any drawn shape can be made hollow via right-click:</p>
-<ul>
-  <li><b>Right-click a shape → Create Inner Shape</b> — adds an inner cutout
-      inset from the outer boundary. A slider controls the gap with a live
-      dashed preview.</li>
-  <li><b>Right-click a shape → Create Outer Shape</b> — expands a new outer
-      boundary around the existing shape.</li>
-</ul>
-<p>After creating the hollow pair, both boundaries have independent resize
-handles. The inner shape is always constrained to stay inside the outer
-with a minimum gap. For YOLO export, hollow shapes export the
-<b>outer bounding box only</b>.</p>
+        <h1 id="drawing-tools">4. Drawing Tools</h1>
+        <h2>The Active Toolset</h2>
+        <ul>
+            <li><b>Box (B):</b> Standard click-and-drag bounding box.</li>
+            <li><b>Polygon (P):</b> Drop continuous anchor points. Press <code>Enter</code> or click the starting point to lock and fill it.</li>
+            <li><b>Bezier (Q):</b> Drop anchors, hit <code>Enter</code> to lock the skeleton, and then freely drag the Yellow Diamond mid-point handles to bend smooth, perfect contours!</li>
+            <li><b>Circle (C):</b> Click the center, drag outwards for radius.</li>
+            <li><b>Ellipse (E):</b> Click the center, drag outwards for width/height.</li>
+        </ul>
 
-<!-- ═══════════════════════════════════════════════════════ -->
-<h2>Templates (Stamp Tool)</h2>
-<p>Save any shape — including hollow pairs — as a reusable template:</p>
-<ul>
-  <li>Draw and configure a shape, then <b>right-click → Save as Template</b></li>
-  <li>Give it a name. The template thumbnail shows the actual shape.</li>
-  <li>Select it from the template dropdown, press <code>T</code>, and
-      click the canvas to stamp it at the original size.</li>
-  <li>Templates are session-only — they reset when the app closes.</li>
-</ul>
+        <h2>Point-Level Undo / Redo</h2>
+        <p>If you are drawing a complex 50-point polygon and you mess up the 49th point, you do not need to restart!</p>
+        <p>Simply press <code>Ctrl + Z</code> gracefully <b>while you are actively drawing</b>. It will instantly delete the last point you dropped. If you went too far, press <code>Ctrl + Y</code> to redo the point!</p>
 
-<!-- ═══════════════════════════════════════════════════════ -->
-<h2>Autosave &amp; Project Files</h2>
-<p>Every annotation change is saved automatically — there is no Save button.
-Saves happen 800 ms after the last action so they never interrupt drawing.</p>
-<p>Opening an image folder creates a hidden <code>.dualannotator/</code>
-folder inside it:</p>
-<ul>
-  <li><code>project.json</code> — class definitions, mode, image order</li>
-  <li><code>annotations/image_001.jpg.json</code> — one file per image
-      containing both YOLO and UNet layers</li>
-</ul>
-<p>When you reopen the same folder the app detects the existing project and
-asks whether to <b>Resume</b> (restore all annotations) or
-<b>Start Fresh</b> (delete everything and begin again).</p>
-<p class="warn">⚠ &nbsp;If a source image file is replaced or renamed after
-annotation, the status bar will show a hash mismatch warning when that image
-is loaded. Annotations are preserved — they may just not align to the new image.</p>
+        <h1 id="hollow-shapes">5. Hollow Shapes (Cutouts)</h1>
+        <p>Perfect for seals, mechanical gaskets, donuts, or picture frames.</p>
+        <h2>Creation</h2>
+        <p>You can hollow out <b>any</b> solid shape via the right-click context menu:</p>
+        <ul>
+            <li><b>Create Inner Shape:</b> Cores out the insides. A popup thickness slider window will appear allowing you to visually adjust the inner-diameter wall interactively across the canvas!</li>
+            <li><b>Create Outer Shape:</b> Same concept, but leaves the current shape as the core and expands the boundaries outwards instead.</li>
+        </ul>
+        <h2>Modification</h2>
+        <p>You can delete a hollow cavity at any time by right-clicking the object and selecting <b>Remove Inner Cutout</b>.</p>
+        <p class="important">Note: YOLO does not natively understand true transparent holes. If you export a Hollow Shape under YOLO Mode, it will realistically just compute a flat bounding box framing the outermost perimeter.</p>
 
-<!-- ═══════════════════════════════════════════════════════ -->
-<h2>Exporting (File → Export Annotations, Ctrl+E)</h2>
-<p>Exports the saved annotations — never the live canvas — so you can export
-at any time without interrupting your work.</p>
+        <h1 id="autosave-projects">6. Autosave & Projects</h1>
+        <h2>Continuous Autosave</h2>
+        <p>You never need to remember to press "Save"! The application secretly saves the exact state of your canvas <b>800ms</b> after your last mouse release, ensuring zero interruptions to your workflow.</p>
+        
+        <h2>The Hidden Folder Structure</h2>
+        <p>When you open an image folder, the app generates a hidden <code>.dualannotator</code> directory. <b>Do not delete this if you wish to keep your project.</b></p>
+        <ul>
+            <li><code>project.json</code>: Contains all UI states, class lists, and colors.</li>
+            <li><code>annotations/*.json</code>: Stores lossless exact JSON mathematical vector data of every annotation you drew.</li>
+        </ul>
+        <h2>Project Recovery</h2>
+        <p>Re-opening a folder automatically restores everything down to the exact classes and shapes. If an image is renamed directly in Windows Explorer, the app will flag a mismatch warning on the bottom status bar, but it preserves your data safely!</p>
 
-<h3>YOLO format</h3>
-<p>Produces one <code>.txt</code> label file per image, a <code>data.yaml</code>
-training config, and a <code>classes.txt</code> index. All coordinates are
-normalised to <code>[0.0, 1.0]</code>. Format per line:
-<code>&lt;class_id&gt; &lt;cx&gt; &lt;cy&gt; &lt;w&gt; &lt;h&gt;</code></p>
+        <h1 id="templates-auto">7. Templates & Auto-Annotation</h1>
+        <h2>Template Stamping</h2>
+        <p>Tired of drawing the exact same complex mechanical widget repeatedly?</p>
+        <ol>
+            <li>Draw it perfectly once.</li>
+            <li>Right-click the shape and select <b>Save as Template</b>.</li>
+            <li>Select the <b>Stamp Tool (T)</b> from the toolbar. Ensure your template is selected in the dropdown.</li>
+            <li>Simply click anywhere on the canvas to instantly drop identical, fully-formed shapes!</li>
+        </ol>
 
-<h3>COCO format</h3>
-<p>Produces <code>instances_train.json</code> (and val/test) with pixel-space
-bounding boxes in standard COCO annotation format.</p>
+        <h2>Template Matching (Computer Vision Automation)</h2>
+        <p>You can leverage OpenCV to automate your annotation completely!</p>
+        <p>Right-click a shape and select <b>Trigger Template Matching</b>. A sidebar panel will slide open. Click <b>Run Detection</b>, and the app will actively scan the massive current image and attempt to auto-paint templates across the rest of the matching visual signatures. If it misses objects or predicts false-positives, simply drag the <b>Threshold Slider</b> to recalibrate the AI block matches!</p>
 
-<h3>Pascal VOC format</h3>
-<p>Produces one <code>.xml</code> file per image with pixel bounding boxes in
-Pascal VOC format, compatible with older training pipelines.</p>
+        <h1 id="exporting">8. Exporting Data</h1>
+        <p>Press <code>Ctrl + E</code> to open the Universal Mass Exporter menu. You can export safely at any time, it does not interrupt your active work!</p>
+        <h2>The Formats</h2>
+        <ul>
+            <li><b>YOLO (Txt):</b> Flattens everything into minimal bounding boxes. Generates <code>classes.txt</code> and <code>data.yaml</code>.</li>
+            <li><b>UNet / Concentric (Mask PNG):</b> Flattens everything into solid binary masks. Handles true hollow topologies perfectly! Choose whether you want flat Black/White or Multi-Class Grayscale representations.</li>
+            <li><b>Pascal VOC (XML):</b> Classic historical format mapping coordinates to physical pixels.</li>
+            <li><b>COCO (Json):</b> Translates thousands of annotations into the massive industry standard <code>instances_train.json</code> COCO structure.</li>
+        </ul>
+        <h2>Time-Saving Export Deltas</h2>
+        <p>The app dynamically organizes your data into Train/Val/Test folders based on slider percentages. 
+        If you check <b>"Only export changes"</b>, the app ensures that unchanged images simply reuse existing heavy computations, saving you massive amounts of waiting time on huge datasets!</p>
 
-<h3>Delta export</h3>
-<p>When <b>Only export changes since last export</b> is checked, images that
-have not changed since the previous export run are skipped. Only new or
-modified images are processed. The output folder uses a timestamped subfolder
-name (e.g. <code>yolo_2026-03-14_18-44/</code>) so each export run is
-preserved separately.</p>
+        <h1 id="raw-png">9. RAW → PNG Converter Tool</h1>
+        <p>A built-in heavy-duty Thermal Image converter to process raw 16-bit binary <code>.raw</code> data directly from specialized camera hardware!</p>
+        <ul>
+            <li><b>NumPy Thread Acceleration:</b> Converts thousands of 16-bit Little-Endian binaries to standard 8-bit PNGs instantly via background processing.</li>
+            <li><b>Interactive ROI Crop:</b> Look at the preview canvas! You can use your mouse to draw an active Region of Interest (Crop Box) over the sample image. Hitting "Convert" will physically enforce that crop limit across all folders!</li>
+            <li><b>Advanced Normalizations:</b> 
+                <ul>
+                    <li><b>Original (Defect Padding):</b> Mathematically matches older C++ software parameters. Enforces a strict padding threshold (up to 1000 values) on both extreme ends to prevent thermal outliers from destroying the image contrast.</li>
+                    <li><b>Robust Percentile:</b> Mathematically cuts off the upper and lower 1% of extreme outlier pixels, natively hiding broken dead sensor pixels.</li>
+                </ul>
+            </li>
+            <li><b>Colormaps:</b> Remaps standard grayscale heat values out into scientific visual filters like Inferno or Viridis directly during conversion!</li>
+        </ul>
 
-<h3>Train / Val / Test split</h3>
-<p>Annotated images are randomly distributed across train, val, and test
-folders according to the configured percentages. A fixed random seed
-(default 42) ensures the same image lands in the same split every time you
-export, which is essential for reproducible training results.</p>
+        <h1 id="shortcuts">10. Master Keyboard Shortcuts</h1>
+        <table>
+            <tr><th>Key</th><th>Function</th><th>Key</th><th>Function</th></tr>
+            <tr><td><code>1-9</code></td><td>Auto-select Class</td><td><code>Ctrl+Z</code></td><td>Undo Shape / <b>Mid-Draw Point</b></td></tr>
+            <tr><td><code>P</code></td><td>Draw Polygon</td><td><code>Ctrl+Y</code></td><td>Redo Shape / <b>Mid-Draw Point</b></td></tr>
+            <tr><td><code>Q</code></td><td>Draw Bezier Curve</td><td><code>Ctrl+C / V</code></td><td>Copy & Paste Selection</td></tr>
+            <tr><td><code>C / E</code></td><td>Draw Circle / Ellipse</td><td><code>Del / Backspace</code></td><td>Delete Selection</td></tr>
+            <tr><td><code>F / O / H</code></td><td>Draw Hollow Variants</td><td><code>Ctrl+Del</code></td><td>Wipe Entire Canvas</td></tr>
+            <tr><td><code>B</code></td><td>Draw Bounding Box</td><td><code>Ctrl+Drag</code></td><td>Clone Selection</td></tr>
+            <tr><td><code>N</code></td><td>Selection Pointer</td><td><code>Ctrl+A</code></td><td>Select All</td></tr>
+            <tr><td><code>T</code></td><td>Template Stamp Tool</td><td><code>Ctrl+F</code></td><td>Fit Image to Screen</td></tr>
+            <tr><td><code>A / D</code></td><td>Flip Prev/Next Image</td><td><code>+/-</code></td><td>Zoom In/Out</td></tr>
+            <tr><td><code>Tab</code></td><td>Jump to Unannotated</td><td><code>Middle Click / Space</code></td><td>Toggle Hand Pan Mode</td></tr>
+            <tr><td><code>Ctrl+E</code></td><td>Mass Exporter Menu</td><td><code>Arrows</code></td><td>Micro Nudge (1px)</td></tr>
+            <tr><td><code>Enter</code></td><td>Finish Polygons</td><td><code>Shift+Arrows</code></td><td>Macro Nudge (10px)</td></tr>
+            <tr><td><code>Shift+Scroll</code></td><td>Scale/Resize Shape</td><td><code>Shift+Click</code></td><td>Multi-select Shapes</td></tr>
+        </table>
+        
+        <br>
+        <p style="text-align:center; color:#555; font-size: 12px; margin-top:30px;">DualAnnotator Core Engine &nbsp;·&nbsp; Python 3.9+ &nbsp;·&nbsp; PyQt5 &nbsp;·&nbsp; OpenCV</p>
+        """
+        browser.setHtml(html_content)
 
-<!-- ═══════════════════════════════════════════════════════ -->
-<h2>All Keyboard Shortcuts</h2>
-<table>
-  <tr><th>Key</th><th>Action</th><th>Key</th><th>Action</th></tr>
-  <tr><td><code>B</code></td><td>Box tool</td>
-      <td><code>Ctrl+Z</code></td><td>Undo</td></tr>
-  <tr><td><code>P</code></td><td>Polygon tool</td>
-      <td><code>Ctrl+Y</code></td><td>Redo</td></tr>
-  <tr><td><code>Q</code></td><td>Bezier tool</td>
-      <td><code>Ctrl+C</code></td><td>Copy shape</td></tr>
-  <tr><td><code>C</code></td><td>Circle tool</td>
-      <td><code>Ctrl+V</code></td><td>Paste shape</td></tr>
-  <tr><td><code>E</code></td><td>Ellipse tool</td>
-      <td><code>Del</code></td><td>Delete selected</td></tr>
-  <tr><td><code>F</code></td><td>Frame tool</td>
-      <td><code>Ctrl+E</code></td><td>Export annotations</td></tr>
-  <tr><td><code>O</code></td><td>Donut tool</td>
-      <td><code>Ctrl+Shift+O</code></td><td>Open image folder</td></tr>
-  <tr><td><code>H</code></td><td>Hollow ellipse</td>
-      <td><code>Ctrl+F</code></td><td>Fit to window</td></tr>
-  <tr><td><code>N</code></td><td>Selection mode</td>
-      <td><code>Ctrl+F</code></td><td>Fit to window</td></tr>
-  <tr><td><code>T</code></td><td>Stamp tool</td>
-      <td><code>+</code></td><td>Zoom in</td></tr>
-  <tr><td><code>A</code></td><td>Previous image</td>
-      <td><code>-</code></td><td>Zoom out</td></tr>
-  <tr><td><code>D</code></td><td>Next image</td>
-      <td><code>Space</code></td><td>Toggle pan mode</td></tr>
-  <tr><td><code>Tab</code></td><td>Next unannotated</td>
-      <td><code>Enter</code></td><td>Finish polygon / bezier</td></tr>
-  <tr><td><code>Del / Backspace</code></td><td>Delete selected</td>
-      <td><code>Esc</code></td><td>Cancel / Deselect all</td></tr>
-  <tr><td><code>Ctrl+Del</code></td><td>Delete all annotations</td>
-      <td><code>Ctrl+drag</code></td><td>Clone shape(s)</td></tr>
-  <tr><td><code>Ctrl+A</code></td><td>Select all shapes</td>
-      <td><code>Shift+Click</code></td><td>Toggle shape in selection</td></tr>
-  <tr><td><code>Arrow keys</code></td><td>Nudge shape (1px)</td>
-      <td><code>Shift+Arrow</code></td><td>Nudge shape (10px)</td></tr>
-</table>
+        # Pre-calculated scroll sync variables
+        nav_anchors = [
+            "about", "getting-started", "class-management", "canvas-navigation", "drawing-tools",
+            "hollow-shapes", "autosave-projects", "templates-auto",
+            "exporting", "raw-png", "shortcuts"
+        ]
+        
+        # When user clicks the left list, scroll to exactly that anchor.
+        def scroll_to_section(idx):
+            if idx < len(nav_anchors):
+                browser._programmatic_scroll = True
+                browser.scrollToAnchor(nav_anchors[idx])
+                # Reset programmatic lock shortly after to allow natural scroll tracking to resume
+                QTimer.singleShot(100, lambda: setattr(browser, '_programmatic_scroll', False))
 
-<p class="dim" style="margin-top: 12px;">
-Built with Python 3.9+ and PyQt5 &nbsp;·&nbsp;
-Pillow &nbsp;·&nbsp; Shapely &nbsp;·&nbsp; PyYAML
-</p>
-"""
-
-        label = QLabel()
-        label.setTextFormat(Qt.RichText)
-        label.setWordWrap(True)
-        label.setText(html)
-        label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        layout.addWidget(label)
-
-        scroll.setWidget(content)
-        outer.addWidget(scroll)
-
-        # ── Close button ──
-        btn = QPushButton("Close")
-        btn.setFixedWidth(100)
+        nav_list.currentRowChanged.connect(scroll_to_section)
+        
+        # Bi-directional sync: As you scroll, update the left list highlights.
+        y_positions = []
+        
+        def track_scroll(val):
+            # Do not track if the scroll was commanded by the QListWidget click
+            if getattr(browser, '_programmatic_scroll', False):
+                return
+                
+            nonlocal y_positions
+            # Calculate the literal document Y bounds lazily on first scroll
+            if not y_positions:
+                doc = browser.document()
+                layout = doc.documentLayout()
+                headers = [
+                    "0. About DualAnnotator", "1. Getting Started", "2. Class Management", "3. Canvas Navigation",
+                    "4. Drawing Tools", "5. Hollow Shapes", "6. Autosave",
+                    "7. Templates", "8. Exporting", "9. RAW", "10. Master Keyboard"
+                ]
+                for h in headers:
+                    cursor = doc.find(h)
+                    if not cursor.isNull():
+                        y_positions.append(layout.blockBoundingRect(cursor.block()).y())
+                    else:
+                        y_positions.append(-1)
+                        
+            # Determine which header we are currently visually underneath
+            current_idx = 0
+            for i, pos_y in enumerate(y_positions):
+                if pos_y != -1 and val >= (pos_y - 20):  # 20px overlap buffer
+                    current_idx = i
+                    
+            if nav_list.currentRow() != current_idx:
+                nav_list.blockSignals(True)
+                nav_list.setCurrentRow(current_idx)
+                nav_list.blockSignals(False)
+                
+        browser.verticalScrollBar().valueChanged.connect(track_scroll)
+        
+        splitter.addWidget(nav_list)
+        splitter.addWidget(browser)
+        splitter.setSizes([280, 820])
+        
+        outer.addWidget(splitter)
+        
+        # Bottom Close Button
+        btn_lyt = QHBoxLayout()
+        btn = QPushButton("Close Reference")
         btn.clicked.connect(dlg.accept)
-        btn_row = QWidget()
-        btn_layout = QVBoxLayout(btn_row)
-        btn_layout.setContentsMargins(0, 0, 10, 0)
-        btn_layout.addWidget(btn, alignment=Qt.AlignRight)
-        outer.addWidget(btn_row)
+        btn_lyt.addStretch()
+        btn_lyt.addWidget(btn)
+        outer.addLayout(btn_lyt)
 
         dlg.exec_()

@@ -241,8 +241,6 @@ class AutoAnnotatePanel(QWidget):
         for shape in self.canvas.shapes:
             if getattr(shape, 'hollow_role', None) == 'inner':
                 continue
-            if shape in self.template_shapes:
-                continue  # don't suppress near the template itself
             bbox = TemplateEngine.shape_to_pixel_bbox(shape, iw, ih)
             if bbox:
                 result.append(bbox)
