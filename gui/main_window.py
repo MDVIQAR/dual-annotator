@@ -868,6 +868,10 @@ class MainWindow(QMainWindow):
         from gui.tabs.raw_to_png_tab import RawToPngTab
         self.raw_to_png_tab = RawToPngTab()
         self.tab_widget.addTab(self.raw_to_png_tab, "🖼️  RAW → PNG")
+        
+        # Connect tab signal to auto-load output folder
+        if hasattr(self.raw_to_png_tab, 'conversion_completed'):
+            self.raw_to_png_tab.conversion_completed.connect(self._on_conversion_completed)
 
     def _build_annotate_tab(self, container):
         """Build the annotation workspace inside *container*."""
@@ -1461,15 +1465,22 @@ class MainWindow(QMainWindow):
                 
         self.status_bar.showMessage(f"Switched to {mode.upper()} mode", 2000)
 
-    
-    def open_image_folder(self):
+    def _on_conversion_completed(self, out_dir):
+        """Automatically load the PNG output folder and switch to Annotate tab."""
+        if os.path.isdir(out_dir):
+            self.open_image_folder(folder_path=out_dir)
+            self.tab_widget.setCurrentIndex(0) # Switch to the Annotate tab
+
+
+    def open_image_folder(self, folder_path=None):
         """Open a folder containing images"""
-        folder_path = QFileDialog.getExistingDirectory(
-            self,
-            "Select Image Folder",
-            "",
-            QFileDialog.ShowDirsOnly
-        )
+        if not folder_path or not isinstance(folder_path, str):
+            folder_path = QFileDialog.getExistingDirectory(
+                self,
+                "Select Image Folder",
+                "",
+                QFileDialog.ShowDirsOnly
+            )
         if not folder_path:
             return
             

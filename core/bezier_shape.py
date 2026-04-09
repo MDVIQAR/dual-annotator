@@ -188,6 +188,8 @@ class BezierPolygonShape(Shape):
     def _constrain_inner_points(self):
         """Clamp each inner anchor so it stays inside the outer bezier polygon
         and at least a small distance away from the outer boundary."""
+        from core.polygon_shape import PolygonShape
+        
         if not getattr(self, 'inner_points', None) or len(self.points) < 3:
             return
 
