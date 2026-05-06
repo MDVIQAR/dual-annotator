@@ -873,6 +873,15 @@ class MainWindow(QMainWindow):
         if hasattr(self.raw_to_png_tab, 'conversion_completed'):
             self.raw_to_png_tab.conversion_completed.connect(self._on_conversion_completed)
 
+        # ── Tab 3: Data Preparation ──
+        from gui.tabs.data_prep_tab import DataPrepTab
+        self.data_prep_tab = DataPrepTab()
+        self.tab_widget.addTab(self.data_prep_tab, "📦  Data Prep")
+
+        from gui.tabs.training_tab import TrainingTab
+        self.training_tab = TrainingTab()
+        self.tab_widget.addTab(self.training_tab, "🚀  Train")
+
     def _build_annotate_tab(self, container):
         """Build the annotation workspace inside *container*."""
         # Main vertical layout
