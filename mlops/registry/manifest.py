@@ -280,9 +280,10 @@ class ManifestReader:
     def get_dataset_path(self, datasets_root: str = "") -> str:
         """
         Resolve the dataset path with the following priority:
-          1. absolute_path if it exists on the current machine's filesystem
-          2. {datasets_root}/{relative_path} if datasets_root and relative_path are set
-          3. absolute_path as-is (caller handles the missing-path case)
+          1. absolute_path if it exists on the current machine
+          2. {project_folder}/dataset/ — the GDrive copy inside the registry
+          3. {datasets_root}/{relative_path} — legacy fallback
+          4. absolute_path as-is (caller handles missing)
         """
         data = self.read()
         if data is None:
@@ -291,11 +292,19 @@ class ManifestReader:
         absolute_path = data.get("dataset", {}).get("absolute_path", "")
         relative_path = data.get("dataset", {}).get("relative_path", "")
 
-        if absolute_path and os.path.exists(absolute_path):
+        if absolute_path and os.path.isdir(absolute_path):
             return absolute_path
 
+        # GDrive copy: dataset/ lives next to the version folder inside the project folder
+        project_folder  = os.path.dirname(self._folder)
+        gdrive_dataset  = os.path.join(project_folder, "dataset")
+        if os.path.isdir(gdrive_dataset):
+            return gdrive_dataset
+
         if datasets_root and relative_path:
-            return os.path.join(datasets_root, relative_path)
+            candidate = os.path.join(datasets_root, relative_path)
+            if os.path.isdir(candidate):
+                return candidate
 
         return absolute_path
 

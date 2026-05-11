@@ -524,14 +524,24 @@ class TrainingTab(QWidget):
 
     def _restore_settings(self):
         s = self._settings
-        # Find annotator index by initials
+        _block = [
+            self._annotator_cb, self._project_cb, self._unet_arch_cb,
+            self._encoder_cb, self._weights_cb, self._yolo_model_cb,
+            self._epochs_sp, self._batch_sp, self._lr_sp,
+            self._width_sp, self._height_sp, self._in_channels_sp,
+            self._out_classes_sp, self._device_cb,
+            self._radio_yolo, self._radio_unet,
+        ]
+        for w in _block:
+            w.blockSignals(True)
+
         initials = s.get("annotator_initials", "")
         if initials:
             for i in range(self._annotator_cb.count()):
                 if self._annotator_cb.itemData(i).get("initials") == initials:
                     self._annotator_cb.setCurrentIndex(i)
                     break
-                    
+
         proj = s.get("project", "")
         if proj:
             idx = self._project_cb.findText(proj)
@@ -539,7 +549,7 @@ class TrainingTab(QWidget):
                 self._project_cb.setCurrentIndex(idx)
             else:
                 self._project_cb.setCurrentText(proj)
-                
+
         self._unet_arch_cb.setCurrentText(s.get("architecture", "Unet"))
         self._encoder_cb.setCurrentText(s.get("encoder", "efficientnet-b3"))
         self._weights_cb.setCurrentText(s.get("encoder_weights", "imagenet"))
@@ -552,11 +562,15 @@ class TrainingTab(QWidget):
         self._in_channels_sp.setValue(int(s.get("in_channels", 3)))
         self._out_classes_sp.setValue(int(s.get("out_classes", 2)))
         self._device_cb.setCurrentText(s.get("device", "cpu"))
-        
+
         if s.get("task_type", "unet") == "yolo":
             self._radio_yolo.setChecked(True)
         else:
             self._radio_unet.setChecked(True)
+
+        for w in _block:
+            w.blockSignals(False)
+
         self._on_task_changed()
 
         ds_path = s.get("dataset_folder", "")
@@ -773,9 +787,67 @@ class TrainingTab(QWidget):
         self._start_btn.setEnabled(True)
         self._prog_frame.hide()
         self._worker = None
-        
+
         if success:
             self._rc_lbl.setText(f"✓ Training Complete — Version ID: {version_id}")
             self._result_card.show()
         else:
             self._append_log("<span style='color:#f87171'>[FAILED] Training failed or was cancelled.</span>")
+
+    def load_from_manifest(self, manifest: dict):
+        """Pre-fill all training form fields from a manifest dict (Clone & Re-train)."""
+        hp         = manifest.get("hyperparams", {})
+        model_type = manifest.get("model_type", "unet").lower()
+
+        if model_type == "yolo":
+            self._radio_yolo.setChecked(True)
+        else:
+            self._radio_unet.setChecked(True)
+        self._on_task_changed()
+
+        if model_type == "unet":
+            arch = hp.get("architecture", "Unet")
+            if self._unet_arch_cb.findText(arch) >= 0:
+                self._unet_arch_cb.setCurrentText(arch)
+            enc = hp.get("encoder", "efficientnet-b3")
+            if self._encoder_cb.findText(enc) >= 0:
+                self._encoder_cb.setCurrentText(enc)
+            w = hp.get("encoder_weights", "imagenet")
+            if self._weights_cb.findText(w) >= 0:
+                self._weights_cb.setCurrentText(w)
+        else:
+            arch = hp.get("architecture", "yolov8n")
+            if self._yolo_model_cb.findText(arch) >= 0:
+                self._yolo_model_cb.setCurrentText(arch)
+
+        self._epochs_sp.setValue(int(hp.get("epochs", 100)))
+        self._batch_sp.setValue(int(hp.get("batch_size", 4)))
+        self._lr_sp.setValue(float(hp.get("learning_rate", 0.001)))
+        self._width_sp.setValue(int(hp.get("image_width", 320)))
+        self._height_sp.setValue(int(hp.get("image_height", 240)))
+        self._in_channels_sp.setValue(int(hp.get("in_channels", 3)))
+        self._out_classes_sp.setValue(int(hp.get("out_classes", 2)))
+        dev = hp.get("device", "cpu")
+        if self._device_cb.findText(dev) >= 0:
+            self._device_cb.setCurrentText(dev)
+
+        project = manifest.get("project", "")
+        if project:
+            idx = self._project_cb.findText(project)
+            if idx >= 0:
+                self._project_cb.setCurrentIndex(idx)
+            else:
+                self._project_cb.setCurrentText(project)
+
+        version_id = manifest.get("version_id", "")
+        self._commit_edit.setText(f"Clone of {version_id}")
+
+        # Try to resolve and load dataset from GDrive copy
+        vf = manifest.get("version_folder", "")
+        if vf:
+            from mlops.registry.manifest import ManifestReader
+            ds_path = ManifestReader(vf).get_dataset_path()
+            if ds_path and os.path.isdir(ds_path):
+                self._load_dataset_info(ds_path)
+
+        self._autosave()

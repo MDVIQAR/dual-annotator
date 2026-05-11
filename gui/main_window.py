@@ -882,6 +882,20 @@ class MainWindow(QMainWindow):
         self.training_tab = TrainingTab()
         self.tab_widget.addTab(self.training_tab, "🚀  Train")
 
+        from gui.tabs.registry_tab import RegistryTab
+        self.registry_tab = RegistryTab()
+        self.tab_widget.addTab(self.registry_tab, "🗂  Registry")
+
+        from gui.tabs.settings_tab import SettingsTab
+        self.settings_tab = SettingsTab()
+        self.tab_widget.addTab(self.settings_tab, "⚙  Settings")
+
+        self.registry_tab.retrain_requested.connect(self._on_retrain_requested)
+
+    def _on_retrain_requested(self, payload: dict):
+        self.training_tab.load_from_manifest(payload)
+        self.tab_widget.setCurrentWidget(self.training_tab)
+
     def _build_annotate_tab(self, container):
         """Build the annotation workspace inside *container*."""
         # Main vertical layout

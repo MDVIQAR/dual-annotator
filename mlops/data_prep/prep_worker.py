@@ -5,6 +5,9 @@ QThread background worker that orchestrates the full data preparation pipeline.
 Emits log/progress signals so the UI stays responsive during long operations.
 """
 
+import os
+import shutil
+
 from PyQt5.QtCore import QThread, pyqtSignal
 
 from mlops.data_prep.preparator import DataPreparator
@@ -21,9 +24,10 @@ class DataPrepWorker(QThread):
     hash_progress = pyqtSignal(int, int)   # (current_file, total_files)
     finished      = pyqtSignal(bool, dict) # (success, dataset_info)
 
-    def __init__(self, config: dict, parent=None):
+    def __init__(self, config: dict, registry_root: str = "", parent=None):
         super().__init__(parent)
         self._config = config
+        self._registry_root = registry_root
 
     # ------------------------------------------------------------------
     # QThread entry point
@@ -47,7 +51,7 @@ class DataPrepWorker(QThread):
         images_folder = cfg["images_folder"]
         labels_folder = cfg["labels_folder"]
         test_folder   = cfg.get("test_folder", "") or None
-        if test_folder and not __import__("os").path.isdir(test_folder):
+        if test_folder and not os.path.isdir(test_folder):
             test_folder = None
         output_base  = cfg["output_base"]
         project_name = cfg["project_name"]
@@ -129,7 +133,62 @@ class DataPrepWorker(QThread):
         DataPreparator.write_dataset_info(output_folder, info)
         self.log.emit("  dataset_info.json written")
 
-        # ── Step 8: Done ───────────────────────────────────────────────
+        # ── Step 8: Copy to GDrive ─────────────────────────────────────────────
+        gdrive_dataset_path = ""
+        if self._registry_root:
+            project_folder = os.path.join(self._registry_root, project_name)
+            gdrive_dest    = os.path.join(project_folder, "dataset")
+            try:
+                os.makedirs(project_folder, exist_ok=True)
+                self.log.emit("Copying dataset to Google Drive...")
+
+                # Collect all files to copy
+                all_files = []
+                for dirpath, _, filenames in os.walk(output_folder):
+                    for fname in filenames:
+                        all_files.append(os.path.join(dirpath, fname))
+
+                total_files = len(all_files)
+
+                # Remove old GDrive copy if it exists
+                if os.path.isdir(gdrive_dest):
+                    shutil.rmtree(gdrive_dest)
+                os.makedirs(gdrive_dest)
+
+                for i, src in enumerate(all_files):
+                    rel = os.path.relpath(src, output_folder)
+                    dst = os.path.join(gdrive_dest, rel)
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    shutil.copy2(src, dst)
+                    pct = 85 + int((i + 1) / total_files * 12) if total_files else 97
+                    self.progress.emit(pct)
+
+                # Rewrite dataset_info.json in GDrive copy with GDrive path
+                info_gdrive = dict(info)
+                info_gdrive["output_folder"] = gdrive_dest.replace("\\", "/")
+                DataPreparator.write_dataset_info(gdrive_dest, info_gdrive)
+
+                # For YOLO: rewrite data.yaml with GDrive path
+                if task_type == "yolo":
+                    yaml_path = os.path.join(gdrive_dest, "data.yaml")
+                    if os.path.isfile(yaml_path):
+                        with open(yaml_path, "r", encoding="utf-8") as f:
+                            content = f.read()
+                        gdrive_abs = gdrive_dest.replace("\\", "/")
+                        new_lines = []
+                        for line in content.splitlines():
+                            new_lines.append(f"path: {gdrive_abs}" if line.startswith("path:") else line)
+                        with open(yaml_path, "w", encoding="utf-8") as f:
+                            f.write("\n".join(new_lines) + "\n")
+
+                gdrive_dataset_path = gdrive_dest
+                self.log.emit(f"  ✓ GDrive copy: {gdrive_dest}")
+            except Exception as copy_err:
+                self.log.emit(f"  ⚠ GDrive copy failed: {copy_err}")
+
+        info["gdrive_dataset_path"] = gdrive_dataset_path
+
+        # ── Step 9: Done ───────────────────────────────────────────────
         self.progress.emit(100)
         self.log.emit(_SEP)
         self.log.emit(f"  ✓ Dataset ready at: {output_folder}")

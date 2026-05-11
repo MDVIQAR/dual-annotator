@@ -46,7 +46,8 @@ def build_training_config(form: dict) -> dict:
     with open(info_path, "r", encoding="utf-8") as fh:
         dataset_info_raw = json.load(fh)
 
-    task_type   = dataset_info_raw.get("task_type", "unet")
+    # form["task_type"] (from radio button) takes precedence over dataset_info.json
+    task_type   = str(form.get("task_type", dataset_info_raw.get("task_type", "unet")))
     train_count = int(dataset_info_raw.get("train_count", 0))
     val_count   = int(dataset_info_raw.get("val_count", 0))
     test_count  = int(dataset_info_raw.get("test_count", 0))
@@ -98,7 +99,7 @@ def build_training_config(form: dict) -> dict:
             "num_classes":   num_classes,
             "sha256":        sha256,
             "absolute_path": os.path.abspath(dataset_folder),
-            "relative_path": "",
+            "relative_path": "dataset",
         },
         "hyperparams": {
             "architecture":    architecture,
@@ -234,12 +235,12 @@ def run_preflight(config: dict, registry_root: str, scripts_dir: str) -> list:
                 "warn": True,
                 "msg": "No CUDA — will train on CPU",
             })
-    except ImportError:
+    except Exception:
         results.append({
             "name": "GPU available",
             "ok": False,
             "warn": True,
-            "msg": "torch not installed",
+            "msg": "torch not installed or broken",
         })
 
     return results

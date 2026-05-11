@@ -154,6 +154,40 @@ def get_dataset_hash_cached(folder_path: str, progress_callback=None) -> str:
 # Path helpers
 # ---------------------------------------------------------------------------
 
+def write_project_csv(registry_root: str, project: str) -> None:
+    """
+    Write {registry_root}/{project}/models_registry.csv with one row per version.
+    Called automatically after training finishes and after ONNX export completes.
+    Failures are silently swallowed by callers — never crash training over CSV.
+    """
+    import csv
+    from .scanner import RegistryScanner
+
+    project_dir = os.path.join(registry_root, project)
+    if not os.path.isdir(project_dir):
+        return
+
+    versions = RegistryScanner(registry_root).get_versions(project)
+
+    csv_path = os.path.join(project_dir, "models_registry.csv")
+    tmp_path = csv_path + ".tmp"
+
+    fieldnames = [
+        "version_id", "project", "annotator", "model_type",
+        "status", "architecture", "encoder", "epochs",
+        "best_val_loss", "best_epoch", "has_onnx", "has_weights",
+        "sync_complete", "started_at", "commit_message",
+    ]
+
+    with open(tmp_path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        for v in versions:
+            writer.writerow(v)
+
+    os.replace(tmp_path, csv_path)
+
+
 def make_relative_path(absolute_path: str, datasets_root: str) -> str:
     """
     Return absolute_path expressed relative to datasets_root, using forward slashes.

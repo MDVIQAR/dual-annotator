@@ -19,6 +19,7 @@ from PyQt5.QtCore import Qt, pyqtSlot
 from PyQt5.QtGui import QFont, QColor
 
 from mlops.data_prep.prep_worker import DataPrepWorker
+from mlops.registry import RegistrySettings
 
 
 # ---------------------------------------------------------------------------
@@ -413,10 +414,14 @@ class DataPrepTab(QWidget):
         self._rc_path.setWordWrap(True)
         self._rc_hash = QLabel("")
         self._rc_hash.setStyleSheet("color: #8ab4f8; font-size: 11px;")
+        self._rc_gdrive = QLabel("")
+        self._rc_gdrive.setStyleSheet("color: #4fc3f7; font-size: 11px;")
+        self._rc_gdrive.setWordWrap(True)
         rc_layout.addWidget(self._rc_title)
         rc_layout.addWidget(self._rc_counts)
         rc_layout.addWidget(self._rc_path)
         rc_layout.addWidget(self._rc_hash)
+        rc_layout.addWidget(self._rc_gdrive)
         self._result_card.hide()
         layout.addWidget(self._result_card)
 
@@ -516,7 +521,8 @@ class DataPrepTab(QWidget):
             "class_names":   class_names,
         }
 
-        self._worker = DataPrepWorker(config, parent=self)
+        registry_root = RegistrySettings().get_registry_root()
+        self._worker = DataPrepWorker(config, registry_root=registry_root, parent=self)
         self._worker.log.connect(self._append_log)
         self._worker.progress.connect(self._progress_bar.setValue)
         self._worker.hash_progress.connect(self._on_hash_progress)
@@ -571,6 +577,13 @@ class DataPrepTab(QWidget):
             disp_path = path if len(path) <= max_path else "..." + path[-(max_path - 3):]
             self._rc_path.setText(f"📁 {disp_path}")
             self._rc_hash.setText(f"SHA-256: {sha[:16]}..." if sha else "")
+            gdrive_path = info.get("gdrive_dataset_path", "")
+            if gdrive_path:
+                self._rc_gdrive.setText(f"☁ GDrive: {gdrive_path}")
+                self._rc_gdrive.show()
+            else:
+                self._rc_gdrive.setText("⚠ GDrive copy skipped (registry not configured)")
+                self._rc_gdrive.show()
             self._result_card.show()
         else:
             self._append_log("<span style='color:#f87171'>[FAILED] Check the console for details.</span>")
