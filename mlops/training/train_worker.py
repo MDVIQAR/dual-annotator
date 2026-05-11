@@ -36,6 +36,7 @@ class TrainWorker(QThread):
         self._scripts_dir   = scripts_dir
         self._cancelled     = False
         self._proc          = None
+        self._final_metrics = {}
 
     # ------------------------------------------------------------------
     # QThread entry point
@@ -87,6 +88,11 @@ class TrainWorker(QThread):
         self.log.emit(f"[INFO] Launching: {script_path}")
         cmd = [sys.executable, script_path, "--config", config_json_path, "--out", version_folder]
 
+        import pathlib
+        project_root = str(pathlib.Path(__file__).resolve().parents[2])
+        env = os.environ.copy()
+        env["PYTHONPATH"] = project_root + os.pathsep + env.get("PYTHONPATH", "")
+
         self._proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -95,6 +101,7 @@ class TrainWorker(QThread):
             encoding="utf-8",
             errors="replace",
             bufsize=1,
+            env=env,
         )
 
         # Step 5 — Read stdout line by line
@@ -118,6 +125,15 @@ class TrainWorker(QThread):
                     self.progress.emit(int(line.split()[1]))
                 except (IndexError, ValueError):
                     pass
+            elif line.startswith("METRICS_FINAL "):
+                tokens = line[len("METRICS_FINAL "):].split()
+                for tok in tokens:
+                    if "=" in tok:
+                        k, _, v = tok.partition("=")
+                        try:
+                            self._final_metrics[k] = float(v)
+                        except ValueError:
+                            pass
             else:
                 self.log.emit(line)
 
@@ -135,8 +151,20 @@ class TrainWorker(QThread):
             )
             raise RuntimeError(f"Training script failed (exit {self._proc.returncode})")
         else:
+            if self._final_metrics:
+                writer.update_metrics(
+                    best_val_loss   = self._final_metrics.get("best_val_loss", 0.0),
+                    best_epoch      = int(self._final_metrics.get("best_epoch", 0)),
+                    final_train_loss= self._final_metrics.get("final_train_loss", 0.0),
+                )
+            writer.update_artifacts(weights="best.pt")
             self.progress.emit(100)
             writer.finalize()
+            try:
+                from mlops.registry.utils import write_project_csv
+                write_project_csv(self._registry_root, project)
+            except Exception:
+                pass
             self.log.emit(f"[DONE] Version {version_id} saved to registry.")
             return version_id
 

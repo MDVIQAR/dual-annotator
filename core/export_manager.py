@@ -229,7 +229,9 @@ class ExportManager:
             rx,ry = np.get("rx", 0), np.get("ry", 0)
             return (cx-rx, cy-ry, cx+rx, cy+ry)
         elif t == "frame":
-            return (np.get("x1", 0), np.get("y1", 0), np.get("x2", 0), np.get("y2", 0))
+            fx1, fy1 = np.get("x1", 0), np.get("y1", 0)
+            fx2, fy2 = np.get("x2", 0), np.get("y2", 0)
+            return (min(fx1, fx2), min(fy1, fy2), max(fx1, fx2), max(fy1, fy2))
         elif t == "donut":
             cx,cy = np.get("cx", 0), np.get("cy", 0)
             r = np.get("outer_r", 0)

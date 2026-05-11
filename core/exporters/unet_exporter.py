@@ -261,6 +261,8 @@ class UNetExporter:
         elif t == "frame":
             x1 = np_.get("x1", 0); y1 = np_.get("y1", 0)
             x2 = np_.get("x2", 0); y2 = np_.get("y2", 0)
+            x1, x2 = min(x1, x2), max(x1, x2)
+            y1, y2 = min(y1, y2), max(y1, y2)
             draw.rectangle([x1, y1, x2, y2], fill=pixel_value)
             # Compute inner rect from wall thickness
             t_top    = np_.get("t_top",    np_.get("thickness", 20))
@@ -373,6 +375,8 @@ class UNetExporter:
         elif t == "frame":
             x1 = np_.get("x1", 0); y1 = np_.get("y1", 0)
             x2 = np_.get("x2", 0); y2 = np_.get("y2", 0)
+            x1, x2 = min(x1, x2), max(x1, x2)
+            y1, y2 = min(y1, y2), max(y1, y2)
             draw.rectangle([x1, y1, x2, y2], fill=rgba_color)
             if outline_color:
                 draw.rectangle([x1, y1, x2, y2], outline=outline_color, width=ow)

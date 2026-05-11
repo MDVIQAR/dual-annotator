@@ -87,6 +87,8 @@ class YoloExporter:
         elif t == "frame":
             x1, y1 = np.get("x1", 0), np.get("y1", 0)
             x2, y2 = np.get("x2", 0), np.get("y2", 0)
+            x1, x2 = min(x1, x2), max(x1, x2)
+            y1, y2 = min(y1, y2), max(y1, y2)
             cx = clamp(((x1 + x2) / 2) / iw)
             cy = clamp(((y1 + y2) / 2) / ih)
             w  = clamp((x2 - x1) / iw)
