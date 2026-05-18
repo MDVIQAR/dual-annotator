@@ -39,8 +39,15 @@ def main():
         img_w    = hp["image_width"]
         device   = hp.get("device", "cpu")
         yaml_path = os.path.join(cfg["dataset_folder"], "data.yaml")
+        stop_file = os.path.join(out, "stop_requested")
 
-        model = YOLO(f"{arch}.pt")
+        # Fine-tune: use pre-trained weights if provided, otherwise use arch defaults
+        pretrained = cfg.get("pretrained_weights", "").strip()
+        if pretrained and os.path.isfile(pretrained):
+            print(f"[INFO] Loading pre-trained weights: {pretrained}", flush=True)
+            model = YOLO(pretrained)
+        else:
+            model = YOLO(f"{arch}.pt")
 
         best_val_loss   = float("inf")
         best_epoch      = 1
@@ -50,9 +57,11 @@ def main():
             nonlocal best_val_loss, best_epoch, last_train_loss
             epoch = trainer.epoch + 1
             train_loss = float(trainer.loss) if hasattr(trainer, "loss") else 0.0
-            
+
             val_metrics = trainer.metrics or {}
-            val_loss = float(val_metrics.get("val/box_loss", val_metrics.get("metrics/mAP50(B)", 0.0)))
+            box_loss = float(val_metrics.get("val/box_loss", 0.0))
+            map50    = float(val_metrics.get("metrics/mAP50(B)", 0.0))
+            val_loss = box_loss
 
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
@@ -60,8 +69,28 @@ def main():
             last_train_loss = train_loss
 
             pct = int(epoch / epochs * 90)
-            print(f"METRIC epoch={epoch} train_loss={train_loss:.6f} val_loss={val_loss:.6f}", flush=True)
+            print(
+                f"METRIC epoch={epoch} train_loss={train_loss:.6f} "
+                f"val_loss={val_loss:.6f} map50={map50:.4f}",
+                flush=True,
+            )
             print(f"PROGRESS {min(pct, 90)}", flush=True)
+
+            # Graceful stop: save current best and exit cleanly
+            if os.path.isfile(stop_file):
+                print("[INFO] Stop requested — saving checkpoint and exiting.", flush=True)
+                yolo_best = os.path.join(out, "run", "weights", "best.pt")
+                if os.path.isfile(yolo_best):
+                    shutil.copy2(yolo_best, os.path.join(out, "best.pt"))
+                print(
+                    f"METRICS_FINAL "
+                    f"best_val_loss={best_val_loss:.6f} "
+                    f"best_epoch={best_epoch} "
+                    f"final_train_loss={last_train_loss:.6f}",
+                    flush=True,
+                )
+                print("PROGRESS 100", flush=True)
+                sys.exit(0)
 
         model.add_callback("on_fit_epoch_end", on_fit_epoch_end)
 

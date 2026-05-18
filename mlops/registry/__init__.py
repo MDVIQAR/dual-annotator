@@ -8,6 +8,7 @@ Exposes the three core components: settings persistence, manifest I/O, and regis
 from .settings_manager import RegistrySettings
 from .manifest import ManifestWriter, ManifestReader, generate_version_id
 from .scanner import RegistryScanner
+from . import projects_config
 
 __all__ = [
     "RegistrySettings",
@@ -15,4 +16,5 @@ __all__ = [
     "ManifestReader",
     "generate_version_id",
     "RegistryScanner",
+    "projects_config",
 ]

@@ -882,6 +882,10 @@ class MainWindow(QMainWindow):
         self.training_tab = TrainingTab()
         self.tab_widget.addTab(self.training_tab, "🚀  Train")
 
+        from gui.tabs.export_test_tab import ExportTestTab
+        self.export_test_tab = ExportTestTab()
+        self.tab_widget.addTab(self.export_test_tab, "🔬  Export & Test")
+
         from gui.tabs.registry_tab import RegistryTab
         self.registry_tab = RegistryTab()
         self.tab_widget.addTab(self.registry_tab, "🗂  Registry")

@@ -55,6 +55,7 @@ class DataPrepWorker(QThread):
             test_folder = None
         output_base  = cfg["output_base"]
         project_name = cfg["project_name"]
+        category     = cfg.get("category", "").strip()
         train_pct    = int(cfg.get("train_pct", 80))
         class_names  = cfg.get("class_names", [])
 
@@ -62,8 +63,10 @@ class DataPrepWorker(QThread):
         self.progress.emit(2)
         self.log.emit(_SEP)
         self.log.emit(f"  DualAnnotator — Data Preparation")
-        self.log.emit(f"  Project : {project_name}")
-        self.log.emit(f"  Task    : {task_type.upper()}")
+        self.log.emit(f"  Project  : {project_name}")
+        if category:
+            self.log.emit(f"  Category : {category}")
+        self.log.emit(f"  Task     : {task_type.upper()}")
         self.log.emit(_SEP)
 
         # ── Step 2: Scan pairs ─────────────────────────────────────────
@@ -116,7 +119,8 @@ class DataPrepWorker(QThread):
                 split["train"], split["val"], test_folder, output_folder
             )
 
-        info["project"] = project_name
+        info["project"]  = project_name
+        info["category"] = category
         self.progress.emit(70)
 
         # ── Step 6: Hash ───────────────────────────────────────────────
@@ -150,14 +154,17 @@ class DataPrepWorker(QThread):
 
                 total_files = len(all_files)
 
-                # Remove old GDrive copy if it exists
-                if os.path.isdir(gdrive_dest):
-                    shutil.rmtree(gdrive_dest)
-                os.makedirs(gdrive_dest)
+                # Issue 13 fix: Atomic copy via .tmp intermediary
+                # Copy to a temp folder first, then rename — so an interrupted
+                # copy never leaves the destination in a broken state.
+                tmp_dest = gdrive_dest + ".tmp"
+                if os.path.exists(tmp_dest):
+                    shutil.rmtree(tmp_dest)
+                os.makedirs(tmp_dest)
 
                 for i, src in enumerate(all_files):
                     rel = os.path.relpath(src, output_folder)
-                    dst = os.path.join(gdrive_dest, rel)
+                    dst = os.path.join(tmp_dest, rel)
                     os.makedirs(os.path.dirname(dst), exist_ok=True)
                     shutil.copy2(src, dst)
                     pct = 85 + int((i + 1) / total_files * 12) if total_files else 97
@@ -166,11 +173,11 @@ class DataPrepWorker(QThread):
                 # Rewrite dataset_info.json in GDrive copy with GDrive path
                 info_gdrive = dict(info)
                 info_gdrive["output_folder"] = gdrive_dest.replace("\\", "/")
-                DataPreparator.write_dataset_info(gdrive_dest, info_gdrive)
+                DataPreparator.write_dataset_info(tmp_dest, info_gdrive)
 
                 # For YOLO: rewrite data.yaml with GDrive path
                 if task_type == "yolo":
-                    yaml_path = os.path.join(gdrive_dest, "data.yaml")
+                    yaml_path = os.path.join(tmp_dest, "data.yaml")
                     if os.path.isfile(yaml_path):
                         with open(yaml_path, "r", encoding="utf-8") as f:
                             content = f.read()
@@ -180,6 +187,11 @@ class DataPrepWorker(QThread):
                             new_lines.append(f"path: {gdrive_abs}" if line.startswith("path:") else line)
                         with open(yaml_path, "w", encoding="utf-8") as f:
                             f.write("\n".join(new_lines) + "\n")
+
+                # Issue 13 fix: Atomic swap — remove old, rename tmp to final
+                if os.path.isdir(gdrive_dest):
+                    shutil.rmtree(gdrive_dest)
+                os.rename(tmp_dest, gdrive_dest)
 
                 gdrive_dataset_path = gdrive_dest
                 self.log.emit(f"  ✓ GDrive copy: {gdrive_dest}")

@@ -24,6 +24,11 @@ def build_training_config(form: dict) -> dict:
     if not project:
         raise ValueError("Project name is required.")
 
+    category = str(form.get("category", "")).strip()
+
+    pretrained_weights = str(form.get("pretrained_weights", "")).strip()
+    augmentations      = dict(form.get("augmentations", {}))
+
     commit_message = str(form.get("commit_message", "")).strip()
     if not commit_message:
         raise ValueError("Commit message is required.")
@@ -83,13 +88,26 @@ def build_training_config(form: dict) -> dict:
     in_channels     = int(form.get("in_channels", 3))
     # out_classes from form overrides dataset num_classes (user may need to adjust)
     out_classes     = int(form.get("out_classes", num_classes or 2))
+    num_workers     = int(form.get("num_workers", 0))
+    repeat_factor   = int(form.get("repeat_factor", 2))
+
+    # Issue 14 fix: Validate architecture and encoder names upfront
+    VALID_UNET_ARCHS = {"Unet", "UnetPlusPlus", "DeepLabV3", "DeepLabV3Plus", "FPN", "PSPNet", "PAN", "Linknet"}
+    VALID_YOLO_ARCHS = {"yolov8n", "yolov8s", "yolov8m", "yolov8l", "yolov8x"}
+    if task_type == "unet" and architecture not in VALID_UNET_ARCHS:
+        raise ValueError(f"Unknown UNet architecture '{architecture}'. Valid: {sorted(VALID_UNET_ARCHS)}")
+    if task_type == "yolo" and architecture not in VALID_YOLO_ARCHS:
+        raise ValueError(f"Unknown YOLO architecture '{architecture}'. Valid: {sorted(VALID_YOLO_ARCHS)}")
 
     return {
         "model_type":     task_type,
         "annotator":      annotator_initials,
         "annotator_name": annotator_name,
-        "project":        project,
-        "commit_message": commit_message,
+        "project":             project,
+        "category":            category,
+        "pretrained_weights":  pretrained_weights,
+        "augmentations":       augmentations,
+        "commit_message":      commit_message,
         "dataset_folder": os.path.abspath(dataset_folder),
         "dataset_info": {
             "train_count":   train_count,
@@ -113,6 +131,8 @@ def build_training_config(form: dict) -> dict:
             "image_height":    image_height,
             "learning_rate":   learning_rate,
             "device":          device,
+            "num_workers":     num_workers,
+            "repeat_factor":   repeat_factor,
         },
     }
 
@@ -126,7 +146,7 @@ def parse_metric_line(line: str) -> dict | None:
     Parse a METRIC line emitted by a training script.
 
     Expected format:
-      METRIC epoch=5 train_loss=0.3421 val_loss=0.2890
+      METRIC epoch=5 train_loss=0.3421 val_loss=0.2890 train_iou=0.85 val_iou=0.82
 
     Returns a dict with parsed values (missing keys default to None).
     Returns None if the line does not start with 'METRIC '.
@@ -134,7 +154,10 @@ def parse_metric_line(line: str) -> dict | None:
     if not line.startswith("METRIC "):
         return None
 
-    result = {"epoch": None, "train_loss": None, "val_loss": None}
+    result = {"epoch": None, "train_loss": None, "val_loss": None,
+              "train_iou": None, "val_iou": None,
+              "train_per_image_iou": None, "val_per_image_iou": None,
+              "map50": None}
     tokens = line[len("METRIC "):].split()
     for token in tokens:
         if "=" not in token:
