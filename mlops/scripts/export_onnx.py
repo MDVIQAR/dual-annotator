@@ -123,6 +123,18 @@ def main():
         else:
             raise ValueError(f"Unknown model_type: {model_type}")
 
+        # Issue 16 fix: Smoke-test the exported ONNX model
+        print("STATUS Validating ONNX export...", flush=True)
+        try:
+            import onnxruntime as ort
+            import numpy as np
+            sess = ort.InferenceSession(out_path)
+            dummy_np = np.zeros(input_shape, dtype=np.float32)
+            outputs = sess.run(None, {sess.get_inputs()[0].name: dummy_np})
+            print(f"STATUS ONNX smoke-test passed. Output shape: {outputs[0].shape}", flush=True)
+        except Exception as smoke_err:
+            print(f"STATUS ONNX smoke-test warning: {smoke_err}", flush=True)
+
         print("STATUS Updating manifest...", flush=True)
         writer = ManifestWriter(version_folder)
         writer.update_onnx(input_shape=input_shape, opset_version=11)

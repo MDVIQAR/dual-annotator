@@ -12,14 +12,14 @@ import json
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QLabel, QLineEdit, QPushButton, QRadioButton, QButtonGroup,
-    QSlider, QTextEdit, QProgressBar, QFrame, QFileDialog,
+    QComboBox, QSlider, QTextEdit, QProgressBar, QFrame, QFileDialog,
     QMessageBox, QScrollArea, QSizePolicy,
 )
 from PyQt5.QtCore import Qt, pyqtSlot
 from PyQt5.QtGui import QFont, QColor
 
 from mlops.data_prep.prep_worker import DataPrepWorker
-from mlops.registry import RegistrySettings
+from mlops.registry import RegistrySettings, projects_config
 
 
 # ---------------------------------------------------------------------------
@@ -29,6 +29,7 @@ from mlops.registry import RegistrySettings
 _SETTINGS_DEFAULTS = {
     "task_type":     "unet",
     "project_name":  "",
+    "category":      "",
     "images_folder": "",
     "labels_folder": "",
     "test_folder":   "",
@@ -89,6 +90,23 @@ _INPUT_STYLE = """
     }
     QLineEdit:focus {
         border: 1px solid #6a3fc8;
+    }
+"""
+
+_COMBO_STYLE = """
+    QComboBox {
+        background-color: #2d2d2d;
+        border: 1px solid #3a3a3a;
+        border-radius: 4px;
+        color: #ffffff;
+        padding: 5px 8px;
+        font-size: 12px;
+    }
+    QComboBox:focus { border: 1px solid #6a3fc8; }
+    QComboBox::drop-down { border: none; width: 20px; }
+    QComboBox QAbstractItemView {
+        background-color: #2d2d2d; color: #ffffff;
+        selection-background-color: #6a3fc8;
     }
 """
 
@@ -225,12 +243,32 @@ class DataPrepTab(QWidget):
         self._radio_yolo.toggled.connect(self._on_task_changed)
         layout.addWidget(_make_section([_section_label("Task Type"), self._radio_yolo, self._radio_unet]))
 
-        # Section 2 — Project name
-        self._project_edit = QLineEdit()
-        self._project_edit.setPlaceholderText("e.g. NestleS_cam0")
-        self._project_edit.setStyleSheet(_INPUT_STYLE)
-        self._project_edit.textChanged.connect(self._autosave)
-        layout.addWidget(_make_section([_section_label("Project Name"), self._project_edit]))
+        # Section 2 — Project name + Category
+        self._project_cb = QComboBox()
+        self._project_cb.setEditable(True)
+        self._project_cb.setInsertPolicy(QComboBox.NoInsert)
+        self._project_cb.setPlaceholderText("e.g. Nestle")
+        self._project_cb.setStyleSheet(_COMBO_STYLE)
+        self._project_cb.currentTextChanged.connect(self._autosave)
+        self._project_cb.lineEdit().editingFinished.connect(self._on_project_committed)
+
+        self._category_cb = QComboBox()
+        self._category_cb.setEditable(True)
+        self._category_cb.setInsertPolicy(QComboBox.NoInsert)
+        self._category_cb.setPlaceholderText("e.g. pouches, seals, caps")
+        self._category_cb.setStyleSheet(_COMBO_STYLE)
+        self._category_cb.currentTextChanged.connect(self._autosave)
+        self._category_cb.lineEdit().editingFinished.connect(self._on_category_committed)
+
+        self._refresh_project_dropdowns()
+
+        layout.addWidget(_make_section([
+            _section_label("Project & Category"),
+            QLabel("Project Name"),
+            self._project_cb,
+            QLabel("Category"),
+            self._category_cb,
+        ]))
 
         # Section 3 — Source folders
         self._images_edit,  img_btn  = self._make_folder_field("Folder containing your images")
@@ -439,7 +477,14 @@ class DataPrepTab(QWidget):
             self._radio_unet.setChecked(True)
         self._on_task_changed()  # show/hide class section
 
-        self._project_edit.setText(s.get("project_name", ""))
+        saved_proj = s.get("project_name", "")
+        if saved_proj:
+            self._project_cb.setCurrentText(saved_proj)
+
+        saved_cat = s.get("category", "")
+        if saved_cat:
+            self._category_cb.setCurrentText(saved_cat)
+
         self._images_edit.setText(s.get("images_folder", ""))
         self._labels_edit.setText(s.get("labels_folder", ""))
         self._test_edit.setText(s.get("test_folder", ""))
@@ -448,9 +493,47 @@ class DataPrepTab(QWidget):
         self._slider.setValue(int(s.get("train_pct", 80)))
         self._on_slider_changed(self._slider.value())
 
+    def _refresh_project_dropdowns(self):
+        """Reload project and category lists from shared projects_config."""
+        cur_proj = self._project_cb.currentText() if hasattr(self, "_project_cb") else ""
+        cur_cat  = self._category_cb.currentText() if hasattr(self, "_category_cb") else ""
+
+        self._project_cb.blockSignals(True)
+        self._project_cb.clear()
+        for p in projects_config.get_projects():
+            self._project_cb.addItem(p)
+        if cur_proj:
+            self._project_cb.setCurrentText(cur_proj)
+        self._project_cb.blockSignals(False)
+
+        self._category_cb.blockSignals(True)
+        self._category_cb.clear()
+        for c in projects_config.get_categories():
+            self._category_cb.addItem(c)
+        if cur_cat:
+            self._category_cb.setCurrentText(cur_cat)
+        self._category_cb.blockSignals(False)
+
+    def _on_project_committed(self):
+        name = self._project_cb.currentText().strip()
+        if name:
+            projects_config.ensure_project(name)
+            self._refresh_project_dropdowns()
+            self._project_cb.setCurrentText(name)
+        self._autosave()
+
+    def _on_category_committed(self):
+        name = self._category_cb.currentText().strip()
+        if name:
+            projects_config.ensure_category(name)
+            self._refresh_project_dropdowns()
+            self._category_cb.setCurrentText(name)
+        self._autosave()
+
     def _autosave(self):
         self._settings["task_type"]     = "yolo" if self._radio_yolo.isChecked() else "unet"
-        self._settings["project_name"]  = self._project_edit.text()
+        self._settings["project_name"]  = self._project_cb.currentText().strip()
+        self._settings["category"]      = self._category_cb.currentText().strip()
         self._settings["images_folder"] = self._images_edit.text()
         self._settings["labels_folder"] = self._labels_edit.text()
         self._settings["test_folder"]   = self._test_edit.text()
@@ -484,8 +567,9 @@ class DataPrepTab(QWidget):
 
     def _on_prepare_clicked(self):
         # Validation
-        project = self._project_edit.text().strip()
-        images  = self._images_edit.text().strip()
+        project  = self._project_cb.currentText().strip()
+        category = self._category_cb.currentText().strip()
+        images   = self._images_edit.text().strip()
         labels  = self._labels_edit.text().strip()
         output  = self._output_edit.text().strip()
         task    = "yolo" if self._radio_yolo.isChecked() else "unet"
@@ -510,6 +594,12 @@ class DataPrepTab(QWidget):
                 return
             class_names = [c.strip() for c in raw.split(",") if c.strip()]
 
+        # Save project/category to shared config on run
+        if project:
+            projects_config.ensure_project(project)
+        if category:
+            projects_config.ensure_category(category)
+
         config = {
             "task_type":     task,
             "images_folder": images,
@@ -517,6 +607,7 @@ class DataPrepTab(QWidget):
             "test_folder":   self._test_edit.text().strip(),
             "output_base":   output,
             "project_name":  project,
+            "category":      category,
             "train_pct":     self._slider.value(),
             "class_names":   class_names,
         }

@@ -89,6 +89,7 @@ def _build_default_manifest() -> dict:
         },
 
         "crash_info": None,
+        "augmentations": {},
     }
 
 
@@ -117,6 +118,7 @@ class ManifestWriter:
         commit_message: str,
         dataset_info: dict,
         hyperparams: dict,
+        augmentations: dict = None,
     ) -> dict:
         """
         Write the initial manifest.json at the start of training.
@@ -134,6 +136,8 @@ class ManifestWriter:
         # Merge caller-supplied dataset and hyperparams fields
         manifest["dataset"].update(dataset_info)
         manifest["hyperparams"].update(hyperparams)
+        if augmentations:
+            manifest["augmentations"] = augmentations
 
         self._write(manifest)
         return manifest
@@ -214,6 +218,17 @@ class ManifestWriter:
         data = self._read()
         data["status"] = "cancelled"
         data["finished_at"] = datetime.now().isoformat(timespec="seconds")
+        self._write(data)
+
+    def mark_partial(self):
+        """
+        Record a graceful early stop where at least one epoch completed and
+        best.pt was saved. The run is usable for fine-tuning.
+        """
+        data = self._read()
+        data["status"] = "partial"
+        data["finished_at"] = datetime.now().isoformat(timespec="seconds")
+        data["sync_complete"] = True
         self._write(data)
 
     # ------------------------------------------------------------------
