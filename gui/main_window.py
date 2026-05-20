@@ -890,14 +890,23 @@ class MainWindow(QMainWindow):
         self.registry_tab = RegistryTab()
         self.tab_widget.addTab(self.registry_tab, "🗂  Registry")
 
+        from gui.tabs.coin_rotator_tab import CoinRotatorTab
+        self.coin_rotator_tab = CoinRotatorTab()
+        self.tab_widget.addTab(self.coin_rotator_tab, "🪙  Coin Rotator")
+
         from gui.tabs.settings_tab import SettingsTab
         self.settings_tab = SettingsTab()
         self.tab_widget.addTab(self.settings_tab, "⚙  Settings")
 
         self.registry_tab.retrain_requested.connect(self._on_retrain_requested)
+        self.data_prep_tab.open_in_training.connect(self._on_open_in_training)
 
     def _on_retrain_requested(self, payload: dict):
         self.training_tab.load_from_manifest(payload)
+        self.tab_widget.setCurrentWidget(self.training_tab)
+
+    def _on_open_in_training(self, staged_info: dict):
+        self.training_tab.prefill_from_staged(staged_info)
         self.tab_widget.setCurrentWidget(self.training_tab)
 
     def _build_annotate_tab(self, container):

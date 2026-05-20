@@ -37,12 +37,33 @@ class MetricCallback(pl.Callback):
         self._last_train_iou     = 0.0
         self._last_train_per_iou = 0.0
         self._best_val_iou       = 0.0
+        # Extra metrics — None means not enabled
+        self._last_train_prec     = None
+        self._last_train_rec      = None
+        self._last_train_f1       = None
+        self._last_train_per_prec = None
+        self._last_train_per_rec  = None
+        self._last_train_per_f1   = None
+        self._last_lr             = None
 
     def on_train_epoch_end(self, trainer, pl_module):
         m = trainer.callback_metrics
         self._last_train_loss    = float(m.get("train_loss",          self._last_train_loss))
         self._last_train_iou     = float(m.get("train_iou",           self._last_train_iou))
         self._last_train_per_iou = float(m.get("train_per_image_iou", self._last_train_per_iou))
+        if "train_precision" in m:
+            self._last_train_prec     = float(m["train_precision"])
+            self._last_train_per_prec = float(m.get("train_per_image_precision", 0.0))
+        if "train_recall" in m:
+            self._last_train_rec      = float(m["train_recall"])
+            self._last_train_per_rec  = float(m.get("train_per_image_recall", 0.0))
+        if "train_f1" in m:
+            self._last_train_f1       = float(m["train_f1"])
+            self._last_train_per_f1   = float(m.get("train_per_image_f1", 0.0))
+        try:
+            self._last_lr = float(trainer.optimizers[0].param_groups[0]["lr"])
+        except Exception:
+            pass
 
     def on_validation_epoch_end(self, trainer, pl_module):
         epoch       = trainer.current_epoch + 1
@@ -56,17 +77,41 @@ class MetricCallback(pl.Callback):
             self._best_epoch   = epoch
             self._best_val_iou = val_iou
 
-        pct = int(epoch / self._total * 90)
-        print(
-            f"METRIC epoch={epoch} "
-            f"train_loss={self._last_train_loss:.6f} "
-            f"val_loss={val_loss:.6f} "
-            f"train_iou={self._last_train_iou:.4f} "
-            f"val_iou={val_iou:.4f} "
-            f"train_per_image_iou={self._last_train_per_iou:.4f} "
+        pct   = int(epoch / self._total * 90)
+        parts = [
+            f"METRIC epoch={epoch}",
+            f"train_loss={self._last_train_loss:.6f}",
+            f"val_loss={val_loss:.6f}",
+            f"train_iou={self._last_train_iou:.4f}",
+            f"val_iou={val_iou:.4f}",
+            f"train_per_image_iou={self._last_train_per_iou:.4f}",
             f"val_per_image_iou={val_per_iou:.4f}",
-            flush=True,
-        )
+        ]
+        if self._last_train_prec is not None:
+            parts += [
+                f"train_precision={self._last_train_prec:.4f}",
+                f"val_precision={float(m.get('val_precision', 0.0)):.4f}",
+                f"train_per_image_precision={self._last_train_per_prec:.4f}",
+                f"val_per_image_precision={float(m.get('val_per_image_precision', 0.0)):.4f}",
+            ]
+        if self._last_train_rec is not None:
+            parts += [
+                f"train_recall={self._last_train_rec:.4f}",
+                f"val_recall={float(m.get('val_recall', 0.0)):.4f}",
+                f"train_per_image_recall={self._last_train_per_rec:.4f}",
+                f"val_per_image_recall={float(m.get('val_per_image_recall', 0.0)):.4f}",
+            ]
+        if self._last_train_f1 is not None:
+            parts += [
+                f"train_f1={self._last_train_f1:.4f}",
+                f"val_f1={float(m.get('val_f1', 0.0)):.4f}",
+                f"train_per_image_f1={self._last_train_per_f1:.4f}",
+                f"val_per_image_f1={float(m.get('val_per_image_f1', 0.0)):.4f}",
+            ]
+        if self._last_lr is not None:
+            parts.append(f"learning_rate={self._last_lr:.8f}")
+
+        print(" ".join(parts), flush=True)
         print(f"PROGRESS {min(pct, 90)}", flush=True)
 
 
@@ -116,6 +161,7 @@ def main():
             in_channels     = hp["in_channels"],
             out_classes     = hp["out_classes"],
             lr              = hp["learning_rate"],
+            extra_metrics   = hp.get("extra_metrics", []),
         )
 
         # Fine-tune: load pre-trained weights if provided
@@ -147,7 +193,7 @@ def main():
 
         early_stop_cb = EarlyStopping(
             monitor  = "val_loss",
-            patience = 15,
+            patience = int(hp.get("early_stopping_patience", 15)),
             mode     = "min",
             verbose  = False,
         )

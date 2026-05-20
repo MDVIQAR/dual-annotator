@@ -113,7 +113,10 @@ def main():
             print("PROGRESS 70", flush=True)
 
             if result_path and os.path.isfile(str(result_path)):
-                shutil.copy2(str(result_path), out_path)
+                src = os.path.realpath(str(result_path))
+                dst = os.path.realpath(out_path)
+                if src != dst:
+                    shutil.copy2(src, dst)
             elif not os.path.isfile(out_path):
                 raise RuntimeError(f"ONNX export produced no file. Expected: {result_path}")
 

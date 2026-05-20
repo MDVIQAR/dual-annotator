@@ -38,7 +38,12 @@ def _build_default_manifest() -> dict:
         "sync_complete": False,
 
         "annotator": "",
+        # project = full forward-slash camera key: "unet/SnipeX/SLXCAP/CRC/cam0"
         "project": "",
+        "project_name": "",
+        "project_id": "",
+        "variant": "",
+        "camera": "",
         "commit_message": "",
         "started_at": None,
         "finished_at": None,
@@ -115,6 +120,10 @@ class ManifestWriter:
         model_type: str,
         annotator: str,
         project: str,
+        project_name: str = "",
+        project_id: str = "",
+        variant: str = "",
+        camera: str = "",
         commit_message: str,
         dataset_info: dict,
         hyperparams: dict,
@@ -130,6 +139,10 @@ class ManifestWriter:
         manifest["model_type"] = model_type
         manifest["annotator"] = annotator
         manifest["project"] = project
+        manifest["project_name"] = project_name
+        manifest["project_id"] = project_id
+        manifest["variant"] = variant
+        manifest["camera"] = camera
         manifest["commit_message"] = commit_message
         manifest["started_at"] = datetime.now().isoformat(timespec="seconds")
 
@@ -374,6 +387,10 @@ class ManifestReader:
             "sync_complete":  bool(data.get("sync_complete", False)),
             "annotator":      data.get("annotator", ""),
             "project":        data.get("project", ""),
+            "project_name":   data.get("project_name", ""),
+            "project_id":     data.get("project_id", ""),
+            "variant":        data.get("variant", ""),
+            "camera":         data.get("camera", ""),
             "commit_message": data.get("commit_message", ""),
             "started_at":     data.get("started_at", ""),
             "architecture":   hyperparams.get("architecture", ""),

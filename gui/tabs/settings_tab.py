@@ -155,38 +155,73 @@ class SettingsTab(QWidget):
         title.setStyleSheet("font-size: 20px; font-weight: bold; color: #ffffff;")
         main.addWidget(title)
 
-        # ── GDrive section ──────────────────────────────────────────────
-        gdrive_widget = QWidget()
-        gdrive_widget.setStyleSheet("background: transparent;")
-        gdrive_lay = QVBoxLayout(gdrive_widget)
-        gdrive_lay.setContentsMargins(0, 0, 0, 0)
-        gdrive_lay.setSpacing(10)
+        # ── Registry Paths section ──────────────────────────────────────
+        paths_widget = QWidget()
+        paths_widget.setStyleSheet("background: transparent;")
+        paths_lay = QVBoxLayout(paths_widget)
+        paths_lay.setContentsMargins(0, 0, 0, 0)
+        paths_lay.setSpacing(12)
+
+        # Explanation note
+        note_lbl = QLabel(
+            "Set both paths to save every trained version in two places.\n"
+            "Training runs in the Local path (fast); the version folder is also\n"
+            "copied to Google Drive automatically when training completes."
+        )
+        note_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 11px; background: transparent; border: none;")
+        note_lbl.setWordWrap(True)
+        paths_lay.addWidget(note_lbl)
 
         # GDrive root row
-        root_lbl = QLabel("Google Drive Root Folder")
-        root_lbl.setStyleSheet(f"color: {_TEXT}; font-size: 12px; background: transparent; border: none;")
-        gdrive_lay.addWidget(root_lbl)
+        gdrive_lbl = QLabel("Google Drive Root Folder")
+        gdrive_lbl.setStyleSheet(f"color: {_TEXT}; font-size: 12px; background: transparent; border: none;")
+        paths_lay.addWidget(gdrive_lbl)
 
-        root_row = QHBoxLayout()
+        gdrive_row = QHBoxLayout()
         self._gdrive_edit = QLineEdit()
         self._gdrive_edit.setPlaceholderText("e.g. C:\\Users\\You\\Google Drive\\My Drive")
         self._gdrive_edit.setStyleSheet(_INPUT_STYLE)
         self._gdrive_edit.textChanged.connect(self._on_gdrive_changed)
-        browse_btn = QPushButton("Browse")
-        browse_btn.setStyleSheet(_BTN_STYLE)
-        browse_btn.setFixedWidth(80)
-        browse_btn.clicked.connect(self._browse_gdrive)
-        root_row.addWidget(self._gdrive_edit)
-        root_row.addWidget(browse_btn)
-        gdrive_lay.addLayout(root_row)
+        gdrive_browse = QPushButton("Browse")
+        gdrive_browse.setStyleSheet(_BTN_STYLE)
+        gdrive_browse.setFixedWidth(80)
+        gdrive_browse.clicked.connect(self._browse_gdrive)
+        gdrive_row.addWidget(self._gdrive_edit)
+        gdrive_row.addWidget(gdrive_browse)
+        paths_lay.addLayout(gdrive_row)
 
-        # Computed registry root
-        self._registry_status = QLabel()
-        self._registry_status.setStyleSheet(f"font-size: 11px; background: transparent; border: none;")
-        self._registry_status.setWordWrap(True)
-        gdrive_lay.addWidget(self._registry_status)
+        self._gdrive_status = QLabel()
+        self._gdrive_status.setStyleSheet(f"font-size: 11px; background: transparent; border: none;")
+        self._gdrive_status.setWordWrap(True)
+        paths_lay.addWidget(self._gdrive_status)
 
-        main.addWidget(_make_section("GOOGLE DRIVE CONFIGURATION", gdrive_widget))
+        # Local root row
+        local_lbl = QLabel("Local Registry Root Folder")
+        local_lbl.setStyleSheet(f"color: {_TEXT}; font-size: 12px; background: transparent; border: none;")
+        paths_lay.addWidget(local_lbl)
+
+        local_row = QHBoxLayout()
+        self._local_edit = QLineEdit()
+        self._local_edit.setPlaceholderText("e.g. D:\\Models\\Registry")
+        self._local_edit.setStyleSheet(_INPUT_STYLE)
+        self._local_edit.textChanged.connect(self._on_local_changed)
+        local_browse = QPushButton("Browse")
+        local_browse.setStyleSheet(_BTN_STYLE)
+        local_browse.setFixedWidth(80)
+        local_browse.clicked.connect(self._browse_local)
+        local_row.addWidget(self._local_edit)
+        local_row.addWidget(local_browse)
+        paths_lay.addLayout(local_row)
+
+        self._local_status = QLabel()
+        self._local_status.setStyleSheet(f"font-size: 11px; background: transparent; border: none;")
+        self._local_status.setWordWrap(True)
+        paths_lay.addWidget(self._local_status)
+
+        # Keep legacy alias so _update_registry_status() still works
+        self._registry_status = self._gdrive_status
+
+        main.addWidget(_make_section("REGISTRY PATHS", paths_widget))
 
         # ── Annotators section ──────────────────────────────────────────
         ann_widget = QWidget()
@@ -242,11 +277,13 @@ class SettingsTab(QWidget):
 
     def _load_current(self):
         self._settings = RegistrySettings()
-        gdrive = self._settings._data.get("gdrive_root", "")
-        self._gdrive_edit.setText(gdrive)
-        self._update_registry_status()
+        self._gdrive_edit.setText(self._settings.get_registry_root())
+        self._local_edit.setText(self._settings.get_local_root())
+        self._update_gdrive_status()
+        self._update_local_status()
         self._rebuild_annotator_rows()
 
+    # GDrive handlers
     def _browse_gdrive(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Google Drive Root", self._gdrive_edit.text() or "")
         if folder:
@@ -254,19 +291,42 @@ class SettingsTab(QWidget):
 
     def _on_gdrive_changed(self, text):
         self._settings.set_gdrive_root(text.strip())
-        self._update_registry_status()
+        self._update_gdrive_status()
 
-    def _update_registry_status(self):
+    def _update_gdrive_status(self):
         root = self._settings.get_registry_root()
         if not root:
-            self._registry_status.setText(f"<span style='color:{_RED}'>&#9888; Google Drive root is not set.</span>")
-            return
-        if os.path.isdir(root):
-            self._registry_status.setText(f"<span style='color:{_GREEN}'>&#10003; Registry root: {root}</span>")
+            self._gdrive_status.setText(f"<span style='color:{_RED}'>&#9888; Google Drive root is not set.</span>")
+        elif os.path.isdir(root):
+            self._gdrive_status.setText(f"<span style='color:{_GREEN}'>&#10003; {root}</span>")
         else:
-            self._registry_status.setText(
-                f"<span style='color:#ffc107'>&#9888; Registry root: {root}<br>"
-                f"Folder does not exist yet — it will be created on first training run.</span>"
+            self._gdrive_status.setText(
+                f"<span style='color:#ffc107'>&#9888; {root} — folder doesn't exist yet, will be created.</span>"
+            )
+
+    # Keep legacy name so any external callers still work
+    def _update_registry_status(self):
+        self._update_gdrive_status()
+
+    # Local root handlers
+    def _browse_local(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Local Registry Root", self._local_edit.text() or "")
+        if folder:
+            self._local_edit.setText(folder)
+
+    def _on_local_changed(self, text):
+        self._settings.set_local_root(text.strip())
+        self._update_local_status()
+
+    def _update_local_status(self):
+        root = self._settings.get_local_root()
+        if not root:
+            self._local_status.setText(f"<span style='color:{_MUTED}'>Not set — training will only save to Google Drive.</span>")
+        elif os.path.isdir(root):
+            self._local_status.setText(f"<span style='color:{_GREEN}'>&#10003; {root}</span>")
+        else:
+            self._local_status.setText(
+                f"<span style='color:#ffc107'>&#9888; {root} — folder doesn't exist yet, will be created.</span>"
             )
 
     def _rebuild_annotator_rows(self):

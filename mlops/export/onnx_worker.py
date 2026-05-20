@@ -5,11 +5,14 @@ QThread worker that launches export_onnx.py as a subprocess
 and streams PROGRESS / STATUS lines to the UI.
 """
 import os
+import re
 import sys
 import subprocess
 import pathlib
 
 from PyQt5.QtCore import QThread, pyqtSignal
+
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07|\r')
 
 
 class OnnxWorker(QThread):
@@ -51,7 +54,9 @@ class OnnxWorker(QThread):
         )
 
         for raw_line in self._proc.stdout:
-            line = raw_line.rstrip()
+            line = _ANSI_RE.sub("", raw_line).rstrip()
+            if not line:
+                continue
             if line.startswith("PROGRESS "):
                 try:
                     self.progress.emit(int(line.split()[1]))
