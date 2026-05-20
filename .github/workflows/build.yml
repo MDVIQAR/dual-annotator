@@ -24,15 +24,30 @@ jobs:
       - name: Install dependencies
         run: |
           pip install pyinstaller
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
 
       - name: Build single .exe (portable)
         run: |
-          pyinstaller --onefile --windowed --name DualAnnotator-portable main.py
+          pyinstaller --onefile --windowed --name DualAnnotator-portable `
+            --collect-all torch `
+            --collect-all torchvision `
+            --collect-all ultralytics `
+            --hidden-import pytorch_lightning `
+            --hidden-import torchmetrics `
+            --hidden-import onnxruntime `
+            main.py
 
       - name: Build folder version
         run: |
-          pyinstaller --onedir --windowed --name DualAnnotator main.py
+          pyinstaller --onedir --windowed --name DualAnnotator `
+            --collect-all torch `
+            --collect-all torchvision `
+            --collect-all ultralytics `
+            --hidden-import pytorch_lightning `
+            --hidden-import torchmetrics `
+            --hidden-import onnxruntime `
+            main.py
 
       - name: Zip folder version
         run: |
