@@ -3,6 +3,13 @@ gui/tabs/export_test_tab.py
 
 Export & Test tab — drop a trained version folder to convert best.pt → ONNX,
 then run inference on a test image folder and view results in a gallery.
+
+Gallery layout:
+  YOLO  → 2 columns: Original | Detected
+  UNet  → 3 columns: Original | Mask    | Overlay
+
+Confidence threshold is shown only for YOLO models.
+Both .pt and .onnx are accepted for inference.
 """
 
 import os
@@ -11,10 +18,11 @@ import json
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QLabel, QLineEdit, QPushButton, QTextEdit, QProgressBar,
-    QFrame, QFileDialog, QScrollArea, QSizePolicy, QMessageBox,
+    QFrame, QFileDialog, QScrollArea, QMessageBox,
+    QDoubleSpinBox,
 )
 from PyQt5.QtCore import Qt, pyqtSlot
-from PyQt5.QtGui import QFont, QPixmap, QDragEnterEvent, QDropEvent
+from PyQt5.QtGui import QPixmap, QDragEnterEvent, QDropEvent
 
 _SCRIPTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "mlops", "scripts")
@@ -114,12 +122,30 @@ _DROP_OK = """
         padding: 10px;
     }
 """
+_ZOOM_BTN = """
+    QPushButton {
+        background-color: #2d2d30;
+        border: 1px solid #555;
+        border-radius: 4px;
+        color: #cccccc;
+        padding: 2px 10px;
+        font-size: 14px;
+        font-weight: bold;
+        min-width: 28px;
+    }
+    QPushButton:hover { background-color: #3a3a40; }
+    QPushButton:pressed { background-color: #1e1e1e; }
+"""
+
+_ZOOM_BASE = 300   # default image height in px (= 100 %)
+_ZOOM_STEP = 60
+_ZOOM_MIN  = 100
+_ZOOM_MAX  = 780
+
 
 # ── Drop Zone ─────────────────────────────────────────────────────────────────
 
 class _DropZone(QLabel):
-    """A QLabel that accepts folder drops and validates version folder contents."""
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAlignment(Qt.AlignCenter)
@@ -128,7 +154,6 @@ class _DropZone(QLabel):
         self.setWordWrap(True)
         self._reset()
 
-    # public
     def reset(self):
         self._reset()
 
@@ -136,7 +161,6 @@ class _DropZone(QLabel):
         self.setText("Drop version folder here\n(or click Browse above)")
         self.setStyleSheet(_DROP_IDLE)
 
-    # drag events
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
@@ -152,8 +176,7 @@ class _DropZone(QLabel):
         if not urls:
             self._reset()
             return
-        path = urls[0].toLocalFile()
-        self._apply(path)
+        self._apply(urls[0].toLocalFile())
 
     def _apply(self, path: str):
         info = _validate_folder(path)
@@ -174,7 +197,6 @@ class _DropZone(QLabel):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _validate_folder(path: str) -> dict | None:
-    """Return metadata dict if path is a valid version folder, else None."""
     if not os.path.isdir(path):
         return None
     config_path = os.path.join(path, "config.json")
@@ -186,14 +208,14 @@ def _validate_folder(path: str) -> dict | None:
             cfg = json.load(fh)
         hp = cfg.get("hyperparams", {})
         return {
-            "model_type": cfg.get("model_type", "unet"),
-            "arch":       hp.get("architecture", "?"),
-            "in_ch":      hp.get("in_channels", 3),
-            "w":          hp.get("image_width", 320),
-            "h":          hp.get("image_height", 240),
-            "has_onnx":   os.path.isfile(os.path.join(path, "best.onnx")),
+            "model_type":  cfg.get("model_type", "unet"),
+            "arch":        hp.get("architecture", "?"),
+            "in_ch":       hp.get("in_channels", 3),
+            "w":           hp.get("image_width", 320),
+            "h":           hp.get("image_height", 240),
+            "has_onnx":    os.path.isfile(os.path.join(path, "best.onnx")),
             "config_path": config_path,
-            "onnx_path":  os.path.join(path, "best.onnx"),
+            "onnx_path":   os.path.join(path, "best.onnx"),
         }
     except Exception:
         return None
@@ -221,9 +243,24 @@ def _header(text: str) -> QLabel:
 # ── Gallery Item ──────────────────────────────────────────────────────────────
 
 class _GalleryItem(QFrame):
-    def __init__(self, name: str, img_path: str, gallery_width: int, parent=None):
+    """
+    Shows 2 panels for YOLO (Original | Detected)
+    or 3 panels for UNet  (Original | Mask | Overlay).
+    Call set_zoom() to resize images without rebuilding.
+    """
+
+    def __init__(self, name: str, orig_path: str, annotated_path: str,
+                 overlay_path: str, model_type: str,
+                 zoom_h: int, gallery_w: int, parent=None):
         super().__init__(parent)
-        self.setStyleSheet("QFrame { background:#1e1e1e; border:1px solid #3a3a3a; border-radius:4px; }")
+        self.setStyleSheet(
+            "QFrame { background:#1e1e1e; border:1px solid #3a3a3a; border-radius:4px; }"
+        )
+        self._orig_path      = orig_path
+        self._annotated_path = annotated_path
+        self._overlay_path   = overlay_path
+        self._model_type     = model_type
+
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
         lay.setSpacing(4)
@@ -232,15 +269,42 @@ class _GalleryItem(QFrame):
         name_lbl.setStyleSheet("color:#9cdcfe; font-size:10px; font-family:Consolas;")
         lay.addWidget(name_lbl)
 
-        img_lbl = QLabel()
-        img_lbl.setAlignment(Qt.AlignCenter)
-        pix = QPixmap(img_path)
-        if not pix.isNull():
-            # Scale to fit gallery width keeping aspect ratio
-            max_w = max(gallery_width - 30, 200)
-            pix   = pix.scaledToWidth(max_w, Qt.SmoothTransformation)
-        img_lbl.setPixmap(pix)
-        lay.addWidget(img_lbl)
+        self._img_row = QHBoxLayout()
+        self._img_row.setSpacing(8)
+
+        if model_type == "yolo":
+            self._panels = [("Original", orig_path), ("Detected", annotated_path)]
+        else:
+            self._panels = [("Original", orig_path), ("Mask", annotated_path), ("Overlay", overlay_path)]
+
+        self._img_labels: list[QLabel] = []
+        for caption, _ in self._panels:
+            col = QVBoxLayout()
+            col.setSpacing(2)
+            cap = QLabel(caption)
+            cap.setAlignment(Qt.AlignCenter)
+            cap.setStyleSheet("color:#888; font-size:10px;")
+            col.addWidget(cap)
+            img_lbl = QLabel()
+            img_lbl.setAlignment(Qt.AlignCenter)
+            col.addWidget(img_lbl)
+            self._img_labels.append(img_lbl)
+            self._img_row.addLayout(col)
+
+        lay.addLayout(self._img_row)
+        self.set_zoom(zoom_h, gallery_w)
+
+    def set_zoom(self, zoom_h: int, gallery_w: int):
+        n      = len(self._panels)
+        col_w  = max((gallery_w - 60 - (n - 1) * 8) // n, 120)
+        for img_lbl, (_, path) in zip(self._img_labels, self._panels):
+            if path and os.path.isfile(path):
+                pix = QPixmap(path)
+                if not pix.isNull():
+                    pix = pix.scaled(col_w, zoom_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                img_lbl.setPixmap(pix)
+            else:
+                img_lbl.clear()
 
 
 # ── Main Tab ──────────────────────────────────────────────────────────────────
@@ -252,7 +316,8 @@ class ExportTestTab(QWidget):
         self._folder_info    = None
         self._export_worker  = None
         self._infer_worker   = None
-        self._gallery_items  = []
+        self._gallery_items: list[_GalleryItem] = []
+        self._zoom_h         = _ZOOM_BASE
 
         self._build_ui()
 
@@ -263,12 +328,10 @@ class ExportTestTab(QWidget):
         root.setContentsMargins(10, 10, 10, 10)
         root.setSpacing(0)
 
-        # Outer vertical splitter: [Export | Inference] on top, Gallery on bottom
         self._v_splitter = QSplitter(Qt.Vertical)
         self._v_splitter.setStyleSheet("QSplitter::handle { background:#3a3a3a; height:5px; }")
         self._v_splitter.setHandleWidth(5)
 
-        # Inner horizontal splitter: Export (left) | Inference (right)
         self._h_splitter = QSplitter(Qt.Horizontal)
         self._h_splitter.setStyleSheet("QSplitter::handle { background:#3a3a3a; width:5px; }")
         self._h_splitter.setHandleWidth(5)
@@ -292,7 +355,6 @@ class ExportTestTab(QWidget):
         lay.addWidget(_header("  Export to ONNX"))
         lay.addWidget(_sep())
 
-        # Browse row
         browse_row = QHBoxLayout()
         browse_row.setSpacing(6)
         self._folder_edit = QLineEdit()
@@ -307,19 +369,16 @@ class ExportTestTab(QWidget):
         browse_row.addWidget(browse_btn)
         lay.addLayout(browse_row)
 
-        # Drop zone
         self._drop_zone = _DropZone()
         self._drop_zone.mousePressEvent = lambda _: self._browse_folder()
         lay.addWidget(self._drop_zone)
 
-        # Export button
         self._export_btn = QPushButton("Export to ONNX")
         self._export_btn.setStyleSheet(_ACTION)
         self._export_btn.setEnabled(False)
         self._export_btn.clicked.connect(self._run_export)
         lay.addWidget(self._export_btn)
 
-        # Progress
         self._export_progress = QProgressBar()
         self._export_progress.setRange(0, 100)
         self._export_progress.setValue(0)
@@ -327,7 +386,6 @@ class ExportTestTab(QWidget):
         self._export_progress.setTextVisible(False)
         lay.addWidget(self._export_progress)
 
-        # Log — stretch=1 so it fills all remaining vertical space
         lay.addWidget(_lbl("Console"))
         self._export_log = QTextEdit()
         self._export_log.setReadOnly(True)
@@ -346,12 +404,11 @@ class ExportTestTab(QWidget):
         lay.addWidget(_header("  Run Inference"))
         lay.addWidget(_sep())
 
-        # ONNX path
-        lay.addWidget(_lbl("ONNX Model"))
+        lay.addWidget(_lbl("Model  (.pt or .onnx)"))
         onnx_row = QHBoxLayout()
         onnx_row.setSpacing(6)
         self._onnx_edit = QLineEdit()
-        self._onnx_edit.setPlaceholderText("best.onnx path (auto-filled after export)")
+        self._onnx_edit.setPlaceholderText("best.pt or best.onnx")
         self._onnx_edit.setStyleSheet(_INPUT)
         onnx_row.addWidget(self._onnx_edit)
         onnx_browse = QPushButton("Browse")
@@ -361,7 +418,6 @@ class ExportTestTab(QWidget):
         onnx_row.addWidget(onnx_browse)
         lay.addLayout(onnx_row)
 
-        # Test folder
         lay.addWidget(_lbl("Test Images Folder"))
         test_row = QHBoxLayout()
         test_row.setSpacing(6)
@@ -376,7 +432,6 @@ class ExportTestTab(QWidget):
         test_row.addWidget(test_browse)
         lay.addLayout(test_row)
 
-        # Output folder
         lay.addWidget(_lbl("Output Folder"))
         out_row = QHBoxLayout()
         out_row.setSpacing(6)
@@ -391,14 +446,30 @@ class ExportTestTab(QWidget):
         out_row.addWidget(out_browse)
         lay.addLayout(out_row)
 
-        # Run button
+        # Confidence threshold — only visible for YOLO
+        self._conf_widget = QWidget()
+        self._conf_widget.setStyleSheet("background: transparent;")
+        conf_row = QHBoxLayout(self._conf_widget)
+        conf_row.setContentsMargins(0, 0, 0, 0)
+        conf_row.setSpacing(6)
+        conf_row.addWidget(_lbl("Confidence Threshold"))
+        self._conf_sp = QDoubleSpinBox()
+        self._conf_sp.setRange(0.001, 1.0)
+        self._conf_sp.setDecimals(3)
+        self._conf_sp.setSingleStep(0.01)
+        self._conf_sp.setValue(0.25)
+        self._conf_sp.setStyleSheet(_INPUT)
+        conf_row.addWidget(self._conf_sp)
+        conf_row.addStretch()
+        lay.addWidget(self._conf_widget)
+        self._conf_widget.setVisible(False)  # hidden until model type is known
+
         self._infer_btn = QPushButton("Run Inference")
         self._infer_btn.setStyleSheet(_ACTION)
         self._infer_btn.setEnabled(False)
         self._infer_btn.clicked.connect(self._run_infer)
         lay.addWidget(self._infer_btn)
 
-        # Progress
         self._infer_progress = QProgressBar()
         self._infer_progress.setRange(0, 100)
         self._infer_progress.setValue(0)
@@ -406,7 +477,6 @@ class ExportTestTab(QWidget):
         self._infer_progress.setTextVisible(False)
         lay.addWidget(self._infer_progress)
 
-        # Log — stretch=1 so it fills all remaining vertical space
         lay.addWidget(_lbl("Console"))
         self._infer_log = QTextEdit()
         self._infer_log.setReadOnly(True)
@@ -426,18 +496,39 @@ class ExportTestTab(QWidget):
         hdr_row = QHBoxLayout()
         hdr_row.addWidget(_header("  Results Gallery"))
         hdr_row.addStretch()
+
         self._gallery_count_lbl = QLabel("0 images")
         self._gallery_count_lbl.setStyleSheet("color:#666; font-size:11px;")
         hdr_row.addWidget(self._gallery_count_lbl)
+
+        # Zoom controls
+        zoom_out_btn = QPushButton("−")
+        zoom_out_btn.setStyleSheet(_ZOOM_BTN)
+        zoom_out_btn.setFixedWidth(30)
+        zoom_out_btn.clicked.connect(self._zoom_out)
+
+        self._zoom_lbl = QLabel("100%")
+        self._zoom_lbl.setStyleSheet("color:#888; font-size:11px; min-width:38px;")
+        self._zoom_lbl.setAlignment(Qt.AlignCenter)
+
+        zoom_in_btn = QPushButton("+")
+        zoom_in_btn.setStyleSheet(_ZOOM_BTN)
+        zoom_in_btn.setFixedWidth(30)
+        zoom_in_btn.clicked.connect(self._zoom_in)
+
+        hdr_row.addWidget(zoom_out_btn)
+        hdr_row.addWidget(self._zoom_lbl)
+        hdr_row.addWidget(zoom_in_btn)
+
         clear_btn = QPushButton("Clear")
         clear_btn.setStyleSheet(_BROWSE)
         clear_btn.setFixedWidth(55)
         clear_btn.clicked.connect(self._clear_gallery)
         hdr_row.addWidget(clear_btn)
+
         lay.addLayout(hdr_row)
         lay.addWidget(_sep())
 
-        # Scroll area
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setStyleSheet("QScrollArea { border:none; background:#1a1a1a; }")
@@ -455,6 +546,23 @@ class ExportTestTab(QWidget):
 
         return frame
 
+    # ── Zoom ──────────────────────────────────────────────────────────────────
+
+    def _zoom_in(self):
+        self._zoom_h = min(self._zoom_h + _ZOOM_STEP, _ZOOM_MAX)
+        self._apply_zoom()
+
+    def _zoom_out(self):
+        self._zoom_h = max(self._zoom_h - _ZOOM_STEP, _ZOOM_MIN)
+        self._apply_zoom()
+
+    def _apply_zoom(self):
+        pct = int(self._zoom_h / _ZOOM_BASE * 100)
+        self._zoom_lbl.setText(f"{pct}%")
+        gallery_w = self._scroll.viewport().width()
+        for item in self._gallery_items:
+            item.set_zoom(self._zoom_h, gallery_w)
+
     # ── Browse actions ────────────────────────────────────────────────────────
 
     def _browse_folder(self):
@@ -463,16 +571,40 @@ class ExportTestTab(QWidget):
             self._load_version_folder(path)
 
     def _browse_onnx(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Select ONNX Model", "", "ONNX (*.onnx)")
-        if path:
-            self._onnx_edit.setText(path)
-            self._update_infer_btn()
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Model", "",
+            "Model files (*.pt *.onnx);;PyTorch (*.pt);;ONNX (*.onnx)"
+        )
+        if not path:
+            return
+        self._onnx_edit.setText(path)
+        folder = os.path.dirname(path)
+        config_path = os.path.join(folder, "config.json")
+        if os.path.isfile(config_path):
+            try:
+                with open(config_path, "r", encoding="utf-8") as fh:
+                    cfg = json.load(fh)
+                hp = cfg.get("hyperparams", {})
+                mt = cfg.get("model_type", "unet")
+                self._folder_info = {
+                    "model_type":  mt,
+                    "arch":        hp.get("architecture", "?"),
+                    "in_ch":       hp.get("in_channels", 3),
+                    "w":           hp.get("image_width", 320),
+                    "h":           hp.get("image_height", 240),
+                    "has_onnx":    True,
+                    "config_path": config_path,
+                    "onnx_path":   path,
+                }
+                self._conf_widget.setVisible(mt == "yolo")
+            except Exception:
+                pass
+        self._update_infer_btn()
 
     def _browse_test(self):
         path = QFileDialog.getExistingDirectory(self, "Select Test Images Folder", "")
         if path:
             self._test_edit.setText(path)
-            # Auto-fill output folder as a subfolder
             if not self._out_edit.text():
                 self._out_edit.setText(os.path.join(path, "results"))
             self._update_infer_btn()
@@ -497,11 +629,16 @@ class ExportTestTab(QWidget):
         self._folder_edit.setText(path)
         self._drop_zone._apply(path)
 
-        # Enable export only if ONNX not yet present
+        # Show confidence threshold only for YOLO
+        self._conf_widget.setVisible(info["model_type"] == "yolo")
+
+        # Prefer .pt for inference
+        pt_path = os.path.join(path, "best.pt")
+        self._onnx_edit.setText(pt_path)
+
         if info["has_onnx"]:
             self._export_btn.setEnabled(False)
             self._export_btn.setText("✓  ONNX already exported")
-            self._onnx_edit.setText(info["onnx_path"])
             self._export_log.append("[INFO] best.onnx already exists — skipping export.")
         else:
             self._export_btn.setEnabled(True)
@@ -535,9 +672,10 @@ class ExportTestTab(QWidget):
     def _on_export_done(self, success: bool):
         if success:
             self._export_btn.setText("✓  Export complete")
+            pt_path   = os.path.join(self._version_folder, "best.pt")
             onnx_path = os.path.join(self._version_folder, "best.onnx")
-            self._onnx_edit.setText(onnx_path)
-            self._export_log.append("[DONE] best.onnx saved.")
+            self._onnx_edit.setText(pt_path if os.path.isfile(pt_path) else onnx_path)
+            self._export_log.append("[DONE] best.onnx saved.  Using best.pt for inference.")
             if self._folder_info:
                 self._folder_info["has_onnx"] = True
                 self._drop_zone._apply(self._version_folder)
@@ -550,20 +688,20 @@ class ExportTestTab(QWidget):
     # ── Inference ─────────────────────────────────────────────────────────────
 
     def _update_infer_btn(self):
-        has_onnx   = bool(self._onnx_edit.text()) and os.path.isfile(self._onnx_edit.text())
+        has_model  = bool(self._onnx_edit.text()) and os.path.isfile(self._onnx_edit.text())
         has_test   = bool(self._test_edit.text()) and os.path.isdir(self._test_edit.text())
         has_config = self._folder_info is not None
-        self._infer_btn.setEnabled(has_onnx and has_test and has_config)
+        self._infer_btn.setEnabled(has_model and has_test and has_config)
 
     def _run_infer(self):
-        onnx_path   = self._onnx_edit.text().strip()
+        model_path  = self._onnx_edit.text().strip()
         test_folder = self._test_edit.text().strip()
         out_folder  = self._out_edit.text().strip() or os.path.join(test_folder, "results")
         config_path = self._folder_info["config_path"]
         model_type  = self._folder_info["model_type"]
 
-        if not os.path.isfile(onnx_path):
-            QMessageBox.warning(self, "Missing ONNX", f"ONNX file not found:\n{onnx_path}")
+        if not os.path.isfile(model_path):
+            QMessageBox.warning(self, "Missing Model", f"Model file not found:\n{model_path}")
             return
         if not os.path.isdir(test_folder):
             QMessageBox.warning(self, "Missing Folder", f"Test folder not found:\n{test_folder}")
@@ -575,11 +713,12 @@ class ExportTestTab(QWidget):
         from mlops.export.infer_worker import InferWorker
         self._infer_worker = InferWorker(
             model_type  = model_type,
-            onnx_path   = onnx_path,
+            onnx_path   = model_path,
             config_path = config_path,
             test_folder = test_folder,
             out_folder  = out_folder,
             scripts_dir = _SCRIPTS_DIR,
+            conf        = self._conf_sp.value(),
             parent      = self,
         )
         self._infer_worker.log.connect(self._on_infer_log)
@@ -597,18 +736,20 @@ class ExportTestTab(QWidget):
     def _on_infer_log(self, line: str):
         self._infer_log.append(line)
 
-    @pyqtSlot(str, str)
-    def _on_infer_result(self, name: str, img_path: str):
-        if not os.path.isfile(img_path):
-            return
-        gallery_w = self._scroll.viewport().width()
-        item = _GalleryItem(name, img_path, gallery_w, parent=self._gallery_widget)
-        # Insert before the trailing stretch
+    @pyqtSlot(str, str, str, str)
+    def _on_infer_result(self, name: str, orig_path: str,
+                         annotated_path: str, overlay_path: str):
+        gallery_w  = self._scroll.viewport().width()
+        model_type = self._folder_info["model_type"] if self._folder_info else "unet"
+        item = _GalleryItem(
+            name, orig_path, annotated_path, overlay_path,
+            model_type, self._zoom_h, gallery_w,
+            parent=self._gallery_widget,
+        )
         count = self._gallery_layout.count()
         self._gallery_layout.insertWidget(count - 1, item)
         self._gallery_items.append(item)
         self._gallery_count_lbl.setText(f"{len(self._gallery_items)} image(s)")
-        # Auto-scroll to bottom
         self._scroll.verticalScrollBar().setValue(
             self._scroll.verticalScrollBar().maximum()
         )

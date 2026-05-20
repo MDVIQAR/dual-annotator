@@ -17,10 +17,15 @@ import hashlib
 def create_version_folder(registry_root: str, project: str, version_id: str) -> str:
     """
     Create {registry_root}/{project}/{version_id}/ including all intermediate directories.
+
+    `project` may be a forward-slash key like "unet/SnipeX/SLXCAP/CRC/cam0"
+    or a plain name — both are handled correctly.
+
     Returns the absolute path to the created folder.
     Raises OSError if creation fails.
     """
-    folder = os.path.join(registry_root, project, version_id)
+    parts = project.replace("\\", "/").split("/")
+    folder = os.path.join(registry_root, *parts, version_id)
     os.makedirs(folder, exist_ok=True)
     return os.path.abspath(folder)
 

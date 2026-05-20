@@ -54,8 +54,10 @@ class EngineInstallWorker(QThread):
         self.progress.emit(5)
 
         cmd = [
-            sys.executable, "-m", "pip", "install", 
-            "torch", "torchvision", "ultralytics", "numpy<2"
+            sys.executable, "-m", "pip", "install",
+            "torch", "torchvision", "ultralytics", "numpy<2",
+            "pytorch-lightning", "segmentation-models-pytorch",
+            "albumentations", "onnxruntime",
         ]
         try:
             proc = subprocess.Popen(

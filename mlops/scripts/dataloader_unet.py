@@ -17,6 +17,7 @@ If aug_config is {}   → no augmentation.
 """
 
 import os
+import sys
 import cv2
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -242,8 +243,8 @@ class UNetDataset(Dataset):
                     img = cv2.resize(img, (self.img_w, self.img_h), interpolation=cv2.INTER_AREA)
                     mask = cv2.resize(mask, (self.img_w, self.img_h),
                                       interpolation=cv2.INTER_NEAREST)
-            except Exception:
-                pass  # Fall back to unaugmented image silently
+            except Exception as aug_err:
+                print(f"[WARN] Augmentation failed on {img_path}: {aug_err}", file=sys.stderr, flush=True)
 
         img_tensor = torch.from_numpy(img).float().permute(2, 0, 1) / 255.0
         img_tensor = (img_tensor - 0.5) / 0.5

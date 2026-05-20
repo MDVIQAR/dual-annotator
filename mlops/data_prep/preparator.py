@@ -7,12 +7,14 @@ and writing the dataset_info.json manifest.
 """
 
 import os
+import re
+import json
 import random
 import shutil
 from datetime import datetime
 
 
-_IMAGE_EXTS = {".png", ".jpg", ".jpeg"}
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif"}
 
 
 class DataPreparator:
@@ -265,9 +267,191 @@ class DataPreparator:
     @staticmethod
     def write_dataset_info(output_folder: str, info: dict) -> None:
         """Atomically write info as JSON to {output_folder}/dataset_info.json."""
-        import json
         path = os.path.join(output_folder, "dataset_info.json")
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(info, fh, indent=2)
         os.replace(tmp, path)
+
+    # ------------------------------------------------------------------
+    # Import existing pre-split dataset
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def scan_existing_presplit(root: str) -> dict:
+        """
+        Scan a dataset that already has a train/val folder structure.
+
+        Detects two layouts:
+          Layout A — root/train/images/  + root/val/images/   (common export format)
+          Layout B — root/images/train/  + root/images/val/   (app-generated format)
+
+        Also auto-reads class names from classes.txt or data.yaml if present.
+        Returns a result dict — always safe to call, never raises.
+        """
+        result = {
+            "root":             root,
+            "layout":           None,   # "trainval_images" | "images_trainval" | "flat" | "unknown"
+            "task_type":        None,   # "yolo" | "unet" | None
+            "train_count":      0,
+            "val_count":        0,
+            "test_count":       0,
+            "class_names":      [],
+            "has_dataset_info": False,
+            "has_data_yaml":    False,
+            "errors":           [],
+        }
+
+        if not os.path.isdir(root):
+            result["errors"].append(f"Folder not found: {root}")
+            return result
+
+        def _count_imgs(folder):
+            if not os.path.isdir(folder):
+                return 0
+            return sum(1 for f in os.listdir(folder)
+                       if os.path.splitext(f)[1].lower() in _IMAGE_EXTS)
+
+        # ── Detect layout ──────────────────────────────────────────────
+        train_img_a = os.path.join(root, "train", "images")
+        val_img_a   = os.path.join(root, "val",   "images")
+        train_img_b = os.path.join(root, "images", "train")
+        val_img_b   = os.path.join(root, "images", "val")
+        flat_img    = os.path.join(root, "images")
+
+        if os.path.isdir(train_img_a) and os.path.isdir(val_img_a):
+            result["layout"]      = "trainval_images"
+            result["train_count"] = _count_imgs(train_img_a)
+            result["val_count"]   = _count_imgs(val_img_a)
+            result["test_count"]  = _count_imgs(os.path.join(root, "test", "images"))
+            # Detect task type from sibling label/mask folders
+            if os.path.isdir(os.path.join(root, "train", "labels")):
+                result["task_type"] = "yolo"
+            elif os.path.isdir(os.path.join(root, "train", "masks")):
+                result["task_type"] = "unet"
+
+        elif os.path.isdir(train_img_b) and os.path.isdir(val_img_b):
+            result["layout"]      = "images_trainval"
+            result["train_count"] = _count_imgs(train_img_b)
+            result["val_count"]   = _count_imgs(val_img_b)
+            result["test_count"]  = _count_imgs(os.path.join(root, "images", "test"))
+            if os.path.isdir(os.path.join(root, "labels", "train")):
+                result["task_type"] = "yolo"
+            elif os.path.isdir(os.path.join(root, "train", "masks")):
+                result["task_type"] = "unet"
+
+        elif os.path.isdir(flat_img):
+            # Flat export: images/ + labels/ (no split yet)
+            result["layout"]      = "flat"
+            result["train_count"] = _count_imgs(flat_img)
+            result["val_count"]   = 0
+            if os.path.isdir(os.path.join(root, "labels")):
+                result["task_type"] = "yolo"
+            elif os.path.isdir(os.path.join(root, "masks")):
+                result["task_type"] = "unet"
+        else:
+            result["layout"] = "unknown"
+            result["errors"].append(
+                "No recognised folder layout found. "
+                "Expected train/images/ + val/images/, or images/train/ + images/val/, "
+                "or a flat images/ + labels/ folder."
+            )
+
+        # ── Auto-read class names ──────────────────────────────────────
+        classes_txt = os.path.join(root, "classes.txt")
+        data_yaml   = os.path.join(root, "data.yaml")
+
+        if os.path.isfile(classes_txt):
+            names = []
+            with open(classes_txt, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    # Handle both "0: name" and plain "name" formats
+                    names.append(line.split(":", 1)[1].strip() if ":" in line else line)
+            result["class_names"] = names
+        elif os.path.isfile(data_yaml):
+            try:
+                with open(data_yaml, "r", encoding="utf-8") as fh:
+                    content = fh.read()
+                names = re.findall(r"^\s*-\s*(.+)$", content, re.MULTILINE)
+                if names:
+                    result["class_names"] = [n.strip() for n in names]
+            except Exception:
+                pass
+
+        result["has_dataset_info"] = os.path.isfile(os.path.join(root, "dataset_info.json"))
+        result["has_data_yaml"]    = os.path.isfile(data_yaml)
+        return result
+
+    @staticmethod
+    def generate_presplit_metadata(root: str, task_type: str,
+                                   class_names: list, layout: str) -> None:
+        """
+        Write dataset_info.json and (for YOLO) data.yaml into an existing
+        pre-split dataset root. No files are copied or moved.
+
+        layout: "trainval_images" → train/images/ paths
+                "images_trainval" → images/train/ paths
+        """
+        def _count_imgs(folder):
+            if not os.path.isdir(folder):
+                return 0
+            return sum(1 for f in os.listdir(folder)
+                       if os.path.splitext(f)[1].lower() in _IMAGE_EXTS)
+
+        if layout == "trainval_images":
+            train_dir  = os.path.join(root, "train", "images")
+            val_dir    = os.path.join(root, "val",   "images")
+            test_dir   = os.path.join(root, "test",  "images")
+            yaml_train = "train/images"
+            yaml_val   = "val/images"
+            yaml_test  = "test/images"
+        else:  # images_trainval
+            train_dir  = os.path.join(root, "images", "train")
+            val_dir    = os.path.join(root, "images", "val")
+            test_dir   = os.path.join(root, "images", "test")
+            yaml_train = "images/train"
+            yaml_val   = "images/val"
+            yaml_test  = "images/test"
+
+        train_count = _count_imgs(train_dir)
+        val_count   = _count_imgs(val_dir)
+        test_count  = _count_imgs(test_dir)
+
+        info = {
+            "task_type":     task_type,
+            "output_folder": root.replace("\\", "/"),
+            "created_at":    datetime.now().isoformat(timespec="seconds"),
+            "train_count":   train_count,
+            "val_count":     val_count,
+            "test_count":    test_count,
+            "class_names":   list(class_names),
+            "num_classes":   len(class_names),
+            "sha256":        "",
+            "data_yaml":     os.path.join(root, "data.yaml").replace("\\", "/")
+                             if task_type == "yolo" else "",
+        }
+        DataPreparator.write_dataset_info(root, info)
+
+        if task_type != "yolo":
+            return
+
+        abs_root = root.replace("\\", "/")
+        lines = [
+            f"path: {abs_root}",
+            f"train: {yaml_train}",
+            f"val:   {yaml_val}",
+        ]
+        if test_count > 0:
+            lines.append(f"test:  {yaml_test}")
+        lines += [f"nc: {len(class_names)}", "names:"]
+        for name in class_names:
+            lines.append(f"  - {name}")
+
+        yaml_path = os.path.join(root, "data.yaml")
+        tmp = yaml_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        os.replace(tmp, yaml_path)

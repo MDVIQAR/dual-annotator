@@ -39,7 +39,7 @@ try:
 except Exception:
     HAS_ALBUMENTATIONS = False
 
-from mlops.registry import RegistrySettings, RegistryScanner, projects_config
+from mlops.registry import RegistrySettings
 from mlops.training import TrainWorker, run_preflight
 from mlops.export import OnnxWorker
 
@@ -231,23 +231,63 @@ def _preview_transform(key: str, vals: dict, img_w: int, img_h: int):
 _SETTINGS_DEFAULTS = {
     "task_type":           "unet",
     "annotator_initials":  "",
-    "project":             "",
-    "category":            "",
+    "project_name":        "",
+    "project_id":          "",
+    "variant":             "",
+    "camera":              "",
     "dataset_folder":      "",
     "pretrained_weights":  "",
     "architecture":        "Unet",
     "encoder":             "efficientnet-b3",
     "encoder_weights":     "imagenet",
     "yolo_model":          "yolov8n",
+    "yolo_task":           "detection",
     "epochs":              100,
     "batch_size":          4,
     "learning_rate":       0.001,
     "image_width":         320,
     "image_height":        240,
     "in_channels":         3,
-    "out_classes":         2,
-    "device":              "cpu",
+    "out_classes":              2,
+    "early_stopping_patience":  15,
+    "extra_metrics":            ["precision", "recall", "f1"],
+    "device":                   "cpu",
+    "num_workers":              0,
+    "repeat_factor":            2,
     "augmentations":       {},
+    # YOLO advanced — optimizer
+    "yolo_optimizer":       "AdamW",
+    "yolo_lrf":             0.01,
+    "yolo_momentum":        0.937,
+    "yolo_weight_decay":    0.0005,
+    "yolo_warmup_epochs":   5.0,
+    "yolo_cos_lr":          False,
+    # YOLO advanced — loss weights
+    "yolo_box":             7.5,
+    "yolo_cls":             3.0,
+    "yolo_dfl":             1.5,
+    # YOLO seg options
+    "yolo_dropout":         0.1,
+    "yolo_overlap_mask":    True,
+    "yolo_mask_ratio":      4,
+    # YOLO augmentations
+    "yolo_hsv_h":           0.01,
+    "yolo_hsv_s":           0.30,
+    "yolo_hsv_v":           0.20,
+    "yolo_fliplr":          0.5,
+    "yolo_flipud":          0.0,
+    "yolo_degrees":         5.0,
+    "yolo_translate":       0.05,
+    "yolo_scale":           0.25,
+    "yolo_mosaic":          0.3,
+    "yolo_mixup":           0.0,
+    "yolo_copy_paste":      0.1,
+    "yolo_close_mosaic":    20,
+    # YOLO training utilities
+    "yolo_amp":             True,
+    "yolo_cache":           False,
+    "yolo_save_period":     10,
+    "yolo_plots":           True,
 }
 
 def _settings_path() -> str:
@@ -553,40 +593,48 @@ class TrainingTab(QWidget):
             self._annotator_cb.addItem(f"{ann['name']} ({ann['initials']})", userData=ann)
         self._annotator_cb.currentIndexChanged.connect(self._autosave)
 
-        self._project_cb = QComboBox()
-        self._project_cb.setEditable(True)
-        self._project_cb.setInsertPolicy(QComboBox.NoInsert)
-        self._project_cb.setStyleSheet(_INPUT_STYLE)
-        self._project_cb.addItem("— select project —")
-        _seen = set()
-        for proj in RegistryScanner(self._registry_root).get_projects():
-            self._project_cb.addItem(proj); _seen.add(proj)
-        for proj in projects_config.get_projects():
-            if proj not in _seen:
-                self._project_cb.addItem(proj)
-        self._project_cb.currentTextChanged.connect(self._autosave)
-        self._project_cb.lineEdit().editingFinished.connect(self._on_project_committed)
+        self._project_name_cb = QComboBox()
+        self._project_name_cb.setEditable(True)
+        self._project_name_cb.setInsertPolicy(QComboBox.NoInsert)
+        self._project_name_cb.setPlaceholderText("e.g. SnipeX")
+        self._project_name_cb.setStyleSheet(_INPUT_STYLE)
+        self._project_name_cb.currentTextChanged.connect(self._on_train_project_name_changed)
 
-        self._category_cb = QComboBox()
-        self._category_cb.setEditable(True)
-        self._category_cb.setInsertPolicy(QComboBox.NoInsert)
-        self._category_cb.setPlaceholderText("e.g. pouches, seals, caps")
-        self._category_cb.setStyleSheet(_INPUT_STYLE)
-        for cat in projects_config.get_categories():
-            self._category_cb.addItem(cat)
-        self._category_cb.currentTextChanged.connect(self._autosave)
-        self._category_cb.lineEdit().editingFinished.connect(self._on_category_committed)
+        self._project_id_cb = QComboBox()
+        self._project_id_cb.setEditable(True)
+        self._project_id_cb.setInsertPolicy(QComboBox.NoInsert)
+        self._project_id_cb.setPlaceholderText("e.g. SLXCAP")
+        self._project_id_cb.setStyleSheet(_INPUT_STYLE)
+        self._project_id_cb.currentTextChanged.connect(self._on_train_project_id_changed)
+
+        self._variant_cb = QComboBox()
+        self._variant_cb.setEditable(True)
+        self._variant_cb.setInsertPolicy(QComboBox.NoInsert)
+        self._variant_cb.setPlaceholderText("e.g. CRC")
+        self._variant_cb.setStyleSheet(_INPUT_STYLE)
+        self._variant_cb.currentTextChanged.connect(self._on_train_variant_changed)
+
+        self._camera_cb = QComboBox()
+        self._camera_cb.setEditable(True)
+        self._camera_cb.setInsertPolicy(QComboBox.NoInsert)
+        self._camera_cb.setPlaceholderText("e.g. cam0")
+        self._camera_cb.setStyleSheet(_INPUT_STYLE)
+        self._camera_cb.currentTextChanged.connect(self._autosave)
 
         self._commit_edit = QLineEdit()
         self._commit_edit.setPlaceholderText("e.g. Added thermal augmentation")
         self._commit_edit.setStyleSheet(_INPUT_STYLE)
 
+        self._refresh_train_project_names()
+
         layout.addWidget(_make_section([
             _section_label("Run Info"),
-            _make_row("Annotator",  self._annotator_cb),
-            _make_row("Project",    self._project_cb),
-            _make_row("Category",   self._category_cb),
-            _make_row("Commit Msg", self._commit_edit),
+            _make_row("Annotator",    self._annotator_cb),
+            _make_row("Project Name", self._project_name_cb),
+            _make_row("Project ID",   self._project_id_cb),
+            _make_row("Variant",      self._variant_cb),
+            _make_row("Camera",       self._camera_cb),
+            _make_row("Commit Msg",   self._commit_edit),
         ]))
 
         # Dataset
@@ -624,8 +672,9 @@ class TrainingTab(QWidget):
             weights_row,
         ]))
 
-        # Augmentations (collapsible)
-        layout.addWidget(_make_collapsible("Augmentations", self._build_aug_section(), collapsed=True))
+        # Augmentations (collapsible) — hidden when YOLO is selected
+        self._aug_collapsible = _make_collapsible("Augmentations", self._build_aug_section(), collapsed=True)
+        layout.addWidget(self._aug_collapsible)
 
         # Architecture
         self._arch_section = QFrame()
@@ -658,6 +707,25 @@ class TrainingTab(QWidget):
         self._yolo_block = QWidget()
         yolo_l = QVBoxLayout(self._yolo_block)
         yolo_l.setContentsMargins(0, 0, 0, 0); yolo_l.setSpacing(8)
+
+        _rb_style = ("QRadioButton { color: #cccccc; font-size: 11px; "
+                     "background: transparent; border: none; }")
+        self._yolo_detect_rb = QRadioButton("Detection")
+        self._yolo_seg_rb    = QRadioButton("Segmentation")
+        self._yolo_detect_rb.setStyleSheet(_rb_style)
+        self._yolo_seg_rb.setStyleSheet(_rb_style)
+        self._yolo_detect_rb.setChecked(True)
+        self._yolo_task_grp = QButtonGroup(self)
+        self._yolo_task_grp.addButton(self._yolo_detect_rb)
+        self._yolo_task_grp.addButton(self._yolo_seg_rb)
+        self._yolo_detect_rb.toggled.connect(self._on_yolo_task_changed)
+        _rb_row = QHBoxLayout()
+        _rb_row.setSpacing(12)
+        _rb_row.addWidget(self._yolo_detect_rb)
+        _rb_row.addWidget(self._yolo_seg_rb)
+        _rb_row.addStretch()
+        yolo_l.addLayout(_rb_row)
+
         self._yolo_model_cb = QComboBox()
         self._yolo_model_cb.addItems(["yolov8n", "yolov8s", "yolov8m", "yolov8l", "yolov8x"])
         self._yolo_model_cb.setStyleSheet(_INPUT_STYLE)
@@ -668,6 +736,11 @@ class TrainingTab(QWidget):
         arch_layout.addWidget(self._yolo_block)
         layout.addWidget(_make_collapsible("Architecture", self._arch_section))
 
+        # YOLO advanced sections (hidden when UNet is selected)
+        self._yolo_adv_widget = self._build_yolo_advanced_sections()
+        self._yolo_adv_widget.hide()
+        layout.addWidget(self._yolo_adv_widget)
+
         # Hyperparameters
         self._epochs_sp = QSpinBox(); self._epochs_sp.setRange(1, 1000)
         self._batch_sp  = QSpinBox(); self._batch_sp.setRange(1, 128)
@@ -676,24 +749,61 @@ class TrainingTab(QWidget):
         self._width_sp  = QSpinBox(); self._width_sp.setRange(32, 4096); self._width_sp.setSingleStep(32)
         self._height_sp = QSpinBox(); self._height_sp.setRange(32, 4096); self._height_sp.setSingleStep(32)
         self._device_cb = QComboBox(); self._device_cb.addItems(["cpu", "cuda:0", "cuda:1"])
-        self._in_channels_sp  = QSpinBox(); self._in_channels_sp.setRange(1, 10)
-        self._out_classes_sp  = QSpinBox(); self._out_classes_sp.setRange(1, 256)
+        self._in_channels_sp   = QSpinBox(); self._in_channels_sp.setRange(1, 10)
+        self._out_classes_sp   = QSpinBox(); self._out_classes_sp.setRange(1, 256)
+        self._patience_sp      = QSpinBox(); self._patience_sp.setRange(1, 200); self._patience_sp.setValue(15)
+        self._num_workers_sp   = QSpinBox(); self._num_workers_sp.setRange(0, 16)
+        self._repeat_factor_sp = QSpinBox(); self._repeat_factor_sp.setRange(1, 20); self._repeat_factor_sp.setValue(2)
         for w in (self._epochs_sp, self._batch_sp, self._lr_sp, self._width_sp,
-                  self._height_sp, self._device_cb, self._in_channels_sp, self._out_classes_sp):
+                  self._height_sp, self._device_cb, self._in_channels_sp, self._out_classes_sp,
+                  self._patience_sp, self._num_workers_sp, self._repeat_factor_sp):
             w.setStyleSheet(_INPUT_STYLE)
             w.currentTextChanged.connect(self._autosave) if isinstance(w, QComboBox) else \
                 w.valueChanged.connect(self._autosave)
 
+        # UNet-only hyperparams (hidden for YOLO)
+        self._unet_only_hp = QWidget()
+        self._unet_only_hp.setStyleSheet("QWidget { background: transparent; }")
+        _unet_hp_l = QVBoxLayout(self._unet_only_hp)
+        _unet_hp_l.setContentsMargins(0, 0, 0, 0)
+        _unet_hp_l.setSpacing(4)
+        _unet_hp_sep = QLabel("── UNet Only ──────────────────")
+        _unet_hp_sep.setStyleSheet("color: #555555; font-size: 10px; background: transparent; border: none;")
+        _unet_hp_l.addWidget(_unet_hp_sep)
+        for label, widget in [
+            ("Image Height",    self._height_sp),
+            ("In Channels",     self._in_channels_sp),
+            ("Out Classes",     self._out_classes_sp),
+            ("Repeat Factor",   self._repeat_factor_sp),
+        ]:
+            _row = _make_row(label, widget)
+            _unet_hp_l.addLayout(_row)
+
         layout.addWidget(_make_collapsible("Hyperparameters", _make_section([
-            _make_row("Epochs",        self._epochs_sp),
-            _make_row("Batch Size",    self._batch_sp),
-            _make_row("Learning Rate", self._lr_sp),
-            _make_row("Image Width",   self._width_sp),
-            _make_row("Image Height",  self._height_sp),
-            _make_row("In Channels",   self._in_channels_sp),
-            _make_row("Out Classes",   self._out_classes_sp),
-            _make_row("Device",        self._device_cb),
+            _make_row("Epochs",              self._epochs_sp),
+            _make_row("Batch Size",          self._batch_sp),
+            _make_row("Learning Rate (lr0)", self._lr_sp),
+            _make_row("Image Width",         self._width_sp),
+            _make_row("Early Stop Patience", self._patience_sp),
+            _make_row("Num Workers",         self._num_workers_sp),
+            _make_row("Device",              self._device_cb),
+            self._unet_only_hp,
         ])))
+
+        # Metrics to Track
+        _cb_style = ("QCheckBox { color: #cccccc; font-size: 11px; "
+                     "background: transparent; border: none; }"
+                     "QCheckBox::indicator { width: 13px; height: 13px; }")
+        self._metric_checkboxes = {}
+        for key, label in [("precision", "Precision"), ("recall", "Recall"), ("f1", "F1 / Dice Score")]:
+            cb = QCheckBox(label)
+            cb.setStyleSheet(_cb_style)
+            cb.setChecked(True)
+            cb.stateChanged.connect(self._autosave)
+            self._metric_checkboxes[key] = cb
+        layout.addWidget(_make_collapsible("Metrics to Track", _make_section(
+            list(self._metric_checkboxes.values())
+        )))
 
         # Pre-flight Checks
         self._checks_frame = QFrame()
@@ -723,6 +833,129 @@ class TrainingTab(QWidget):
         ol.setContentsMargins(0, 0, 0, 0)
         ol.addWidget(scroll)
         return outer
+
+    # ---- YOLO advanced sections ---------------------------------------
+
+    def _build_yolo_advanced_sections(self) -> QWidget:
+        _cb_style = ("QCheckBox { color: #cccccc; font-size: 11px; "
+                     "background: transparent; border: none; }"
+                     "QCheckBox::indicator { width: 13px; height: 13px; }")
+
+        def _dsb(lo, hi, default, decimals=3, step=0.001):
+            w = QDoubleSpinBox()
+            w.setRange(lo, hi); w.setDecimals(decimals)
+            w.setSingleStep(step); w.setValue(default)
+            w.setStyleSheet(_INPUT_STYLE)
+            w.valueChanged.connect(self._autosave)
+            return w
+
+        def _sb(lo, hi, default):
+            w = QSpinBox()
+            w.setRange(lo, hi); w.setValue(default)
+            w.setStyleSheet(_INPUT_STYLE)
+            w.valueChanged.connect(self._autosave)
+            return w
+
+        def _chk(label, default):
+            w = QCheckBox(label)
+            w.setStyleSheet(_cb_style)
+            w.setChecked(default)
+            w.stateChanged.connect(self._autosave)
+            return w
+
+        container = QWidget()
+        container.setStyleSheet("background: transparent;")
+        vlay = QVBoxLayout(container)
+        vlay.setContentsMargins(0, 0, 0, 0)
+        vlay.setSpacing(0)
+
+        # --- Optimizer & LR ---
+        self._yolo_optimizer_cb = QComboBox()
+        self._yolo_optimizer_cb.addItems(["AdamW", "Adam", "SGD", "auto"])
+        self._yolo_optimizer_cb.setStyleSheet(_INPUT_STYLE)
+        self._yolo_optimizer_cb.currentTextChanged.connect(self._autosave)
+        self._yolo_lrf_sp          = _dsb(0.0001, 1.0,   0.01,  4, 0.001)
+        self._yolo_momentum_sp     = _dsb(0.0,    1.0,   0.937, 3, 0.001)
+        self._yolo_weight_decay_sp = _dsb(0.0,    0.1,   0.0005,5, 0.00001)
+        self._yolo_warmup_sp       = _dsb(0.0,    20.0,  5.0,   1, 0.5)
+        self._yolo_cos_lr_cb       = _chk("Cosine LR Schedule", False)
+
+        vlay.addWidget(_make_collapsible("YOLO Optimizer & LR", _make_section([
+            _make_row("Optimizer",      self._yolo_optimizer_cb),
+            _make_row("LR Final (lrf)", self._yolo_lrf_sp),
+            _make_row("Momentum",       self._yolo_momentum_sp),
+            _make_row("Weight Decay",   self._yolo_weight_decay_sp),
+            _make_row("Warmup Epochs",  self._yolo_warmup_sp),
+            self._yolo_cos_lr_cb,
+        ]), collapsed=True))
+
+        # --- Loss Weights ---
+        self._yolo_box_sp = _dsb(0.0, 20.0, 7.5, 1, 0.1)
+        self._yolo_cls_sp = _dsb(0.0, 20.0, 3.0, 1, 0.1)
+        self._yolo_dfl_sp = _dsb(0.0, 10.0, 1.5, 1, 0.1)
+
+        vlay.addWidget(_make_collapsible("YOLO Loss Weights", _make_section([
+            _make_row("Box Loss (box)", self._yolo_box_sp),
+            _make_row("Cls Loss (cls)", self._yolo_cls_sp),
+            _make_row("DFL Loss (dfl)", self._yolo_dfl_sp),
+        ]), collapsed=True))
+
+        # --- YOLO Augmentations ---
+        self._yolo_hsv_h_sp       = _dsb(0.0, 1.0,   0.01,  3, 0.01)
+        self._yolo_hsv_s_sp       = _dsb(0.0, 1.0,   0.30,  2, 0.01)
+        self._yolo_hsv_v_sp       = _dsb(0.0, 1.0,   0.20,  2, 0.01)
+        self._yolo_fliplr_sp      = _dsb(0.0, 1.0,   0.5,   2, 0.05)
+        self._yolo_flipud_sp      = _dsb(0.0, 1.0,   0.0,   2, 0.05)
+        self._yolo_degrees_sp     = _dsb(0.0, 360.0, 5.0,   1, 1.0)
+        self._yolo_translate_sp   = _dsb(0.0, 1.0,   0.05,  2, 0.01)
+        self._yolo_scale_sp       = _dsb(0.0, 1.0,   0.25,  2, 0.05)
+        self._yolo_mosaic_sp      = _dsb(0.0, 1.0,   0.3,   2, 0.05)
+        self._yolo_mixup_sp       = _dsb(0.0, 1.0,   0.0,   2, 0.05)
+        self._yolo_copy_paste_sp  = _dsb(0.0, 1.0,   0.1,   2, 0.05)
+        self._yolo_close_mosaic_sp = _sb(0, 300, 20)
+
+        vlay.addWidget(_make_collapsible("YOLO Augmentations", _make_section([
+            _make_row("HSV Hue",        self._yolo_hsv_h_sp),
+            _make_row("HSV Saturation", self._yolo_hsv_s_sp),
+            _make_row("HSV Value",      self._yolo_hsv_v_sp),
+            _make_row("Flip LR (prob)", self._yolo_fliplr_sp),
+            _make_row("Flip UD (prob)", self._yolo_flipud_sp),
+            _make_row("Rotation °",     self._yolo_degrees_sp),
+            _make_row("Translate",      self._yolo_translate_sp),
+            _make_row("Scale",          self._yolo_scale_sp),
+            _make_row("Mosaic",         self._yolo_mosaic_sp),
+            _make_row("Mixup",          self._yolo_mixup_sp),
+            _make_row("Copy-Paste",     self._yolo_copy_paste_sp),
+            _make_row("Close Mosaic",   self._yolo_close_mosaic_sp),
+        ]), collapsed=True))
+
+        # --- Seg Options (hidden in detection mode) ---
+        self._yolo_dropout_sp      = _dsb(0.0, 0.9, 0.1, 2, 0.05)
+        self._yolo_overlap_mask_cb = _chk("Overlap Mask", True)
+        self._yolo_mask_ratio_sp   = _sb(1, 8, 4)
+
+        self._yolo_seg_options_col = _make_collapsible("YOLO Seg Options", _make_section([
+            _make_row("Dropout",     self._yolo_dropout_sp),
+            _make_row("Mask Ratio",  self._yolo_mask_ratio_sp),
+            self._yolo_overlap_mask_cb,
+        ]), collapsed=True)
+        self._yolo_seg_options_col.hide()
+        vlay.addWidget(self._yolo_seg_options_col)
+
+        # --- Training Utilities ---
+        self._yolo_amp_cb        = _chk("Mixed Precision (AMP)", True)
+        self._yolo_cache_cb      = _chk("Cache Images in RAM",   False)
+        self._yolo_plots_cb      = _chk("Generate Plots",        True)
+        self._yolo_save_period_sp = _sb(-1, 300, 10)
+
+        vlay.addWidget(_make_collapsible("YOLO Training Utilities", _make_section([
+            self._yolo_amp_cb,
+            self._yolo_cache_cb,
+            self._yolo_plots_cb,
+            _make_row("Save Period (epochs)", self._yolo_save_period_sp),
+        ]), collapsed=True))
+
+        return container
 
     # ---- Augmentation section (left panel) ----------------------------
 
@@ -1108,7 +1341,10 @@ class TrainingTab(QWidget):
                 ax.set_ylabel(ylabel)
                 for spine in ax.spines.values():
                     spine.set_edgecolor("#3a3a3a")
-            self._fig.tight_layout(pad=2.5)
+            try:
+                self._fig.tight_layout(pad=2.5)
+            except Exception:
+                pass
             self._canvas = FigureCanvas(self._fig)
             lay.addWidget(self._canvas, 1)
         else:
@@ -1382,7 +1618,8 @@ class TrainingTab(QWidget):
     def _restore_settings(self):
         s = self._settings
         _block = [
-            self._annotator_cb, self._project_cb, self._category_cb,
+            self._annotator_cb,
+            self._project_name_cb, self._project_id_cb, self._variant_cb, self._camera_cb,
             self._unet_arch_cb, self._encoder_cb, self._weights_cb,
             self._yolo_model_cb, self._epochs_sp, self._batch_sp,
             self._lr_sp, self._width_sp, self._height_sp,
@@ -1399,17 +1636,18 @@ class TrainingTab(QWidget):
                         self._annotator_cb.itemData(i).get("initials") == initials:
                     self._annotator_cb.setCurrentIndex(i); break
 
-        proj = s.get("project", "")
-        if proj:
-            idx = self._project_cb.findText(proj)
-            if idx >= 0:
-                self._project_cb.setCurrentIndex(idx)
-            else:
-                self._project_cb.setCurrentText(proj)
-
-        cat = s.get("category", "")
-        if cat:
-            self._category_cb.setCurrentText(cat)
+        self._refresh_train_project_names()
+        if s.get("project_name"):
+            self._project_name_cb.setCurrentText(s["project_name"])
+        self._refresh_train_project_ids()
+        if s.get("project_id"):
+            self._project_id_cb.setCurrentText(s["project_id"])
+        self._refresh_train_variants()
+        if s.get("variant"):
+            self._variant_cb.setCurrentText(s["variant"])
+        self._refresh_train_cameras()
+        if s.get("camera"):
+            self._camera_cb.setCurrentText(s["camera"])
 
         pw = s.get("pretrained_weights", "")
         if pw:
@@ -1418,6 +1656,11 @@ class TrainingTab(QWidget):
         self._unet_arch_cb.setCurrentText(s.get("architecture", "Unet"))
         self._encoder_cb.setCurrentText(s.get("encoder", "efficientnet-b3"))
         self._weights_cb.setCurrentText(s.get("encoder_weights", "imagenet"))
+        if s.get("yolo_task", "detection") == "segmentation":
+            self._yolo_seg_rb.setChecked(True)
+        else:
+            self._yolo_detect_rb.setChecked(True)
+        self._on_yolo_task_changed()
         self._yolo_model_cb.setCurrentText(s.get("yolo_model", "yolov8n"))
         self._epochs_sp.setValue(int(s.get("epochs", 100)))
         self._batch_sp.setValue(int(s.get("batch_size", 4)))
@@ -1426,7 +1669,42 @@ class TrainingTab(QWidget):
         self._height_sp.setValue(int(s.get("image_height", 240)))
         self._in_channels_sp.setValue(int(s.get("in_channels", 3)))
         self._out_classes_sp.setValue(int(s.get("out_classes", 2)))
+        self._patience_sp.setValue(int(s.get("early_stopping_patience", 15)))
+        self._num_workers_sp.setValue(int(s.get("num_workers", 0)))
+        self._repeat_factor_sp.setValue(int(s.get("repeat_factor", 2)))
+        _enabled_metrics = set(s.get("extra_metrics", ["precision", "recall", "f1"]))
+        for key, cb in self._metric_checkboxes.items():
+            cb.setChecked(key in _enabled_metrics)
         self._device_cb.setCurrentText(s.get("device", "cpu"))
+        # YOLO advanced
+        self._yolo_optimizer_cb.setCurrentText(s.get("yolo_optimizer", "AdamW"))
+        self._yolo_lrf_sp.setValue(float(s.get("yolo_lrf", 0.01)))
+        self._yolo_momentum_sp.setValue(float(s.get("yolo_momentum", 0.937)))
+        self._yolo_weight_decay_sp.setValue(float(s.get("yolo_weight_decay", 0.0005)))
+        self._yolo_warmup_sp.setValue(float(s.get("yolo_warmup_epochs", 5.0)))
+        self._yolo_cos_lr_cb.setChecked(bool(s.get("yolo_cos_lr", False)))
+        self._yolo_box_sp.setValue(float(s.get("yolo_box", 7.5)))
+        self._yolo_cls_sp.setValue(float(s.get("yolo_cls", 3.0)))
+        self._yolo_dfl_sp.setValue(float(s.get("yolo_dfl", 1.5)))
+        self._yolo_dropout_sp.setValue(float(s.get("yolo_dropout", 0.1)))
+        self._yolo_overlap_mask_cb.setChecked(bool(s.get("yolo_overlap_mask", True)))
+        self._yolo_mask_ratio_sp.setValue(int(s.get("yolo_mask_ratio", 4)))
+        self._yolo_hsv_h_sp.setValue(float(s.get("yolo_hsv_h", 0.01)))
+        self._yolo_hsv_s_sp.setValue(float(s.get("yolo_hsv_s", 0.30)))
+        self._yolo_hsv_v_sp.setValue(float(s.get("yolo_hsv_v", 0.20)))
+        self._yolo_fliplr_sp.setValue(float(s.get("yolo_fliplr", 0.5)))
+        self._yolo_flipud_sp.setValue(float(s.get("yolo_flipud", 0.0)))
+        self._yolo_degrees_sp.setValue(float(s.get("yolo_degrees", 5.0)))
+        self._yolo_translate_sp.setValue(float(s.get("yolo_translate", 0.05)))
+        self._yolo_scale_sp.setValue(float(s.get("yolo_scale", 0.25)))
+        self._yolo_mosaic_sp.setValue(float(s.get("yolo_mosaic", 0.3)))
+        self._yolo_mixup_sp.setValue(float(s.get("yolo_mixup", 0.0)))
+        self._yolo_copy_paste_sp.setValue(float(s.get("yolo_copy_paste", 0.1)))
+        self._yolo_close_mosaic_sp.setValue(int(s.get("yolo_close_mosaic", 20)))
+        self._yolo_amp_cb.setChecked(bool(s.get("yolo_amp", True)))
+        self._yolo_cache_cb.setChecked(bool(s.get("yolo_cache", False)))
+        self._yolo_save_period_sp.setValue(int(s.get("yolo_save_period", 10)))
+        self._yolo_plots_cb.setChecked(bool(s.get("yolo_plots", True)))
 
         if s.get("task_type", "unet") == "yolo":
             self._radio_yolo.setChecked(True)
@@ -1451,35 +1729,139 @@ class TrainingTab(QWidget):
         is_yolo = self._radio_yolo.isChecked()
         self._unet_block.setVisible(not is_yolo)
         self._yolo_block.setVisible(is_yolo)
+        if hasattr(self, "_yolo_adv_widget"):
+            self._yolo_adv_widget.setVisible(is_yolo)
+        if hasattr(self, "_aug_collapsible"):
+            self._aug_collapsible.setVisible(not is_yolo)
+        if hasattr(self, "_unet_only_hp"):
+            self._unet_only_hp.setVisible(not is_yolo)
         if hasattr(self, "_aug_yolo_note"):
             self._aug_yolo_note.setVisible(is_yolo)
             self._aug_controls_widget.setVisible(not is_yolo)
+        if hasattr(self, "_project_name_cb"):
+            self._refresh_train_project_names()
         self._autosave()
 
-    def _on_project_committed(self):
-        name = self._project_cb.currentText().strip()
-        if name and name != "— select project —":
-            projects_config.ensure_project(name)
-            self._refresh_category_dropdown()
+    def _on_yolo_task_changed(self):
+        is_det = self._yolo_detect_rb.isChecked()
+        current = self._yolo_model_cb.currentText()
+        self._yolo_model_cb.blockSignals(True)
+        self._yolo_model_cb.clear()
+        if is_det:
+            models = ["yolov8n", "yolov8s", "yolov8m", "yolov8l", "yolov8x"]
+        else:
+            models = ["yolov8n-seg", "yolov8s-seg", "yolov8m-seg", "yolov8l-seg", "yolov8x-seg"]
+        self._yolo_model_cb.addItems(models)
+        base = current.replace("-seg", "")
+        target = base if is_det else base + "-seg"
+        idx = self._yolo_model_cb.findText(target)
+        if idx >= 0:
+            self._yolo_model_cb.setCurrentIndex(idx)
+        self._yolo_model_cb.blockSignals(False)
+        if hasattr(self, "_yolo_seg_options_col"):
+            self._yolo_seg_options_col.setVisible(not is_det)
         self._autosave()
 
-    def _on_category_committed(self):
-        name = self._category_cb.currentText().strip()
-        if name:
-            projects_config.ensure_category(name)
-            self._refresh_category_dropdown()
-            self._category_cb.setCurrentText(name)
-        self._autosave()
+    def _current_train_model_type(self) -> str:
+        return "yolo" if self._radio_yolo.isChecked() else "unet"
 
-    def _refresh_category_dropdown(self):
-        cur = self._category_cb.currentText()
-        self._category_cb.blockSignals(True)
-        self._category_cb.clear()
-        for cat in projects_config.get_categories():
-            self._category_cb.addItem(cat)
+    def _refresh_train_project_names(self):
+        settings = RegistrySettings()
+        names = settings.scan_project_names(self._current_train_model_type())
+        cur = self._project_name_cb.currentText() if hasattr(self, "_project_name_cb") else ""
+        self._project_name_cb.blockSignals(True)
+        self._project_name_cb.clear()
+        for n in names:
+            self._project_name_cb.addItem(n)
         if cur:
-            self._category_cb.setCurrentText(cur)
-        self._category_cb.blockSignals(False)
+            self._project_name_cb.setCurrentText(cur)
+        self._project_name_cb.blockSignals(False)
+
+    def _refresh_train_project_ids(self):
+        settings = RegistrySettings()
+        ids = settings.scan_project_ids(
+            self._current_train_model_type(),
+            self._project_name_cb.currentText().strip(),
+        )
+        cur = self._project_id_cb.currentText()
+        self._project_id_cb.blockSignals(True)
+        self._project_id_cb.clear()
+        for i in ids:
+            self._project_id_cb.addItem(i)
+        if cur:
+            self._project_id_cb.setCurrentText(cur)
+        self._project_id_cb.blockSignals(False)
+
+    def _refresh_train_variants(self):
+        settings = RegistrySettings()
+        variants = settings.scan_variants(
+            self._current_train_model_type(),
+            self._project_name_cb.currentText().strip(),
+            self._project_id_cb.currentText().strip(),
+        )
+        cur = self._variant_cb.currentText()
+        self._variant_cb.blockSignals(True)
+        self._variant_cb.clear()
+        for v in variants:
+            self._variant_cb.addItem(v)
+        if cur:
+            self._variant_cb.setCurrentText(cur)
+        self._variant_cb.blockSignals(False)
+
+    def _refresh_train_cameras(self):
+        settings = RegistrySettings()
+        cameras = settings.scan_cameras(
+            self._current_train_model_type(),
+            self._project_name_cb.currentText().strip(),
+            self._project_id_cb.currentText().strip(),
+            self._variant_cb.currentText().strip(),
+        )
+        cur = self._camera_cb.currentText()
+        self._camera_cb.blockSignals(True)
+        self._camera_cb.clear()
+        for c in cameras:
+            self._camera_cb.addItem(c)
+        if cur:
+            self._camera_cb.setCurrentText(cur)
+        self._camera_cb.blockSignals(False)
+
+    def _on_train_project_name_changed(self):
+        self._refresh_train_project_ids()
+        self._refresh_train_variants()
+        self._refresh_train_cameras()
+        self._autosave()
+
+    def _on_train_project_id_changed(self):
+        self._refresh_train_variants()
+        self._refresh_train_cameras()
+        self._autosave()
+
+    def _on_train_variant_changed(self):
+        self._refresh_train_cameras()
+        self._autosave()
+
+    def prefill_from_staged(self, staged_info: dict):
+        """Called from Data Prep tab — pre-fills hierarchy and dataset path."""
+        model_type = staged_info.get("model_type", "unet").lower()
+        if model_type == "yolo":
+            self._radio_yolo.setChecked(True)
+        else:
+            self._radio_unet.setChecked(True)
+        self._on_task_changed()
+
+        self._project_name_cb.setCurrentText(staged_info.get("project_name", ""))
+        self._refresh_train_project_ids()
+        self._project_id_cb.setCurrentText(staged_info.get("project_id", ""))
+        self._refresh_train_variants()
+        self._variant_cb.setCurrentText(staged_info.get("variant", ""))
+        self._refresh_train_cameras()
+        self._camera_cb.setCurrentText(staged_info.get("camera", ""))
+
+        path = staged_info.get("path", "")
+        if path and os.path.isdir(path):
+            self._load_dataset_info(path)
+
+        self._autosave()
 
     def _autosave(self):
         s = self._settings
@@ -1487,25 +1869,60 @@ class TrainingTab(QWidget):
         ann_data = self._annotator_cb.currentData()
         if ann_data:
             s["annotator_initials"] = ann_data.get("initials", "")
-        proj = self._project_cb.currentText()
-        s["project"]            = proj if proj != "— select project —" else ""
-        s["category"]           = self._category_cb.currentText().strip()
+        s["project_name"] = self._project_name_cb.currentText().strip()
+        s["project_id"]   = self._project_id_cb.currentText().strip()
+        s["variant"]      = self._variant_cb.currentText().strip()
+        s["camera"]       = self._camera_cb.currentText().strip()
         s["dataset_folder"]     = self._ds_edit.text()
         s["pretrained_weights"] = self._weights_edit.text()
         s["architecture"]       = self._unet_arch_cb.currentText()
         s["encoder"]            = self._encoder_cb.currentText()
         s["encoder_weights"]    = self._weights_cb.currentText()
         s["yolo_model"]         = self._yolo_model_cb.currentText()
+        s["yolo_task"]          = "segmentation" if self._yolo_seg_rb.isChecked() else "detection"
         s["epochs"]             = self._epochs_sp.value()
         s["batch_size"]         = self._batch_sp.value()
         s["learning_rate"]      = self._lr_sp.value()
         s["image_width"]        = self._width_sp.value()
         s["image_height"]       = self._height_sp.value()
-        s["in_channels"]        = self._in_channels_sp.value()
-        s["out_classes"]        = self._out_classes_sp.value()
-        s["device"]             = self._device_cb.currentText()
+        s["in_channels"]               = self._in_channels_sp.value()
+        s["out_classes"]               = self._out_classes_sp.value()
+        s["early_stopping_patience"]   = self._patience_sp.value()
+        s["extra_metrics"]             = [k for k, cb in self._metric_checkboxes.items() if cb.isChecked()]
+        s["device"]                    = self._device_cb.currentText()
+        s["num_workers"]               = self._num_workers_sp.value()
+        s["repeat_factor"]             = self._repeat_factor_sp.value()
         if self._aug_widgets:
             s["augmentations"]  = self._get_aug_config()
+        # YOLO advanced
+        s["yolo_optimizer"]      = self._yolo_optimizer_cb.currentText()
+        s["yolo_lrf"]            = self._yolo_lrf_sp.value()
+        s["yolo_momentum"]       = self._yolo_momentum_sp.value()
+        s["yolo_weight_decay"]   = self._yolo_weight_decay_sp.value()
+        s["yolo_warmup_epochs"]  = self._yolo_warmup_sp.value()
+        s["yolo_cos_lr"]         = self._yolo_cos_lr_cb.isChecked()
+        s["yolo_box"]            = self._yolo_box_sp.value()
+        s["yolo_cls"]            = self._yolo_cls_sp.value()
+        s["yolo_dfl"]            = self._yolo_dfl_sp.value()
+        s["yolo_dropout"]        = self._yolo_dropout_sp.value()
+        s["yolo_overlap_mask"]   = self._yolo_overlap_mask_cb.isChecked()
+        s["yolo_mask_ratio"]     = self._yolo_mask_ratio_sp.value()
+        s["yolo_hsv_h"]          = self._yolo_hsv_h_sp.value()
+        s["yolo_hsv_s"]          = self._yolo_hsv_s_sp.value()
+        s["yolo_hsv_v"]          = self._yolo_hsv_v_sp.value()
+        s["yolo_fliplr"]         = self._yolo_fliplr_sp.value()
+        s["yolo_flipud"]         = self._yolo_flipud_sp.value()
+        s["yolo_degrees"]        = self._yolo_degrees_sp.value()
+        s["yolo_translate"]      = self._yolo_translate_sp.value()
+        s["yolo_scale"]          = self._yolo_scale_sp.value()
+        s["yolo_mosaic"]         = self._yolo_mosaic_sp.value()
+        s["yolo_mixup"]          = self._yolo_mixup_sp.value()
+        s["yolo_copy_paste"]     = self._yolo_copy_paste_sp.value()
+        s["yolo_close_mosaic"]   = self._yolo_close_mosaic_sp.value()
+        s["yolo_amp"]            = self._yolo_amp_cb.isChecked()
+        s["yolo_cache"]          = self._yolo_cache_cb.isChecked()
+        s["yolo_save_period"]    = self._yolo_save_period_sp.value()
+        s["yolo_plots"]          = self._yolo_plots_cb.isChecked()
         _save_settings(s)
 
     def _browse_dataset(self):
@@ -1559,16 +1976,16 @@ class TrainingTab(QWidget):
 
     def _get_form_dict(self) -> dict:
         ann_data = self._annotator_cb.currentData() or {}
-        proj = self._project_cb.currentText()
-        proj = proj if proj != "— select project —" else ""
         task_type = "yolo" if self._radio_yolo.isChecked() else "unet"
         arch = (self._yolo_model_cb.currentText() if task_type == "yolo"
                 else self._unet_arch_cb.currentText())
         return {
             "annotator_name":     ann_data.get("name", ""),
             "annotator_initials": ann_data.get("initials", ""),
-            "project":            proj,
-            "category":           self._category_cb.currentText().strip(),
+            "project_name":       self._project_name_cb.currentText().strip(),
+            "project_id":         self._project_id_cb.currentText().strip(),
+            "variant":            self._variant_cb.currentText().strip(),
+            "camera":             self._camera_cb.currentText().strip(),
             "pretrained_weights": self._weights_edit.text().strip(),
             "commit_message":     self._commit_edit.text(),
             "dataset_folder":     self._ds_edit.text(),
@@ -1581,9 +1998,42 @@ class TrainingTab(QWidget):
             "image_width":        self._width_sp.value(),
             "image_height":       self._height_sp.value(),
             "in_channels":        self._in_channels_sp.value(),
-            "out_classes":        self._out_classes_sp.value(),
-            "device":             self._device_cb.currentText(),
+            "out_classes":               self._out_classes_sp.value(),
+            "early_stopping_patience":   self._patience_sp.value(),
+            "extra_metrics":             [k for k, cb in self._metric_checkboxes.items() if cb.isChecked()],
+            "device":                    self._device_cb.currentText(),
+            "num_workers":               self._num_workers_sp.value(),
+            "repeat_factor":             self._repeat_factor_sp.value(),
             "augmentations":      self._get_aug_config() if not self._radio_yolo.isChecked() else {},
+            # YOLO advanced
+            "yolo_optimizer":     self._yolo_optimizer_cb.currentText(),
+            "yolo_lrf":           self._yolo_lrf_sp.value(),
+            "yolo_momentum":      self._yolo_momentum_sp.value(),
+            "yolo_weight_decay":  self._yolo_weight_decay_sp.value(),
+            "yolo_warmup_epochs": self._yolo_warmup_sp.value(),
+            "yolo_cos_lr":        self._yolo_cos_lr_cb.isChecked(),
+            "yolo_box":           self._yolo_box_sp.value(),
+            "yolo_cls":           self._yolo_cls_sp.value(),
+            "yolo_dfl":           self._yolo_dfl_sp.value(),
+            "yolo_dropout":       self._yolo_dropout_sp.value(),
+            "yolo_overlap_mask":  self._yolo_overlap_mask_cb.isChecked(),
+            "yolo_mask_ratio":    self._yolo_mask_ratio_sp.value(),
+            "yolo_hsv_h":         self._yolo_hsv_h_sp.value(),
+            "yolo_hsv_s":         self._yolo_hsv_s_sp.value(),
+            "yolo_hsv_v":         self._yolo_hsv_v_sp.value(),
+            "yolo_fliplr":        self._yolo_fliplr_sp.value(),
+            "yolo_flipud":        self._yolo_flipud_sp.value(),
+            "yolo_degrees":       self._yolo_degrees_sp.value(),
+            "yolo_translate":     self._yolo_translate_sp.value(),
+            "yolo_scale":         self._yolo_scale_sp.value(),
+            "yolo_mosaic":        self._yolo_mosaic_sp.value(),
+            "yolo_mixup":         self._yolo_mixup_sp.value(),
+            "yolo_copy_paste":    self._yolo_copy_paste_sp.value(),
+            "yolo_close_mosaic":  self._yolo_close_mosaic_sp.value(),
+            "yolo_amp":           self._yolo_amp_cb.isChecked(),
+            "yolo_cache":         self._yolo_cache_cb.isChecked(),
+            "yolo_save_period":   self._yolo_save_period_sp.value(),
+            "yolo_plots":         self._yolo_plots_cb.isChecked(),
         }
 
     def _run_checks(self, show_dialog_on_failure: bool = False) -> bool:
@@ -1674,9 +2124,11 @@ class TrainingTab(QWidget):
 
     @pyqtSlot(str)
     def _append_log(self, line: str):
+        sb = self._console.verticalScrollBar()
+        at_bottom = sb.value() >= sb.maximum() - 4
         self._console.append(line)
-        self._console.verticalScrollBar().setValue(
-            self._console.verticalScrollBar().maximum())
+        if at_bottom:
+            sb.setValue(sb.maximum())
 
     @pyqtSlot(int, float, float, float, float, float, float)
     def _on_metric(self, epoch: int, train_loss: float, val_loss: float,
@@ -1715,7 +2167,10 @@ class TrainingTab(QWidget):
             for sp in self._ax_iou.spines.values():
                 sp.set_edgecolor("#3a3a3a")
 
-            self._fig.tight_layout(pad=2.5)
+            try:
+                self._fig.tight_layout(pad=2.5)
+            except Exception:
+                pass
             self._canvas.draw_idle()
 
     @pyqtSlot(bool, str, str, bool)
@@ -1740,8 +2195,7 @@ class TrainingTab(QWidget):
                 self._last_version_folder = local_run_dir
             else:
                 self._rc_local_lbl.hide()
-                proj = self._project_cb.currentText()
-                self._last_version_folder = os.path.join(self._registry_root, proj, version_id)
+                self._last_version_folder = ""
 
             has_weights = os.path.isfile(os.path.join(self._last_version_folder, "best.pt"))
             if has_weights:
@@ -1820,6 +2274,11 @@ class TrainingTab(QWidget):
                 self._weights_cb.setCurrentText(w)
         else:
             arch = hp.get("architecture", "yolov8n")
+            if arch.endswith("-seg"):
+                self._yolo_seg_rb.setChecked(True)
+            else:
+                self._yolo_detect_rb.setChecked(True)
+            self._on_yolo_task_changed()
             if self._yolo_model_cb.findText(arch) >= 0:
                 self._yolo_model_cb.setCurrentText(arch)
 
@@ -1830,21 +2289,22 @@ class TrainingTab(QWidget):
         self._height_sp.setValue(int(hp.get("image_height", 240)))
         self._in_channels_sp.setValue(int(hp.get("in_channels", 3)))
         self._out_classes_sp.setValue(int(hp.get("out_classes", 2)))
+        self._patience_sp.setValue(int(hp.get("early_stopping_patience", 15)))
+        _enabled_metrics = set(hp.get("extra_metrics", ["precision", "recall", "f1"]))
+        for key, cb in self._metric_checkboxes.items():
+            cb.setChecked(key in _enabled_metrics)
         dev = hp.get("device", "cpu")
         if self._device_cb.findText(dev) >= 0:
             self._device_cb.setCurrentText(dev)
 
-        project = manifest.get("project", "")
-        if project:
-            idx = self._project_cb.findText(project)
-            if idx >= 0:
-                self._project_cb.setCurrentIndex(idx)
-            else:
-                self._project_cb.setCurrentText(project)
-
-        category = manifest.get("category", "")
-        if category:
-            self._category_cb.setCurrentText(category)
+        if manifest.get("project_name"):
+            self._project_name_cb.setCurrentText(manifest["project_name"])
+        if manifest.get("project_id"):
+            self._project_id_cb.setCurrentText(manifest["project_id"])
+        if manifest.get("variant"):
+            self._variant_cb.setCurrentText(manifest["variant"])
+        if manifest.get("camera"):
+            self._camera_cb.setCurrentText(manifest["camera"])
 
         version_id = manifest.get("version_id", "")
         self._commit_edit.setText(f"Clone of {version_id}")

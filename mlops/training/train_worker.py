@@ -18,9 +18,14 @@ Cancel behaviour:
 
 import os
 import json
+import re
 import shutil
 import subprocess
 import sys
+
+from mlops.registry import RegistrySettings
+
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07|\r')
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
@@ -49,6 +54,7 @@ class TrainWorker(QThread):
         self._proc            = None
         self._final_metrics   = {}
         self._version_folder  = ""   # set in _execute(); needed by cancel()
+        self._prev_lr         = None
 
     # ------------------------------------------------------------------
     # QThread entry point
@@ -75,19 +81,43 @@ class TrainWorker(QThread):
         self.log.emit(f"[INFO] Version: {version_id}")
         self.log.emit(f"[INFO] Folder : {self._version_folder}")
 
-        # Step 2 — Write config.json atomically
-        config_json_path = os.path.join(self._version_folder, "config.json")
-        _write_atomic(config_json_path, self._config)
+        # Step 2 — Copy staged dataset into {version_folder}/dataset/
+        staged_dataset = self._config.get("dataset_folder", "")
+        version_dataset = os.path.join(self._version_folder, "dataset")
+        if staged_dataset and os.path.isdir(staged_dataset):
+            self.log.emit("[INFO] Copying dataset snapshot into version folder...")
+            shutil.copytree(staged_dataset, version_dataset)
+            # Update dataset_info.json inside the copy to reflect the new absolute path
+            _patch_dataset_info(version_dataset, version_dataset)
+            # For YOLO: rewrite data.yaml path too
+            _patch_data_yaml(version_dataset, version_dataset)
+            self.log.emit(f"[INFO] Dataset snapshot: {version_dataset}")
+        else:
+            os.makedirs(version_dataset, exist_ok=True)
+            self.log.emit("[WARN] No staged dataset found — version_folder/dataset/ is empty.")
 
-        # Step 3 — Create manifest
+        # Update config to point at the version-local dataset copy
+        config_to_save = dict(self._config)
+        config_to_save["dataset_folder"] = version_dataset
+        config_to_save["dataset_info"]["absolute_path"] = version_dataset
+
+        # Step 3 — Write config.json atomically
+        config_json_path = os.path.join(self._version_folder, "config.json")
+        _write_atomic(config_json_path, config_to_save)
+
+        # Step 4 — Create manifest
         writer = ManifestWriter(self._version_folder)
         writer.create(
             version_id     = version_id,
             model_type     = self._config["model_type"],
             annotator      = self._config["annotator"],
             project        = project,
+            project_name   = self._config.get("project_name", ""),
+            project_id     = self._config.get("project_id", ""),
+            variant        = self._config.get("variant", ""),
+            camera         = self._config.get("camera", ""),
             commit_message = self._config["commit_message"],
-            dataset_info   = self._config["dataset_info"],
+            dataset_info   = config_to_save["dataset_info"],
             hyperparams    = self._config["hyperparams"],
             augmentations  = self._config.get("augmentations", {}),
         )
@@ -123,7 +153,9 @@ class TrainWorker(QThread):
         # script can finish its current epoch and exit cleanly.
         total_epochs = self._config["hyperparams"]["epochs"]
         for raw_line in self._proc.stdout:
-            line = raw_line.rstrip()
+            line = _ANSI_RE.sub("", raw_line).rstrip()
+            if not line:
+                continue
             parsed = parse_metric_line(line)
             if (parsed is not None
                     and parsed.get("epoch") is not None
@@ -145,6 +177,47 @@ class TrainWorker(QThread):
                     f"train_iou: {t_iou:.4f}  val_iou: {v_iou:.4f}  |  "
                     f"train_per_img: {t_per_iou:.4f}  val_per_img: {v_per_iou:.4f}"
                 )
+                mask_map50 = parsed.get("mask_map50")
+                if mask_map50 is not None:
+                    self.log.emit(f"  Mask mAP50: {mask_map50:.4f}")
+
+                # Extra metrics — only logged if they were enabled and present
+                t_prec    = parsed.get("train_precision")
+                v_prec    = parsed.get("val_precision")
+                t_pi_prec = parsed.get("train_per_image_precision")
+                v_pi_prec = parsed.get("val_per_image_precision")
+                t_rec     = parsed.get("train_recall")
+                v_rec     = parsed.get("val_recall")
+                t_pi_rec  = parsed.get("train_per_image_recall")
+                v_pi_rec  = parsed.get("val_per_image_recall")
+                t_f1      = parsed.get("train_f1")
+                v_f1      = parsed.get("val_f1")
+                t_pi_f1   = parsed.get("train_per_image_f1")
+                v_pi_f1   = parsed.get("val_per_image_f1")
+                if t_prec is not None:
+                    self.log.emit(
+                        f"  Precision   train: {t_prec:.4f}  val: {v_prec:.4f}  |  "
+                        f"per-img  train: {t_pi_prec:.4f}  val: {v_pi_prec:.4f}"
+                    )
+                if t_rec is not None:
+                    self.log.emit(
+                        f"  Recall      train: {t_rec:.4f}  val: {v_rec:.4f}  |  "
+                        f"per-img  train: {t_pi_rec:.4f}  val: {v_pi_rec:.4f}"
+                    )
+                if t_f1 is not None:
+                    self.log.emit(
+                        f"  F1 / Dice   train: {t_f1:.4f}  val: {v_f1:.4f}  |  "
+                        f"per-img  train: {t_pi_f1:.4f}  val: {v_pi_f1:.4f}"
+                    )
+
+                # LR visibility — highlight drops
+                current_lr = parsed.get("learning_rate")
+                if current_lr is not None:
+                    if self._prev_lr is not None and current_lr < self._prev_lr * 0.99:
+                        self.log.emit(
+                            f"  [LR] Learning rate reduced:  {self._prev_lr:.6f}  →  {current_lr:.6f}"
+                        )
+                    self._prev_lr = current_lr
             elif line.startswith("PROGRESS "):
                 try:
                     self.progress.emit(int(line.split()[1]))
@@ -187,12 +260,11 @@ class TrainWorker(QThread):
             if os.path.isfile(os.path.join(self._version_folder, "best.pt")):
                 writer.update_artifacts(weights="best.pt")
             writer.mark_partial()
+            self._mirror_to_local(project, version_id)
             self.log.emit("[PARTIAL] Training stopped early — checkpoint preserved.")
-            local_run_dir = self._copy_to_local(version_id)
-            return version_id, local_run_dir, True
+            return version_id, self._version_folder, True
 
         elif self._cancelled:
-            # Hard cancel (script crashed or was force-killed)
             writer.mark_cancelled()
             self.log.emit("[CANCELLED] Training was stopped by the user.")
             raise RuntimeError("cancelled")
@@ -220,27 +292,34 @@ class TrainWorker(QThread):
                 write_project_csv(self._registry_root, project)
             except Exception:
                 pass
+            self._mirror_to_local(project, version_id)
             self.log.emit(f"[DONE] Version {version_id} saved to registry.")
-            local_run_dir = self._copy_to_local(version_id)
-            return version_id, local_run_dir, False
+            return version_id, self._version_folder, False
 
     # ------------------------------------------------------------------
-    # Helpers
+    # Local mirror
     # ------------------------------------------------------------------
 
-    def _copy_to_local(self, version_id: str) -> str:
-        """Copy the version folder into {dataset_folder}/runs/{version_id}/."""
-        dataset_folder = self._config.get("dataset_folder", "")
-        if not dataset_folder or not os.path.isdir(dataset_folder):
-            return ""
-        local_run_dir = os.path.join(dataset_folder, "runs", version_id)
+    def _mirror_to_local(self, project: str, version_id: str):
+        """Copy the completed version folder to local_root (if configured)."""
         try:
-            shutil.copytree(self._version_folder, local_run_dir)
-            self.log.emit(f"[INFO] Local copy saved: {local_run_dir}")
-            return local_run_dir
-        except Exception as copy_err:
-            self.log.emit(f"[WARN] Local copy failed: {copy_err}")
-            return ""
+            local_root = RegistrySettings().get_local_root()
+        except Exception:
+            return
+        if not local_root:
+            return
+        # Resolve the destination path using the same hierarchy as the source
+        parts = project.replace("\\", "/").split("/")
+        dest = os.path.join(local_root, *parts, version_id)
+        if os.path.exists(dest):
+            # Already mirrored (e.g. from a previous interrupted run) — skip
+            return
+        try:
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            shutil.copytree(self._version_folder, dest)
+            self.log.emit(f"[MIRROR] Local copy saved: {dest}")
+        except Exception as exc:
+            self.log.emit(f"[WARN] Local mirror failed: {exc}")
 
     # ------------------------------------------------------------------
     # Cancellation
@@ -282,5 +361,40 @@ def _remove_sentinel(version_folder: str):
     try:
         if os.path.isfile(stop_file):
             os.remove(stop_file)
+    except Exception:
+        pass
+
+
+def _patch_dataset_info(dataset_folder: str, new_abs_path: str):
+    """Rewrite dataset_info.json inside dataset_folder with the updated absolute path."""
+    info_path = os.path.join(dataset_folder, "dataset_info.json")
+    if not os.path.isfile(info_path):
+        return
+    try:
+        with open(info_path, "r", encoding="utf-8") as fh:
+            info = json.load(fh)
+        info["output_folder"] = new_abs_path.replace("\\", "/")
+        info["path"] = new_abs_path.replace("\\", "/")
+        _write_atomic(info_path, info)
+    except Exception:
+        pass
+
+
+def _patch_data_yaml(dataset_folder: str, new_abs_path: str):
+    """Rewrite the 'path:' line in data.yaml to point at the new location."""
+    yaml_path = os.path.join(dataset_folder, "data.yaml")
+    if not os.path.isfile(yaml_path):
+        return
+    try:
+        with open(yaml_path, "r", encoding="utf-8") as fh:
+            content = fh.read()
+        abs_fwd = new_abs_path.replace("\\", "/")
+        new_lines = []
+        for line in content.splitlines():
+            new_lines.append(f"path: {abs_fwd}" if line.startswith("path:") else line)
+        tmp = yaml_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(new_lines) + "\n")
+        os.replace(tmp, yaml_path)
     except Exception:
         pass
