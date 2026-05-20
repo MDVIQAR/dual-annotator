@@ -36,6 +36,7 @@ jobs:
             --hidden-import pytorch_lightning `
             --hidden-import torchmetrics `
             --hidden-import onnxruntime `
+            --exclude-module onnx.reference `
             main.py
 
       - name: Build folder version
@@ -47,6 +48,7 @@ jobs:
             --hidden-import pytorch_lightning `
             --hidden-import torchmetrics `
             --hidden-import onnxruntime `
+            --exclude-module onnx.reference `
             main.py
 
       - name: Zip folder version
