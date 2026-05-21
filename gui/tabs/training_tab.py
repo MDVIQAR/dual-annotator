@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (
     QRadioButton, QButtonGroup, QCheckBox, QStackedWidget,
     QListWidget, QListWidgetItem, QSizePolicy, QSlider, QApplication, QShortcut,
 )
-from PyQt5.QtCore import Qt, pyqtSlot, QSize
+from PyQt5.QtCore import Qt, pyqtSlot, QSize, QTimer
 from PyQt5.QtGui import QFont, QIcon, QPixmap, QImage, QColor
 
 try:
@@ -817,6 +817,12 @@ class TrainingTab(QWidget):
         self._checks_layout.addWidget(chk_btn)
         self._checks_list_layout = QVBoxLayout(); self._checks_list_layout.setSpacing(4)
         self._checks_layout.addLayout(self._checks_list_layout)
+        self._copy_diag_btn = QPushButton("Copy Diagnostic Info")
+        self._copy_diag_btn.setStyleSheet(_BROWSE_STYLE)
+        self._copy_diag_btn.clicked.connect(self._copy_diagnostic)
+        self._copy_diag_btn.hide()
+        self._checks_layout.addWidget(self._copy_diag_btn)
+        self._last_preflight_results = []
         layout.addWidget(self._checks_frame)
 
         # Start button
@@ -2051,6 +2057,7 @@ class TrainingTab(QWidget):
             lbl.setWordWrap(True)
             self._checks_list_layout.addWidget(lbl)
             return False
+        self._last_preflight_results = results
         all_ok = True
         failed_msgs = []
         for r in results:
@@ -2066,10 +2073,34 @@ class TrainingTab(QWidget):
             lbl.setStyleSheet(f"color: {color}; font-size: 11px;")
             lbl.setWordWrap(True)
             self._checks_list_layout.addWidget(lbl)
+        self._copy_diag_btn.show()
         if not all_ok and show_dialog_on_failure:
             QMessageBox.warning(self, "Pre-flight Checks Failed",
                                 "Fix the following issues:\n" + "\n".join(failed_msgs))
         return all_ok
+
+    def _copy_diagnostic(self):
+        import sys, platform
+        lines = [
+            "=== DualAnnotator Diagnostic Info ===",
+            f"OS         : {platform.platform()}",
+            f"Python     : {sys.version}",
+            f"Scripts dir: {_SCRIPTS_DIR}",
+            f"Registry   : {self._registry_root}",
+            "",
+            "--- Pre-flight Results ---",
+        ]
+        for r in self._last_preflight_results:
+            if r["ok"]:
+                status = "OK  "
+            elif r["warn"]:
+                status = "WARN"
+            else:
+                status = "FAIL"
+            lines.append(f"[{status}] {r['name']}: {r['msg']}")
+        QApplication.clipboard().setText("\n".join(lines))
+        self._copy_diag_btn.setText("Copied!")
+        QTimer.singleShot(2000, lambda: self._copy_diag_btn.setText("Copy Diagnostic Info"))
 
     def _on_start_stop(self):
         if self._worker is not None:
