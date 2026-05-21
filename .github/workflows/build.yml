@@ -68,5 +68,9 @@ jobs:
             - **DualAnnotator-portable.exe** — Single file, no install needed. Just double-click.
             - **DualAnnotator-folder.zip** — Extract and run. Faster launch time.
 
-            ### First time?
+            ### First time? Read this first:
             Download the portable `.exe` — simplest option.
+
+            ### Requirements (for training to work):
+            1. **Google Drive Desktop** must be installed and the shared drive must be mounted (the app saves trained models there).
+            2. **Microsoft Visual C++ Redistributable** — install it if torch fails to load: https://aka.ms/vs/17/release/vc_redist.x64.exe
