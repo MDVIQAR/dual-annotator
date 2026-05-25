@@ -859,12 +859,7 @@ class MainWindow(QMainWindow):
         self.tab_widget.setDocumentMode(True)  # cleaner look
         self.setCentralWidget(self.tab_widget)
         
-        # ── Tab 1: Annotate ──
-        self.annotate_tab = QWidget()
-        self._build_annotate_tab(self.annotate_tab)
-        self.tab_widget.addTab(self.annotate_tab, "✏️  Annotate")
-        
-        # ── Tab 2: RAW → PNG ──
+        # ── Tab 1: RAW → PNG ──
         from gui.tabs.raw_to_png_tab import RawToPngTab
         self.raw_to_png_tab = RawToPngTab()
         self.tab_widget.addTab(self.raw_to_png_tab, "🖼️  RAW → PNG")
@@ -872,6 +867,11 @@ class MainWindow(QMainWindow):
         # Connect tab signal to auto-load output folder
         if hasattr(self.raw_to_png_tab, 'conversion_completed'):
             self.raw_to_png_tab.conversion_completed.connect(self._on_conversion_completed)
+
+        # ── Tab 2: Annotate ──
+        self.annotate_tab = QWidget()
+        self._build_annotate_tab(self.annotate_tab)
+        self.tab_widget.addTab(self.annotate_tab, "✏️  Annotate")
 
         # ── Tab 3: Data Preparation ──
         from gui.tabs.data_prep_tab import DataPrepTab
@@ -1505,7 +1505,7 @@ class MainWindow(QMainWindow):
         """Automatically load the PNG output folder and switch to Annotate tab."""
         if os.path.isdir(out_dir):
             self.open_image_folder(folder_path=out_dir)
-            self.tab_widget.setCurrentIndex(0) # Switch to the Annotate tab
+            self.tab_widget.setCurrentWidget(self.annotate_tab) # Switch to the Annotate tab
 
 
     def open_image_folder(self, folder_path=None):

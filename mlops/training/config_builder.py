@@ -9,6 +9,8 @@ for the training pipeline.
 import os
 import json
 
+from mlops.registry.utils import sanitize_path_component
+
 
 # ---------------------------------------------------------------------------
 # build_training_config
@@ -70,8 +72,16 @@ def build_training_config(form: dict) -> dict:
     num_classes = int(dataset_info_raw.get("num_classes", 0))
     sha256      = dataset_info_raw.get("sha256", "")
 
-    # Build the forward-slash project key used in manifest + version folder path
-    project = f"{task_type}/{project_name}/{project_id}/{variant}/{camera}"
+    # Build the forward-slash project key used in manifest + version folder path.
+    # Sanitize each component so user-facing names like "Snipe MX/Cx" don't create
+    # unintended nested directories on disk.
+    project = "/".join([
+        task_type,
+        sanitize_path_component(project_name),
+        sanitize_path_component(project_id),
+        sanitize_path_component(variant),
+        sanitize_path_component(camera),
+    ])
 
     # --- hyperparams ---
     epochs = int(form.get("epochs", 100))

@@ -24,6 +24,12 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, pyqtSlot
 from PyQt5.QtGui import QPixmap, QDragEnterEvent, QDropEvent
 
+
+class _NoScrollDoubleSpinBox(QDoubleSpinBox):
+    """QDoubleSpinBox that ignores mouse-wheel to prevent accidental value changes."""
+    def wheelEvent(self, e):
+        e.ignore()
+
 _SCRIPTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "mlops", "scripts")
 )
@@ -247,6 +253,9 @@ class _GalleryItem(QFrame):
     Shows 2 panels for YOLO (Original | Detected)
     or 3 panels for UNet  (Original | Mask | Overlay).
     Call set_zoom() to resize images without rebuilding.
+
+    Pixmaps are loaded once at construction and cached; set_zoom() scales
+    the cached copies so there are no disk reads during zoom operations.
     """
 
     def __init__(self, name: str, orig_path: str, annotated_path: str,
@@ -256,10 +265,18 @@ class _GalleryItem(QFrame):
         self.setStyleSheet(
             "QFrame { background:#1e1e1e; border:1px solid #3a3a3a; border-radius:4px; }"
         )
-        self._orig_path      = orig_path
-        self._annotated_path = annotated_path
-        self._overlay_path   = overlay_path
-        self._model_type     = model_type
+        self._model_type = model_type
+
+        if model_type == "yolo":
+            self._panels = [("Original", orig_path), ("Detected", annotated_path)]
+        else:
+            self._panels = [("Original", orig_path), ("Mask", annotated_path), ("Overlay", overlay_path)]
+
+        # Load pixmaps once — no disk reads during zoom
+        self._orig_pixmaps: list[QPixmap] = []
+        for _, path in self._panels:
+            pix = QPixmap(path) if path and os.path.isfile(path) else QPixmap()
+            self._orig_pixmaps.append(pix)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
@@ -271,11 +288,6 @@ class _GalleryItem(QFrame):
 
         self._img_row = QHBoxLayout()
         self._img_row.setSpacing(8)
-
-        if model_type == "yolo":
-            self._panels = [("Original", orig_path), ("Detected", annotated_path)]
-        else:
-            self._panels = [("Original", orig_path), ("Mask", annotated_path), ("Overlay", overlay_path)]
 
         self._img_labels: list[QLabel] = []
         for caption, _ in self._panels:
@@ -294,15 +306,14 @@ class _GalleryItem(QFrame):
         lay.addLayout(self._img_row)
         self.set_zoom(zoom_h, gallery_w)
 
-    def set_zoom(self, zoom_h: int, gallery_w: int):
-        n      = len(self._panels)
-        col_w  = max((gallery_w - 60 - (n - 1) * 8) // n, 120)
-        for img_lbl, (_, path) in zip(self._img_labels, self._panels):
-            if path and os.path.isfile(path):
-                pix = QPixmap(path)
-                if not pix.isNull():
-                    pix = pix.scaled(col_w, zoom_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                img_lbl.setPixmap(pix)
+    def set_zoom(self, zoom_h: int, _gallery_w: int = 0):
+        # Scale each cached pixmap to zoom_h, preserving aspect ratio.
+        # Height-driven scaling means zoom always has visible effect regardless
+        # of viewport width. _gallery_w retained for call-site compatibility.
+        for img_lbl, pix in zip(self._img_labels, self._orig_pixmaps):
+            if not pix.isNull():
+                scaled = pix.scaledToHeight(zoom_h, Qt.SmoothTransformation)
+                img_lbl.setPixmap(scaled)
             else:
                 img_lbl.clear()
 
@@ -453,7 +464,7 @@ class ExportTestTab(QWidget):
         conf_row.setContentsMargins(0, 0, 0, 0)
         conf_row.setSpacing(6)
         conf_row.addWidget(_lbl("Confidence Threshold"))
-        self._conf_sp = QDoubleSpinBox()
+        self._conf_sp = _NoScrollDoubleSpinBox()
         self._conf_sp.setRange(0.001, 1.0)
         self._conf_sp.setDecimals(3)
         self._conf_sp.setSingleStep(0.01)
@@ -464,11 +475,20 @@ class ExportTestTab(QWidget):
         lay.addWidget(self._conf_widget)
         self._conf_widget.setVisible(False)  # hidden until model type is known
 
+        infer_btn_row = QHBoxLayout()
+        infer_btn_row.setSpacing(6)
         self._infer_btn = QPushButton("Run Inference")
         self._infer_btn.setStyleSheet(_ACTION)
         self._infer_btn.setEnabled(False)
         self._infer_btn.clicked.connect(self._run_infer)
-        lay.addWidget(self._infer_btn)
+        infer_btn_row.addWidget(self._infer_btn)
+        infer_clear_btn = QPushButton("Clear")
+        infer_clear_btn.setStyleSheet(_BROWSE)
+        infer_clear_btn.setFixedWidth(60)
+        infer_clear_btn.setToolTip("Clear model, test folder, and output folder fields")
+        infer_clear_btn.clicked.connect(self._clear_infer_fields)
+        infer_btn_row.addWidget(infer_clear_btn)
+        lay.addLayout(infer_btn_row)
 
         self._infer_progress = QProgressBar()
         self._infer_progress.setRange(0, 100)
@@ -532,7 +552,7 @@ class ExportTestTab(QWidget):
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setStyleSheet("QScrollArea { border:none; background:#1a1a1a; }")
-        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
         self._gallery_widget = QWidget()
         self._gallery_widget.setStyleSheet("background:#1a1a1a;")
@@ -762,6 +782,17 @@ class ExportTestTab(QWidget):
             self._infer_log.append(f"[DONE] {total} image(s) processed.")
         else:
             self._infer_log.append("[ERROR] Inference failed — check console above.")
+
+    # ── Inference field clear ─────────────────────────────────────────────────
+
+    def _clear_infer_fields(self):
+        self._onnx_edit.clear()
+        self._test_edit.clear()
+        self._out_edit.clear()
+        self._folder_info = None
+        self._conf_widget.setVisible(False)
+        self._update_infer_btn()
+        self._infer_log.clear()
 
     # ── Gallery ───────────────────────────────────────────────────────────────
 
