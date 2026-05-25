@@ -6,8 +6,27 @@ No external dependencies — standard library only.
 """
 
 import os
+import re
 import json
 import hashlib
+
+
+# ---------------------------------------------------------------------------
+# Path-safe naming
+# ---------------------------------------------------------------------------
+
+def sanitize_path_component(name: str) -> str:
+    """
+    Replace filesystem-unsafe characters so a user-facing name can be used
+    as a folder name without creating unintended nested paths.
+
+    Replaces: / \\ : * ? " < > |  →  underscore
+    Strips leading/trailing dots and spaces.
+    Falls back to 'unnamed' for empty results.
+    """
+    sanitized = re.sub(r'[<>:"/\\|?*]', '_', name)
+    sanitized = sanitized.strip('. ')
+    return sanitized or 'unnamed'
 
 
 # ---------------------------------------------------------------------------

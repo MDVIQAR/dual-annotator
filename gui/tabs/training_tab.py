@@ -39,9 +39,33 @@ try:
 except Exception:
     HAS_ALBUMENTATIONS = False
 
-from mlops.registry import RegistrySettings
+from mlops.registry import RegistrySettings, projects_config
 from mlops.training import TrainWorker, run_preflight
 from mlops.export import OnnxWorker
+
+
+# ---------------------------------------------------------------------------
+# Scroll-protected widget subclasses — prevent accidental value changes
+# ---------------------------------------------------------------------------
+
+class _NoScrollSpinBox(QSpinBox):
+    def wheelEvent(self, e):
+        e.ignore()
+
+
+class _NoScrollDoubleSpinBox(QDoubleSpinBox):
+    def wheelEvent(self, e):
+        e.ignore()
+
+
+class _NoScrollComboBox(QComboBox):
+    def wheelEvent(self, e):
+        e.ignore()
+
+    def mousePressEvent(self, e):
+        super().mousePressEvent(e)
+        if self.isEditable() and not self.view().isVisible():
+            self.showPopup()
 
 _SCRIPTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "mlops", "scripts")
@@ -468,6 +492,7 @@ def _make_row(label_text: str, widget: QWidget) -> QHBoxLayout:
 
 def _make_collapsible(title: str, content: QWidget, collapsed: bool = False) -> QWidget:
     """Wrap a content widget in a collapsible toggle panel."""
+    from PyQt5.QtCore import Qt as _Qt
     outer = QWidget()
     outer.setStyleSheet("background: transparent;")
     vlay = QVBoxLayout(outer)
@@ -477,22 +502,40 @@ def _make_collapsible(title: str, content: QWidget, collapsed: bool = False) -> 
     btn = QPushButton()
     btn.setCheckable(True)
     btn.setChecked(not collapsed)
+    btn.setCursor(_Qt.PointingHandCursor)
+    btn.setToolTip("Click to expand / collapse")
     btn.setStyleSheet("""
         QPushButton {
-            background-color: #2a2a2e;
-            border: 1px solid #3a3a3a;
+            background-color: #252530;
+            border: 1px solid #4a4a6a;
             border-radius: 5px;
-            color: #8ab4f8;
-            padding: 6px 12px;
+            color: #9ab4f8;
+            padding: 7px 12px;
             font-size: 12px;
             font-weight: bold;
             text-align: left;
         }
-        QPushButton:hover { background-color: #32323a; border-color: #555555; }
+        QPushButton:hover {
+            background-color: #2e2e42;
+            border-color: #7a6fc8;
+            color: #c0d4ff;
+        }
+        QPushButton:checked {
+            background-color: #2a2a3e;
+            border: 1px solid #5a5a8a;
+            color: #aac4ff;
+        }
+        QPushButton:!checked {
+            background-color: #1e1e28;
+            border: 1px dashed #4a4a6a;
+            color: #7a8ab8;
+        }
     """)
 
     def _refresh(checked):
-        btn.setText(f"  {'▼' if checked else '▶'}  {title}")
+        arrow = "▼" if checked else "▶"
+        hint  = "" if checked else "  (click to expand)"
+        btn.setText(f"  {arrow}  {title}{hint}")
         content.setVisible(checked)
 
     _refresh(not collapsed)
@@ -587,34 +630,34 @@ class TrainingTab(QWidget):
                                         self._radio_yolo, self._radio_unet]))
 
         # Run Info
-        self._annotator_cb = QComboBox()
+        self._annotator_cb = _NoScrollComboBox()
         self._annotator_cb.setStyleSheet(_INPUT_STYLE)
         for ann in RegistrySettings().get_annotators():
             self._annotator_cb.addItem(f"{ann['name']} ({ann['initials']})", userData=ann)
         self._annotator_cb.currentIndexChanged.connect(self._autosave)
 
-        self._project_name_cb = QComboBox()
+        self._project_name_cb = _NoScrollComboBox()
         self._project_name_cb.setEditable(True)
         self._project_name_cb.setInsertPolicy(QComboBox.NoInsert)
         self._project_name_cb.setPlaceholderText("e.g. SnipeX")
         self._project_name_cb.setStyleSheet(_INPUT_STYLE)
         self._project_name_cb.currentTextChanged.connect(self._on_train_project_name_changed)
 
-        self._project_id_cb = QComboBox()
+        self._project_id_cb = _NoScrollComboBox()
         self._project_id_cb.setEditable(True)
         self._project_id_cb.setInsertPolicy(QComboBox.NoInsert)
         self._project_id_cb.setPlaceholderText("e.g. SLXCAP")
         self._project_id_cb.setStyleSheet(_INPUT_STYLE)
         self._project_id_cb.currentTextChanged.connect(self._on_train_project_id_changed)
 
-        self._variant_cb = QComboBox()
+        self._variant_cb = _NoScrollComboBox()
         self._variant_cb.setEditable(True)
         self._variant_cb.setInsertPolicy(QComboBox.NoInsert)
         self._variant_cb.setPlaceholderText("e.g. CRC")
         self._variant_cb.setStyleSheet(_INPUT_STYLE)
         self._variant_cb.currentTextChanged.connect(self._on_train_variant_changed)
 
-        self._camera_cb = QComboBox()
+        self._camera_cb = _NoScrollComboBox()
         self._camera_cb.setEditable(True)
         self._camera_cb.setInsertPolicy(QComboBox.NoInsert)
         self._camera_cb.setPlaceholderText("e.g. cam0")
@@ -657,7 +700,10 @@ class TrainingTab(QWidget):
         self._weights_edit.setStyleSheet(_INPUT_STYLE)
         w_browse = QPushButton("Browse"); w_browse.setStyleSheet(_BROWSE_STYLE)
         w_browse.clicked.connect(self._browse_weights)
-        w_clear = QPushButton("✕"); w_clear.setFixedWidth(28); w_clear.setStyleSheet(_BROWSE_STYLE)
+        w_clear = QPushButton("✕ Clear")
+        w_clear.setFixedWidth(58)
+        w_clear.setToolTip("Remove pre-trained weights path")
+        w_clear.setStyleSheet(_BROWSE_STYLE)
         w_clear.clicked.connect(self._clear_weights)
         weights_row = QHBoxLayout()
         weights_row.addWidget(self._weights_edit)
@@ -686,17 +732,17 @@ class TrainingTab(QWidget):
         self._unet_block = QWidget()
         unet_l = QVBoxLayout(self._unet_block)
         unet_l.setContentsMargins(0, 0, 0, 0); unet_l.setSpacing(8)
-        self._unet_arch_cb = QComboBox()
+        self._unet_arch_cb = _NoScrollComboBox()
         self._unet_arch_cb.addItems(["Unet", "UnetPlusPlus", "MAnet", "Linknet", "FPN"])
         self._unet_arch_cb.setStyleSheet(_INPUT_STYLE)
         self._unet_arch_cb.currentTextChanged.connect(self._autosave)
-        self._encoder_cb = QComboBox()
+        self._encoder_cb = _NoScrollComboBox()
         self._encoder_cb.addItems(["efficientnet-b0", "efficientnet-b1", "efficientnet-b2",
                                     "efficientnet-b3", "efficientnet-b4", "resnet34", "resnet50",
                                     "resnet101", "mobilenet_v2"])
         self._encoder_cb.setStyleSheet(_INPUT_STYLE)
         self._encoder_cb.currentTextChanged.connect(self._autosave)
-        self._weights_cb = QComboBox()
+        self._weights_cb = _NoScrollComboBox()
         self._weights_cb.addItems(["imagenet", "none"])
         self._weights_cb.setStyleSheet(_INPUT_STYLE)
         self._weights_cb.currentTextChanged.connect(self._autosave)
@@ -726,7 +772,7 @@ class TrainingTab(QWidget):
         _rb_row.addStretch()
         yolo_l.addLayout(_rb_row)
 
-        self._yolo_model_cb = QComboBox()
+        self._yolo_model_cb = _NoScrollComboBox()
         self._yolo_model_cb.addItems(["yolov8n", "yolov8s", "yolov8m", "yolov8l", "yolov8x"])
         self._yolo_model_cb.setStyleSheet(_INPUT_STYLE)
         self._yolo_model_cb.currentTextChanged.connect(self._autosave)
@@ -742,18 +788,18 @@ class TrainingTab(QWidget):
         layout.addWidget(self._yolo_adv_widget)
 
         # Hyperparameters
-        self._epochs_sp = QSpinBox(); self._epochs_sp.setRange(1, 1000)
-        self._batch_sp  = QSpinBox(); self._batch_sp.setRange(1, 128)
-        self._lr_sp     = QDoubleSpinBox()
+        self._epochs_sp = _NoScrollSpinBox(); self._epochs_sp.setRange(1, 1000)
+        self._batch_sp  = _NoScrollSpinBox(); self._batch_sp.setRange(1, 128)
+        self._lr_sp     = _NoScrollDoubleSpinBox()
         self._lr_sp.setRange(0.000001, 1.0); self._lr_sp.setDecimals(6); self._lr_sp.setSingleStep(0.0001)
-        self._width_sp  = QSpinBox(); self._width_sp.setRange(32, 4096); self._width_sp.setSingleStep(32)
-        self._height_sp = QSpinBox(); self._height_sp.setRange(32, 4096); self._height_sp.setSingleStep(32)
-        self._device_cb = QComboBox(); self._device_cb.addItems(["cpu", "cuda:0", "cuda:1"])
-        self._in_channels_sp   = QSpinBox(); self._in_channels_sp.setRange(1, 10)
-        self._out_classes_sp   = QSpinBox(); self._out_classes_sp.setRange(1, 256)
-        self._patience_sp      = QSpinBox(); self._patience_sp.setRange(1, 200); self._patience_sp.setValue(15)
-        self._num_workers_sp   = QSpinBox(); self._num_workers_sp.setRange(0, 16)
-        self._repeat_factor_sp = QSpinBox(); self._repeat_factor_sp.setRange(1, 20); self._repeat_factor_sp.setValue(2)
+        self._width_sp  = _NoScrollSpinBox(); self._width_sp.setRange(32, 4096); self._width_sp.setSingleStep(32)
+        self._height_sp = _NoScrollSpinBox(); self._height_sp.setRange(32, 4096); self._height_sp.setSingleStep(32)
+        self._device_cb = _NoScrollComboBox(); self._device_cb.addItems(["cpu", "cuda:0", "cuda:1"])
+        self._in_channels_sp   = _NoScrollSpinBox(); self._in_channels_sp.setRange(1, 10)
+        self._out_classes_sp   = _NoScrollSpinBox(); self._out_classes_sp.setRange(1, 256)
+        self._patience_sp      = _NoScrollSpinBox(); self._patience_sp.setRange(1, 200); self._patience_sp.setValue(15)
+        self._num_workers_sp   = _NoScrollSpinBox(); self._num_workers_sp.setRange(0, 16)
+        self._repeat_factor_sp = _NoScrollSpinBox(); self._repeat_factor_sp.setRange(1, 20); self._repeat_factor_sp.setValue(2)
         for w in (self._epochs_sp, self._batch_sp, self._lr_sp, self._width_sp,
                   self._height_sp, self._device_cb, self._in_channels_sp, self._out_classes_sp,
                   self._patience_sp, self._num_workers_sp, self._repeat_factor_sp):
@@ -848,7 +894,7 @@ class TrainingTab(QWidget):
                      "QCheckBox::indicator { width: 13px; height: 13px; }")
 
         def _dsb(lo, hi, default, decimals=3, step=0.001):
-            w = QDoubleSpinBox()
+            w = _NoScrollDoubleSpinBox()
             w.setRange(lo, hi); w.setDecimals(decimals)
             w.setSingleStep(step); w.setValue(default)
             w.setStyleSheet(_INPUT_STYLE)
@@ -856,7 +902,7 @@ class TrainingTab(QWidget):
             return w
 
         def _sb(lo, hi, default):
-            w = QSpinBox()
+            w = _NoScrollSpinBox()
             w.setRange(lo, hi); w.setValue(default)
             w.setStyleSheet(_INPUT_STYLE)
             w.valueChanged.connect(self._autosave)
@@ -876,7 +922,7 @@ class TrainingTab(QWidget):
         vlay.setSpacing(0)
 
         # --- Optimizer & LR ---
-        self._yolo_optimizer_cb = QComboBox()
+        self._yolo_optimizer_cb = _NoScrollComboBox()
         self._yolo_optimizer_cb.addItems(["AdamW", "Adam", "SGD", "auto"])
         self._yolo_optimizer_cb.setStyleSheet(_INPUT_STYLE)
         self._yolo_optimizer_cb.currentTextChanged.connect(self._autosave)
@@ -1011,7 +1057,7 @@ class TrainingTab(QWidget):
         batch_row = QHBoxLayout(); batch_row.setSpacing(6)
         n_lbl = QLabel("Max images:")
         n_lbl.setStyleSheet("color: #888888; font-size: 10px; background: transparent; border: none;")
-        self._batch_preview_sp = QSpinBox()
+        self._batch_preview_sp = _NoScrollSpinBox()
         self._batch_preview_sp.setRange(1, 60)
         self._batch_preview_sp.setValue(10)
         self._batch_preview_sp.setFixedWidth(52)
@@ -1772,8 +1818,10 @@ class TrainingTab(QWidget):
         return "yolo" if self._radio_yolo.isChecked() else "unet"
 
     def _refresh_train_project_names(self):
-        settings = RegistrySettings()
-        names = settings.scan_project_names(self._current_train_model_type())
+        mt  = self._current_train_model_type()
+        reg = RegistrySettings().scan_project_names(mt)
+        cus = projects_config.get_custom_project_names(mt)
+        names = sorted(set(reg) | set(cus))
         cur = self._project_name_cb.currentText() if hasattr(self, "_project_name_cb") else ""
         self._project_name_cb.blockSignals(True)
         self._project_name_cb.clear()
@@ -1784,51 +1832,51 @@ class TrainingTab(QWidget):
         self._project_name_cb.blockSignals(False)
 
     def _refresh_train_project_ids(self):
-        settings = RegistrySettings()
-        ids = settings.scan_project_ids(
-            self._current_train_model_type(),
-            self._project_name_cb.currentText().strip(),
-        )
+        mt  = self._current_train_model_type()
+        pn  = self._project_name_cb.currentText().strip()
         cur = self._project_id_cb.currentText()
         self._project_id_cb.blockSignals(True)
         self._project_id_cb.clear()
-        for i in ids:
-            self._project_id_cb.addItem(i)
-        if cur:
-            self._project_id_cb.setCurrentText(cur)
+        if pn:
+            reg = RegistrySettings().scan_project_ids(mt, pn)
+            cus = projects_config.get_custom_project_ids(mt, pn)
+            for i in sorted(set(reg) | set(cus)):
+                self._project_id_cb.addItem(i)
+            if cur:
+                self._project_id_cb.setCurrentText(cur)
         self._project_id_cb.blockSignals(False)
 
     def _refresh_train_variants(self):
-        settings = RegistrySettings()
-        variants = settings.scan_variants(
-            self._current_train_model_type(),
-            self._project_name_cb.currentText().strip(),
-            self._project_id_cb.currentText().strip(),
-        )
+        mt  = self._current_train_model_type()
+        pn  = self._project_name_cb.currentText().strip()
+        pid = self._project_id_cb.currentText().strip()
         cur = self._variant_cb.currentText()
         self._variant_cb.blockSignals(True)
         self._variant_cb.clear()
-        for v in variants:
-            self._variant_cb.addItem(v)
-        if cur:
-            self._variant_cb.setCurrentText(cur)
+        if pn and pid:
+            reg = RegistrySettings().scan_variants(mt, pn, pid)
+            cus = projects_config.get_custom_variants(mt, pn, pid)
+            for v in sorted(set(reg) | set(cus)):
+                self._variant_cb.addItem(v)
+            if cur:
+                self._variant_cb.setCurrentText(cur)
         self._variant_cb.blockSignals(False)
 
     def _refresh_train_cameras(self):
-        settings = RegistrySettings()
-        cameras = settings.scan_cameras(
-            self._current_train_model_type(),
-            self._project_name_cb.currentText().strip(),
-            self._project_id_cb.currentText().strip(),
-            self._variant_cb.currentText().strip(),
-        )
+        mt  = self._current_train_model_type()
+        pn  = self._project_name_cb.currentText().strip()
+        pid = self._project_id_cb.currentText().strip()
+        var = self._variant_cb.currentText().strip()
         cur = self._camera_cb.currentText()
         self._camera_cb.blockSignals(True)
         self._camera_cb.clear()
-        for c in cameras:
-            self._camera_cb.addItem(c)
-        if cur:
-            self._camera_cb.setCurrentText(cur)
+        if pn and pid and var:
+            reg = RegistrySettings().scan_cameras(mt, pn, pid, var)
+            cus = projects_config.get_custom_cameras(mt, pn, pid, var)
+            for c in sorted(set(reg) | set(cus)):
+                self._camera_cb.addItem(c)
+            if cur:
+                self._camera_cb.setCurrentText(cur)
         self._camera_cb.blockSignals(False)
 
     def _on_train_project_name_changed(self):
@@ -2213,6 +2261,15 @@ class TrainingTab(QWidget):
         self._worker = None
 
         if success:
+            projects_config.ensure_hierarchy(
+                self._current_train_model_type(),
+                self._project_name_cb.currentText().strip(),
+                self._project_id_cb.currentText().strip(),
+                self._variant_cb.currentText().strip(),
+                self._camera_cb.currentText().strip(),
+            )
+            self._refresh_train_project_names()
+
             if is_partial:
                 self._rc_lbl.setText(f"⚠ Stopped early (partial) — Version ID: {version_id}")
                 self._rc_lbl.setStyleSheet("color: #ffc107; font-weight: bold;")

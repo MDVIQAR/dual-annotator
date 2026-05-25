@@ -19,9 +19,30 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QFont
 
+
+# ---------------------------------------------------------------------------
+# Scroll-protected widget subclasses
+# ---------------------------------------------------------------------------
+
+class _NoScrollSlider(QSlider):
+    """QSlider that ignores mouse-wheel to prevent accidental value changes."""
+    def wheelEvent(self, e):
+        e.ignore()
+
+
+class _NoScrollCombo(QComboBox):
+    """QComboBox that ignores mouse-wheel and opens popup on any click (editable combos)."""
+    def wheelEvent(self, e):
+        e.ignore()
+
+    def mousePressEvent(self, e):
+        super().mousePressEvent(e)
+        if self.isEditable() and not self.view().isVisible():
+            self.showPopup()
+
 from mlops.data_prep.prep_worker import DataPrepWorker
 from mlops.data_prep.preparator import DataPreparator
-from mlops.registry import RegistrySettings
+from mlops.registry import RegistrySettings, projects_config
 
 
 # ---------------------------------------------------------------------------
@@ -102,14 +123,27 @@ _COMBO_STYLE = """
         border: 1px solid #3a3a3a;
         border-radius: 4px;
         color: #ffffff;
-        padding: 5px 8px;
+        padding: 5px 32px 5px 8px;
         font-size: 12px;
     }
     QComboBox:focus { border: 1px solid #6a3fc8; }
-    QComboBox::drop-down { border: none; width: 20px; }
+    QComboBox::drop-down {
+        subcontrol-origin: padding;
+        subcontrol-position: right center;
+        width: 26px;
+        background-color: #3a3a50;
+        border-left: 1px solid #5a5a7a;
+        border-top-right-radius: 4px;
+        border-bottom-right-radius: 4px;
+    }
+    QComboBox::down-arrow {
+        width: 10px;
+        height: 10px;
+    }
     QComboBox QAbstractItemView {
         background-color: #2d2d2d; color: #ffffff;
         selection-background-color: #6a3fc8;
+        border: 1px solid #5a5a7a;
     }
 """
 
@@ -197,8 +231,8 @@ def _folder_row(line_edit: QLineEdit, btn: QPushButton) -> QHBoxLayout:
     return row
 
 
-def _editable_combo(placeholder: str) -> QComboBox:
-    cb = QComboBox()
+def _editable_combo(placeholder: str) -> _NoScrollCombo:
+    cb = _NoScrollCombo()
     cb.setEditable(True)
     cb.setInsertPolicy(QComboBox.NoInsert)
     cb.setPlaceholderText(placeholder)
@@ -312,8 +346,25 @@ class DataPrepTab(QWidget):
         src_lbl2 = QLabel("Labels / Masks Folder"); src_lbl2.setStyleSheet(lbl_style)
         src_lbl3 = QLabel("Test Images (optional)");src_lbl3.setStyleSheet(lbl_style)
 
+        src_header_row = QHBoxLayout()
+        src_header_row.addWidget(_section_label("Source Folders"))
+        src_header_row.addStretch()
+        self._folder_help_btn = QPushButton("?")
+        self._folder_help_btn.setFixedSize(18, 18)
+        self._folder_help_btn.setToolTip("Show expected folder structure")
+        self._folder_help_btn.setStyleSheet("""
+            QPushButton {
+                background: #2d2d2d; color: #8ab4f8;
+                border: 1px solid #555; border-radius: 9px;
+                font-size: 10px; font-weight: bold;
+            }
+            QPushButton:hover { background: #3a3a3a; }
+        """)
+        self._folder_help_btn.clicked.connect(self._show_folder_structure_help)
+        src_header_row.addWidget(self._folder_help_btn)
+
         layout.addWidget(_make_section([
-            _section_label("Source Folders"),
+            src_header_row,
             src_lbl1, _folder_row(self._images_edit, img_btn),
             src_lbl2, _folder_row(self._labels_edit, lbl_btn),
             src_lbl3, _folder_row(self._test_edit, test_btn),
@@ -339,7 +390,7 @@ class DataPrepTab(QWidget):
         # Section 5 — Train/val split
         self._split_label = QLabel("Train: 80%   Val: 20%")
         self._split_label.setStyleSheet("color: #cccccc; background: transparent; border: none;")
-        self._slider = QSlider(Qt.Horizontal)
+        self._slider = _NoScrollSlider(Qt.Horizontal)
         self._slider.setRange(50, 90)
         self._slider.setValue(80)
         self._slider.setStyleSheet("""
@@ -388,13 +439,32 @@ class DataPrepTab(QWidget):
         vlay.setContentsMargins(12, 10, 12, 10)
         vlay.setSpacing(8)
 
+        hdr_row = QHBoxLayout()
+        hdr_row.setContentsMargins(0, 0, 0, 0)
+        hdr_row.setSpacing(4)
         hdr = QLabel("▸  IMPORT EXISTING DATASET")
         hdr.setStyleSheet(_sep_style)
+        hdr_row.addWidget(hdr)
+        hdr_row.addStretch()
+        _imp_help_btn = QPushButton("?")
+        _imp_help_btn.setFixedSize(18, 18)
+        _imp_help_btn.setToolTip("Show expected folder structure for import")
+        _imp_help_btn.setStyleSheet("""
+            QPushButton {
+                background: #2d2d2d; color: #8ab4f8;
+                border: 1px solid #555; border-radius: 9px;
+                font-size: 10px; font-weight: bold;
+            }
+            QPushButton:hover { background: #3a3a3a; }
+        """)
+        _imp_help_btn.clicked.connect(self._show_import_folder_help)
+        hdr_row.addWidget(_imp_help_btn)
+        vlay.addLayout(hdr_row)
+
         note = QLabel("Already have train/val folders? Generate the missing\n"
                       "dataset_info.json (+ data.yaml for YOLO) in-place.")
         note.setStyleSheet(_info_style)
         note.setWordWrap(True)
-        vlay.addWidget(hdr)
         vlay.addWidget(note)
 
         self._imp_root_edit, imp_browse = self._make_folder_field("Root folder of your existing dataset")
@@ -456,7 +526,7 @@ class DataPrepTab(QWidget):
         self._imp_gen_btn.clicked.connect(self._on_import_generate)
         vlay.addWidget(self._imp_gen_btn)
 
-        self._on_imp_task_changed()
+        self._on_imp_task_changed()  # sets initial button text
         return outer
 
     def _make_folder_field(self, placeholder: str):
@@ -588,8 +658,10 @@ class DataPrepTab(QWidget):
         return "yolo" if self._radio_yolo.isChecked() else "unet"
 
     def _refresh_project_names(self):
-        settings = RegistrySettings()
-        names = settings.scan_project_names(self._current_model_type())
+        mt = self._current_model_type()
+        registry = RegistrySettings().scan_project_names(mt)
+        custom   = projects_config.get_custom_project_names(mt)
+        names    = sorted(set(registry) | set(custom))
         cur = self._project_name_cb.currentText()
         self._project_name_cb.blockSignals(True)
         self._project_name_cb.clear()
@@ -600,51 +672,51 @@ class DataPrepTab(QWidget):
         self._project_name_cb.blockSignals(False)
 
     def _refresh_project_ids(self):
-        settings = RegistrySettings()
-        ids = settings.scan_project_ids(
-            self._current_model_type(),
-            self._project_name_cb.currentText().strip(),
-        )
-        cur = self._project_id_cb.currentText()
+        mt   = self._current_model_type()
+        pn   = self._project_name_cb.currentText().strip()
+        cur  = self._project_id_cb.currentText()
         self._project_id_cb.blockSignals(True)
         self._project_id_cb.clear()
-        for i in ids:
-            self._project_id_cb.addItem(i)
-        if cur:
-            self._project_id_cb.setCurrentText(cur)
+        if pn:
+            registry = RegistrySettings().scan_project_ids(mt, pn)
+            custom   = projects_config.get_custom_project_ids(mt, pn)
+            for i in sorted(set(registry) | set(custom)):
+                self._project_id_cb.addItem(i)
+            if cur:
+                self._project_id_cb.setCurrentText(cur)
         self._project_id_cb.blockSignals(False)
 
     def _refresh_variants(self):
-        settings = RegistrySettings()
-        variants = settings.scan_variants(
-            self._current_model_type(),
-            self._project_name_cb.currentText().strip(),
-            self._project_id_cb.currentText().strip(),
-        )
+        mt  = self._current_model_type()
+        pn  = self._project_name_cb.currentText().strip()
+        pid = self._project_id_cb.currentText().strip()
         cur = self._variant_cb.currentText()
         self._variant_cb.blockSignals(True)
         self._variant_cb.clear()
-        for v in variants:
-            self._variant_cb.addItem(v)
-        if cur:
-            self._variant_cb.setCurrentText(cur)
+        if pn and pid:
+            registry = RegistrySettings().scan_variants(mt, pn, pid)
+            custom   = projects_config.get_custom_variants(mt, pn, pid)
+            for v in sorted(set(registry) | set(custom)):
+                self._variant_cb.addItem(v)
+            if cur:
+                self._variant_cb.setCurrentText(cur)
         self._variant_cb.blockSignals(False)
 
     def _refresh_cameras(self):
-        settings = RegistrySettings()
-        cameras = settings.scan_cameras(
-            self._current_model_type(),
-            self._project_name_cb.currentText().strip(),
-            self._project_id_cb.currentText().strip(),
-            self._variant_cb.currentText().strip(),
-        )
+        mt  = self._current_model_type()
+        pn  = self._project_name_cb.currentText().strip()
+        pid = self._project_id_cb.currentText().strip()
+        var = self._variant_cb.currentText().strip()
         cur = self._camera_cb.currentText()
         self._camera_cb.blockSignals(True)
         self._camera_cb.clear()
-        for c in cameras:
-            self._camera_cb.addItem(c)
-        if cur:
-            self._camera_cb.setCurrentText(cur)
+        if pn and pid and var:
+            registry = RegistrySettings().scan_cameras(mt, pn, pid, var)
+            custom   = projects_config.get_custom_cameras(mt, pn, pid, var)
+            for c in sorted(set(registry) | set(custom)):
+                self._camera_cb.addItem(c)
+            if cur:
+                self._camera_cb.setCurrentText(cur)
         self._camera_cb.blockSignals(False)
 
     # ------------------------------------------------------------------
@@ -732,7 +804,12 @@ class DataPrepTab(QWidget):
     # ------------------------------------------------------------------
 
     def _on_imp_task_changed(self):
-        self._imp_class_section.setVisible(self._imp_radio_yolo.isChecked())
+        is_yolo = self._imp_radio_yolo.isChecked()
+        self._imp_class_section.setVisible(is_yolo)
+        if is_yolo:
+            self._imp_gen_btn.setText("  Generate dataset_info.json + data.yaml")
+        else:
+            self._imp_gen_btn.setText("  Generate dataset_info.json")
 
     def _on_import_browse(self):
         folder = QFileDialog.getExistingDirectory(
@@ -827,12 +904,62 @@ class DataPrepTab(QWidget):
             QMessageBox.critical(self, "Import Failed", str(exc))
             return
 
-        files = ["dataset_info.json"]
+        # Read the just-written dataset_info.json so we can populate the result card
+        info_path = os.path.join(root, "dataset_info.json")
+        try:
+            with open(info_path, "r", encoding="utf-8") as fh:
+                dataset_info = json.load(fh)
+        except Exception:
+            dataset_info = {
+                "train_count": result["train_count"],
+                "val_count":   result["val_count"],
+                "test_count":  result["test_count"],
+                "sha256":      "",
+            }
+
+        # Use hierarchy fields from the top-level form if filled in, else empty
+        project_name = self._project_name_cb.currentText().strip()
+        project_id   = self._project_id_cb.currentText().strip()
+        variant      = self._variant_cb.currentText().strip()
+        camera       = self._camera_cb.currentText().strip()
+
+        staged_info = {
+            "path":         root,
+            "model_type":   task_type,
+            "project_name": project_name,
+            "project_id":   project_id,
+            "variant":      variant,
+            "camera":       camera,
+            "dataset_info": dataset_info,
+        }
+        RegistrySettings().set_staged_dataset(staged_info)
+        self._last_staged_info = staged_info
+        projects_config.ensure_hierarchy(task_type, project_name, project_id, variant, camera)
+        self._refresh_project_names()
+
+        # Populate and show result card (same as after Prepare Dataset)
+        train_n = dataset_info.get("train_count", 0)
+        val_n   = dataset_info.get("val_count", 0)
+        test_n  = dataset_info.get("test_count", 0)
+        sha     = dataset_info.get("sha256", "")
+
+        self._rc_title.setText("✓ Dataset imported!")
+        self._rc_counts.setText(f"Train: {train_n}   Val: {val_n}   Test: {test_n}")
+
+        max_path = 60
+        disp_path = root if len(root) <= max_path else "..." + root[-(max_path - 3):]
+        self._rc_path.setText(f"Root: {disp_path}")
+        self._rc_hash.setText(f"SHA-256: {sha[:16]}..." if sha else "")
+
+        hierarchy = f"{task_type} / {project_name} / {project_id} / {variant} / {camera}"
+        self._rc_hierarchy.setText(f"→ {hierarchy}")
+
+        self._result_card.show()
+        self._console.append(f"[OK] dataset_info.json written to: {root}")
         if task_type == "yolo":
-            files.append("data.yaml")
-        QMessageBox.information(
-            self, "Done",
-            f"Generated: {', '.join(files)}\n\nDataset is ready to use in the Training tab.")
+            self._console.append(f"[OK] data.yaml written.")
+        self._console.append("  Ready to use in the Training tab.")
+
         self._on_import_scan()
 
     # ------------------------------------------------------------------
@@ -933,6 +1060,15 @@ class DataPrepTab(QWidget):
         if success:
             self._last_staged_info = info
 
+            projects_config.ensure_hierarchy(
+                info.get("model_type", ""),
+                info.get("project_name", ""),
+                info.get("project_id", ""),
+                info.get("variant", ""),
+                info.get("camera", ""),
+            )
+            self._refresh_project_names()
+
             ds_info  = info.get("dataset_info", {})
             train_n  = ds_info.get("train_count", 0)
             val_n    = ds_info.get("val_count", 0)
@@ -960,3 +1096,113 @@ class DataPrepTab(QWidget):
     def _on_open_training_clicked(self):
         if self._last_staged_info:
             self.open_in_training.emit(self._last_staged_info)
+
+    # ------------------------------------------------------------------
+    # Folder structure help
+    # ------------------------------------------------------------------
+
+    def _show_import_folder_help(self):
+        """Help for the Import Existing Dataset section — reads the import task radio."""
+        is_yolo = self._imp_radio_yolo.isChecked()
+        if is_yolo:
+            text = (
+                "<b>YOLO — Expected pre-split folder structure:</b><br><br>"
+                "<pre>"
+                "dataset_root/\n"
+                "  train/\n"
+                "    images/   ← training images\n"
+                "    labels/   ← .txt YOLO labels\n"
+                "  val/\n"
+                "    images/\n"
+                "    labels/\n"
+                "  test/       (optional)\n"
+                "    images/"
+                "</pre>"
+                "<br><b>Also accepted:</b><br>"
+                "<pre>"
+                "dataset_root/\n"
+                "  images/\n"
+                "    train/\n"
+                "    val/\n"
+                "  labels/\n"
+                "    train/\n"
+                "    val/"
+                "</pre>"
+                "<br>Class names will be auto-read from <code>classes.txt</code> or "
+                "<code>data.yaml</code> if present.<br>"
+                "Otherwise enter them manually below."
+            )
+        else:
+            text = (
+                "<b>UNet — Expected pre-split folder structure:</b><br><br>"
+                "<pre>"
+                "dataset_root/\n"
+                "  train/\n"
+                "    images/   ← training images\n"
+                "    masks/    ← binary/grayscale .png masks\n"
+                "  val/\n"
+                "    images/\n"
+                "    masks/\n"
+                "  test/       (optional)\n"
+                "    images/"
+                "</pre>"
+                "<br>No <code>data.yaml</code> is created for UNet datasets.<br>"
+                "Only <code>dataset_info.json</code> will be generated."
+            )
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Import — Folder Structure Help")
+        msg.setTextFormat(Qt.RichText)
+        msg.setText(text)
+        msg.setIcon(QMessageBox.Information)
+        msg.exec_()
+
+    def _show_folder_structure_help(self):
+        is_yolo = self._radio_yolo.isChecked()
+        if is_yolo:
+            text = (
+                "<b>YOLO — Required folder structure:</b><br><br>"
+                "<pre>"
+                "Images Folder/\n"
+                "  image1.jpg\n"
+                "  image2.jpg\n"
+                "  ...\n"
+                "\n"
+                "Labels Folder/\n"
+                "  image1.txt   ← YOLO format (.txt)\n"
+                "  image2.txt\n"
+                "  ...\n"
+                "\n"
+                "Test Folder/   (optional)\n"
+                "  test1.jpg\n"
+                "  ..."
+                "</pre>"
+                "<br>Label files must have the same stem name as their image.<br>"
+                "Each .txt has one row per object: <code>class x y w h</code>"
+            )
+        else:
+            text = (
+                "<b>UNet — Required folder structure:</b><br><br>"
+                "<pre>"
+                "Images Folder/\n"
+                "  image1.png\n"
+                "  image2.png\n"
+                "  ...\n"
+                "\n"
+                "Masks Folder/\n"
+                "  image1.png   ← binary/grayscale mask (.png)\n"
+                "  image2.png\n"
+                "  ...\n"
+                "\n"
+                "Test Folder/   (optional)\n"
+                "  test1.png\n"
+                "  ..."
+                "</pre>"
+                "<br>Mask files must have the same stem name as their image.<br>"
+                "No data.yaml is generated for UNet datasets."
+            )
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Folder Structure Help")
+        msg.setTextFormat(Qt.RichText)
+        msg.setText(text)
+        msg.setIcon(QMessageBox.Information)
+        msg.exec_()
