@@ -33,10 +33,13 @@ jobs:
             --collect-all torch `
             --collect-all torchvision `
             --collect-all ultralytics `
+            --collect-all segmentation_models_pytorch `
+            --collect-all albumentations `
             --hidden-import pytorch_lightning `
             --hidden-import torchmetrics `
             --hidden-import onnxruntime `
             --exclude-module onnx.reference `
+            --add-data "mlops/scripts;mlops/scripts" `
             main.py
 
       - name: Build folder version
@@ -45,10 +48,13 @@ jobs:
             --collect-all torch `
             --collect-all torchvision `
             --collect-all ultralytics `
+            --collect-all segmentation_models_pytorch `
+            --collect-all albumentations `
             --hidden-import pytorch_lightning `
             --hidden-import torchmetrics `
             --hidden-import onnxruntime `
             --exclude-module onnx.reference `
+            --add-data "mlops/scripts;mlops/scripts" `
             main.py
 
       - name: Zip folder version
