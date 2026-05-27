@@ -13,17 +13,27 @@ import json
 from datetime import datetime
 
 
-def generate_version_id(annotator_initials: str) -> str:
+def generate_version_id(registry_root: str, project: str) -> str:
     """
-    Return a unique version ID string in the format:
-      YYYY-MM-DD_{annotator_initials}_HHMMSS
+    Return a version ID in the format: v{N}_{YYYY-MM-DD}_{HH-MM}
 
-    Example: '2026-05-06_mviqar_143022'
+    N is one more than the highest existing vN folder in the project directory.
+    If v1..v3 exist and v4 was deleted, N=4. If no versions exist, N=1.
+
+    Example: 'v3_2026-05-21_14-11'
     """
+    import re
+    project_dir = os.path.join(registry_root, *project.split("/"))
+    max_n = 0
+    if os.path.isdir(project_dir):
+        pattern = re.compile(r"^v(\d+)_")
+        for entry in os.scandir(project_dir):
+            if entry.is_dir():
+                m = pattern.match(entry.name)
+                if m:
+                    max_n = max(max_n, int(m.group(1)))
     now = datetime.now()
-    date_str = now.strftime("%Y-%m-%d")
-    time_str = now.strftime("%H%M%S")
-    return f"{date_str}_{annotator_initials}_{time_str}"
+    return f"v{max_n + 1}_{now.strftime('%Y-%m-%d_%H-%M')}"
 
 
 # ---------------------------------------------------------------------------

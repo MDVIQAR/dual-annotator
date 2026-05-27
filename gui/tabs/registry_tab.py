@@ -5,12 +5,13 @@ Registry Browser tab — cascading filter + compare mode.
 """
 import os
 import sys
-import csv
+
+from mlops.registry.csv_exporter import refresh_registry_csv
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QLabel, QPushButton, QComboBox, QScrollArea, QFrame,
-    QSpacerItem, QSizePolicy, QApplication, QFileDialog, QMessageBox,
+    QSpacerItem, QSizePolicy, QApplication, QMessageBox,
     QStackedWidget, QGridLayout, QProgressBar,
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
@@ -384,6 +385,7 @@ class RegistryTab(QWidget):
 
         self._setup_ui()
         self._refresh()
+        self.refresh_csv()
 
     # ── UI Construction ────────────────────────────────────────────────────────
     def _setup_ui(self):
@@ -505,7 +507,7 @@ class RegistryTab(QWidget):
         self._storage_lbl.setStyleSheet(f"color:{_MUTED};font-size:10px;")
         ll.addWidget(self._storage_lbl)
 
-        self._csv_btn = QPushButton("📊  Export All Models to CSV")
+        self._csv_btn = QPushButton("📊  Refresh Models CSV")
         self._csv_btn.setStyleSheet(f"""
             QPushButton{{background-color:{_PANEL_BG};color:{_TEXT};
                 border:1px solid {_BORDER};border-radius:4px;padding:6px;font-size:11px;}}
@@ -647,6 +649,7 @@ class RegistryTab(QWidget):
             self._warning_lbl.show()
             return
         self._warning_lbl.hide()
+        self.refresh_csv()
 
         # Reset model type if current type no longer exists
         scanner = RegistryScanner(self._registry_root)
@@ -1104,61 +1107,21 @@ class RegistryTab(QWidget):
             self._copy_status_lbl.setText("✗ Export failed — see log")
 
     def _export_csv(self):
+        self.refresh_csv(notify=True)
+
+    def refresh_csv(self, notify: bool = False):
         if not self._registry_root or not os.path.isdir(self._registry_root):
-            QMessageBox.warning(self, "Registry Not Configured",
-                                "Set the GDrive registry root before exporting.")
+            if notify:
+                QMessageBox.warning(self, "Registry Not Configured",
+                                    "Set the GDrive registry root before exporting.")
             return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save Models CSV", "models_registry.csv", "CSV Files (*.csv)"
-        )
-        if not path: return
-        scanner  = RegistryScanner(self._registry_root)
-        projects = scanner.get_projects()
-        columns  = [
-            "version_id","project","model_type","status","annotator",
-            "commit_message","started_at","finished_at",
-            "architecture","encoder","encoder_weights",
-            "in_channels","out_classes","epochs","batch_size",
-            "learning_rate","image_width","image_height","device",
-            "best_val_loss","best_epoch","final_train_loss",
-            "train_count","val_count","test_count","num_classes",
-            "class_names","sha256","has_weights","has_onnx","version_folder",
-        ]
-        rows = []
-        for proj in projects:
-            for s in scanner.get_versions(proj):
-                m = scanner.get_version(proj, s["version_id"])
-                if not m: continue
-                hp = m.get("hyperparams", {}); mx = m.get("metrics", {})
-                ds = m.get("dataset", {});     art = m.get("artifacts", {})
-                ox = m.get("onnx_config", {})
-                rows.append({
-                    "version_id": m.get("version_id",""), "project": m.get("project",""),
-                    "model_type": m.get("model_type",""), "status": m.get("status",""),
-                    "annotator": m.get("annotator",""), "commit_message": m.get("commit_message",""),
-                    "started_at": m.get("started_at",""), "finished_at": m.get("finished_at",""),
-                    "architecture": hp.get("architecture",""), "encoder": hp.get("encoder",""),
-                    "encoder_weights": hp.get("encoder_weights",""),
-                    "in_channels": hp.get("in_channels",""), "out_classes": hp.get("out_classes",""),
-                    "epochs": hp.get("epochs",""), "batch_size": hp.get("batch_size",""),
-                    "learning_rate": hp.get("learning_rate",""),
-                    "image_width": hp.get("image_width",""), "image_height": hp.get("image_height",""),
-                    "device": hp.get("device",""),
-                    "best_val_loss": mx.get("best_val_loss",""), "best_epoch": mx.get("best_epoch",""),
-                    "final_train_loss": mx.get("final_train_loss",""),
-                    "train_count": ds.get("train_count",""), "val_count": ds.get("val_count",""),
-                    "test_count": ds.get("test_count",""), "num_classes": ds.get("num_classes",""),
-                    "class_names": "|".join(ds.get("classes",[])), "sha256": ds.get("sha256",""),
-                    "has_weights": "yes" if art.get("weights") else "no",
-                    "has_onnx": "yes" if ox.get("exported") else "no",
-                    "version_folder": m.get("version_id",""),
-                })
-        if not rows:
-            QMessageBox.information(self, "No Models", "No model versions found in the registry.")
-            return
-        with open(path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=columns)
-            writer.writeheader()
-            writer.writerows(rows)
-        QMessageBox.information(self, "CSV Exported",
-                                f"Exported {len(rows)} model(s) to:\n{path}")
+        count = refresh_registry_csv(self._registry_root)
+        if notify:
+            if count == 0:
+                QMessageBox.information(self, "No Models",
+                                        "No model versions found in the registry.")
+            else:
+                import os as _os
+                csv_path = _os.path.join(self._registry_root, "models_registry.csv")
+                QMessageBox.information(self, "CSV Updated",
+                                        f"Saved {count} model(s) to:\n{csv_path}")

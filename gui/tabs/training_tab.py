@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (
     QRadioButton, QButtonGroup, QCheckBox, QStackedWidget,
     QListWidget, QListWidgetItem, QSizePolicy, QSlider, QApplication, QShortcut,
 )
-from PyQt5.QtCore import Qt, pyqtSlot, QSize, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot, QSize, QTimer
 from PyQt5.QtGui import QFont, QIcon, QPixmap, QImage, QColor
 
 try:
@@ -551,6 +551,8 @@ def _make_collapsible(title: str, content: QWidget, collapsed: bool = False) -> 
 # ---------------------------------------------------------------------------
 
 class TrainingTab(QWidget):
+    training_completed = pyqtSignal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._settings             = _load_settings()
@@ -2261,6 +2263,7 @@ class TrainingTab(QWidget):
         self._worker = None
 
         if success:
+            self.training_completed.emit(local_run_dir or "")
             projects_config.ensure_hierarchy(
                 self._current_train_model_type(),
                 self._project_name_cb.currentText().strip(),

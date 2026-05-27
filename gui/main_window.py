@@ -1,4 +1,5 @@
 # gui/main_window.py
+# pyrefly: ignore [missing-import]
 from PyQt5.QtWidgets import (
     QMainWindow, QAction, QMenu, QToolBar, 
     QStatusBar, QLabel, QWidget, QVBoxLayout,
@@ -340,30 +341,43 @@ class MainWindow(QMainWindow):
         self.project_manager = ProjectManager()
         self.canvas.annotation_changed.connect(self._on_annotation_changed)
 
+        # COLLAB INTEGRATION
+        self.collab_mode   = "offline"  # "offline" | "host" | "client"
+        self.collab_client = None       # CollabClient instance when joined
+        self._collab_locks = {}         # {filename: username} latest sync
+
         # Keyboard shortcuts (Tab handled by menu action to avoid ambiguity)
 
     def _on_annotation_changed(self):
         """Called every time a shape is added, moved, deleted, or modified."""
-        if not self.image_folder or self.current_image_index < 0:
+        if not self.image_folder and self.collab_mode != "client":
+            return
+        if self.current_image_index < 0:
             return
         filename = self.image_files[self.current_image_index]
         # Copy shapes to avoid mutations
         shapes_copy = list(self.canvas.shapes)
-        self.project_manager.schedule_autosave(
-            filename,
-            shapes_copy,
-            self.canvas.mode,
-            self.canvas.image_width,
-            self.canvas.image_height
-        )
+
+        if self.collab_mode == "client" and self.collab_client:
+            # In client mode: serialize and POST to server instead of local disk
+            self._save_annotations_to_server(filename, shapes_copy)
+        else:
+            self.project_manager.schedule_autosave(
+                filename,
+                shapes_copy,
+                self.canvas.mode,
+                self.canvas.image_width,
+                self.canvas.image_height
+            )
         # Update live shape count in status bar
         count = len([s for s in self.canvas.shapes if getattr(s, 'hollow_role', None) != 'inner'])
         self.shape_count_label.setText(f"✏️ {count} Shape{'s' if count != 1 else ''}")
-        # Auto-update status badge to in_progress if shapes exist but annotated wasn't manually set
-        current_status = self.project_manager.get_image_status(filename)
-        if shapes_copy and current_status == "unannotated":
-            self.project_manager.set_image_status(filename, "in_progress")
-            self.update_ui_status_badge(filename, "in_progress")
+        # Auto-update status badge
+        if self.collab_mode != "client":
+            current_status = self.project_manager.get_image_status(filename)
+            if shapes_copy and current_status == "unannotated":
+                self.project_manager.set_image_status(filename, "in_progress")
+                self.update_ui_status_badge(filename, "in_progress")
         # Update annotation statistics panel
         self.update_annotation_stats()
 
@@ -397,16 +411,177 @@ class MainWindow(QMainWindow):
             text += f"\n\ud83c\udfaf {class_counts}"
         self.stats_label.setText(text)
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # COLLAB INTEGRATION — helper methods
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _notify_collab(self, msg: str):
+        """Show a transient collaboration event in the status bar for 4 seconds."""
+        self.status_bar.showMessage(msg, 4000)
+
+    def _on_session_hosted(self, project_id: str, port: int):
+        """Called by CollabTab when admin starts the server."""
+        self.collab_mode = "host"
+        self.status_bar.showMessage(
+            f"🖥️  Hosting session  ·  Project ID: {project_id}  ·  Port: {port}", 0)
+        # Wire join/leave notifications — server thread is started by now
+        srv = self.collab_tab._server
+        if srv:
+            srv.user_joined.connect(lambda u: self._notify_collab(f"👤 {u} joined the session"))
+            srv.user_left.connect(lambda u: self._notify_collab(f"👋 {u} left the session"))
+
+    def _on_session_joined(self, project_data: dict, client):
+        """Called by CollabTab when this instance joins as a client."""
+        self.collab_mode   = "client"
+        self.collab_client = client
+
+        # Restore class definitions from server's project data
+        if project_data.get("classes"):
+            self._restore_classes(project_data["classes"])
+
+        # Fetch image list from server and populate the file browser
+        images = client.get_image_list()
+        if not images:
+            QMessageBox.warning(self, "No Images",
+                                "Connected but the host has no images loaded yet.")
+            return
+
+        self.image_files         = images
+        self.image_folder        = None   # no local folder in client mode
+        self.current_image_index = -1
+
+        # Populate the sidebar list
+        self.file_list.clear()
+        for fname in images:
+            item = QListWidgetItem(f"   {fname}")
+            item.setData(Qt.UserRole, fname)
+            item.setForeground(QColor("#aaaaaa"))
+            self.file_list.addItem(item)
+
+        self.update_image_counter()
+        # Auto-load first image
+        if images:
+            self.load_image(0)
+
+        # Switch to annotate tab so user can start immediately
+        self.tab_widget.setCurrentWidget(self.annotate_tab)
+        self.status_bar.showMessage(
+            f"🔗  Joined session as '{client.username}'  ·  {len(images)} images", 0)
+        # Wire join/leave notifications from the sync poller
+        if client._poller:
+            client._poller.user_joined.connect(lambda u: self._notify_collab(f"👤 {u} joined the session"))
+            client._poller.user_left.connect(lambda u: self._notify_collab(f"👋 {u} left the session"))
+
+    def _on_session_stopped(self):
+        """Called when host stops server or client disconnects."""
+        # Release any held lock
+        if self.collab_mode == "client" and self.collab_client:
+            if self.current_image_index >= 0:
+                fname = self.image_files[self.current_image_index]
+                self.collab_client.release_lock(fname)
+            self.collab_client = None
+
+        self.collab_mode   = "offline"
+        self._collab_locks = {}
+
+        # Re-enable canvas in case it was locked/disabled
+        if hasattr(self, "canvas"):
+            self.canvas.setEnabled(True)
+
+        self.status_bar.showMessage("Session ended — back to offline mode.", 3000)
+
+    def _save_annotations_to_server(self, filename: str, shapes: list, force_status: str = None):
+        """Serialize canvas shapes and POST them to the collaboration server."""
+        if not self.collab_client:
+            return
+        w = self.canvas.image_width
+        h = self.canvas.image_height
+        mode = self.canvas.mode
+
+        layer_data = []
+        for sh in shapes:
+            if getattr(sh, "hollow_role", None) == "inner":
+                continue
+            layer_data.append(self.project_manager._serialize_shape(sh))
+
+        status_to_send = force_status if force_status else "in_progress"
+
+        from datetime import datetime
+        ann_dict = {
+            "schema_version": "1.0",
+            "image_file":     filename,
+            "image_width":    w,
+            "image_height":   h,
+            "status":         status_to_send,
+            "active_mode":    mode,
+            "last_modified":  datetime.now().isoformat(),
+            "layers": {
+                "yolo":       {"visible": mode == "yolo",       "annotations": layer_data if mode == "yolo"       else []},
+                "unet":       {"visible": mode == "unet",       "annotations": layer_data if mode == "unet"       else []},
+                "concentric": {"visible": mode == "concentric", "annotations": layer_data if mode == "concentric" else []},
+            }
+        }
+        self.collab_client.save_annotations(filename, ann_dict)
+
+    def _update_collab_badges(self, locks: dict, statuses: dict):
+        """
+        Refresh the file-list sidebar badges with live lock/status info.
+        Called by CollabTab._on_client_sync every 500ms.
+        """
+        self._collab_locks = locks
+        STATUS_COLORS = {
+            "annotated":   "#8aff8a",
+            "skipped":     "#8ab4f8",
+            "in_progress": "#ffd54f",
+            "unannotated": "#aaaaaa",
+        }
+        for i in range(self.file_list.count()):
+            item = self.file_list.item(i)
+            if item is None:
+                continue
+            fname = item.data(Qt.UserRole)
+            if fname is None:
+                continue
+            if fname in locks:
+                locker = locks[fname]
+                is_me = False
+                if self.collab_mode == "client" and self.collab_client:
+                    is_me = (locker == self.collab_client.username)
+                elif self.collab_mode == "host":
+                    is_me = (locker == "Admin (Host)")
+
+                badge  = "🔵" if is_me else "🔒"
+                item.setText(f"{badge} {fname}")
+                item.setForeground(QColor("#60a5fa" if is_me else "#f87171"))
+                item.setToolTip(f"{'You are editing' if is_me else f'Locked by {locker}'}")
+            else:
+                status = statuses.get(fname, "unannotated")
+                badge  = "✅" if status == "annotated" else \
+                         "⏭️" if status == "skipped"   else \
+                         "🟡" if status == "in_progress" else "  "
+                item.setText(f"{badge} {fname}")
+                item.setForeground(QColor(STATUS_COLORS.get(status, "#aaaaaa")))
+                item.setToolTip(f"Status: {status.replace('_', ' ').title()}")
+
     def closeEvent(self, event):
         """Handle application close and save templates"""
+        # Release collab locks and unregister before closing
+        if self.collab_mode == "client" and self.collab_client:
+            self.collab_client.disconnect()
+            self.collab_client = None
+        elif self.collab_mode == "host" and hasattr(self, "collab_tab") and self.collab_tab._server:
+            self.collab_tab._server.stop()
+
+        self.collab_mode = "offline"
+
         if hasattr(self, "project_manager"):
             self.project_manager.flush_autosave()
-            
+
             # Persist templates to the project folder
             if self.project_manager.project_dir:
                 tmpl_path = os.path.join(self.project_manager.project_dir, 'templates.json')
                 self.canvas.template_manager.save_to_file(tmpl_path)
-                
+
         super().closeEvent(event)
         
     # EXPORT INTEGRATION
@@ -898,8 +1073,18 @@ class MainWindow(QMainWindow):
         self.settings_tab = SettingsTab()
         self.tab_widget.addTab(self.settings_tab, "⚙  Settings")
 
+        # ── COLLAB TAB (Simultaneous Annotation) ──
+        from gui.tabs.collab_tab import CollabTab
+        self.collab_tab = CollabTab(self)
+        self.tab_widget.addTab(self.collab_tab, "👥  Collaborate")
+        self.collab_tab.session_hosted.connect(self._on_session_hosted)
+        self.collab_tab.session_joined.connect(self._on_session_joined)
+        self.collab_tab.session_stopped.connect(self._on_session_stopped)
+
         self.registry_tab.retrain_requested.connect(self._on_retrain_requested)
         self.data_prep_tab.open_in_training.connect(self._on_open_in_training)
+        self.training_tab.training_completed.connect(self.registry_tab.refresh_csv)
+        self.training_tab.training_completed.connect(self.export_test_tab.prefill_from_version)
 
     def _on_retrain_requested(self, payload: dict):
         self.training_tab.load_from_manifest(payload)
@@ -1617,16 +1802,54 @@ class MainWindow(QMainWindow):
     
     def load_image(self, index):
         """Load image at specified index"""
+        # Release lock on current image when navigating away
+        if self.current_image_index >= 0:
+            prev_file = self.image_files[self.current_image_index]
+            if self.collab_mode == "client" and self.collab_client:
+                self.collab_client.release_lock(prev_file)
+            elif self.collab_mode == "host" and hasattr(self, 'collab_tab') and self.collab_tab._server:
+                self.collab_tab._server.state.release_lock(prev_file, "Admin (Host)")
+
         # AUTOSAVE INTEGRATION - flush before loading new image
         if hasattr(self, "project_manager") and self.current_image_index >= 0:
             self.project_manager.flush_autosave()
-            
+
         if 0 <= index < len(self.image_files):
             self.current_image_index = index
-            image_path = os.path.join(self.image_folder, self.image_files[index])
-            
-            self.canvas.load_image(image_path) # this clears canvas.shapes
-            
+
+            # CLIENT MODE: fetch image bytes from server
+            if self.collab_mode == "client" and self.collab_client:
+                filename = self.image_files[index]
+                try:
+                    image_path = self.collab_client.fetch_image(filename)
+                except RuntimeError as e:
+                    self.status_bar.showMessage(f"⚠️ {e}", 4000)
+                    return
+                # Try to acquire lock
+                granted, locked_by = self.collab_client.acquire_lock(filename)
+                if granted:
+                    self.canvas.setEnabled(True)
+                    self.status_bar.showMessage(f"🔓 Editing: {filename}", 2000)
+                else:
+                    self.canvas.setEnabled(False)
+                    self.status_bar.showMessage(
+                        f"🔒 {filename} is locked by {locked_by} — view only", 0)
+            else:
+                image_path = os.path.join(self.image_folder, self.image_files[index])
+                # HOST MODE: acquire lock locally so clients can't overwrite
+                if self.collab_mode == "host" and hasattr(self, 'collab_tab') and self.collab_tab._server:
+                    filename = self.image_files[index]
+                    granted = self.collab_tab._server.state.acquire_lock(filename, "Admin (Host)")
+                    if granted:
+                        self.canvas.setEnabled(True)
+                        self.status_bar.showMessage(f"🔓 Editing: {filename}", 2000)
+                    else:
+                        self.canvas.setEnabled(False)
+                        locked_by = self.collab_tab._server.state.locks.get(filename, "Unknown")
+                        self.status_bar.showMessage(f"🔒 {filename} is locked by {locked_by} — view only", 0)
+
+            self.canvas.load_image(image_path)  # clears canvas.shapes
+
             # AUTOSAVE INTEGRATION - restore annotations after image loads
             if hasattr(self, "project_manager"):
                 self._restore_annotations(self.image_files[index])
@@ -1651,8 +1874,12 @@ class MainWindow(QMainWindow):
 
     def _restore_annotations(self, filename):
         """Load saved annotations for an image and place them on canvas."""
-        data = self.project_manager.load_image_annotations(filename)
-        if data is None:
+        # CLIENT MODE: fetch annotations from server
+        if self.collab_mode == "client" and self.collab_client:
+            data = self.collab_client.load_annotations(filename)
+        else:
+            data = self.project_manager.load_image_annotations(filename)
+        if not data:
             return  # no saved annotations - canvas stays empty
 
         if data.get("hash_mismatch"):
@@ -1692,14 +1919,20 @@ class MainWindow(QMainWindow):
     def mark_image_skipped(self):
         if not self.image_files or getattr(self, 'current_image_index', -1) < 0: return
         filename = self.image_files[self.current_image_index]
-        self.project_manager.set_image_status(filename, "skipped")
+        if self.collab_mode == "client" and self.collab_client:
+            self._save_annotations_to_server(filename, list(self.canvas.shapes), force_status="skipped")
+        else:
+            self.project_manager.set_image_status(filename, "skipped")
         self.update_ui_status_badge(filename, "skipped")
         self.next_image()
         
     def mark_image_done(self):
         if not self.image_files or getattr(self, 'current_image_index', -1) < 0: return
         filename = self.image_files[self.current_image_index]
-        self.project_manager.set_image_status(filename, "annotated")
+        if self.collab_mode == "client" and self.collab_client:
+            self._save_annotations_to_server(filename, list(self.canvas.shapes), force_status="annotated")
+        else:
+            self.project_manager.set_image_status(filename, "annotated")
         self.update_ui_status_badge(filename, "annotated")
         self.next_image()
         

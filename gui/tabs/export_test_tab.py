@@ -636,6 +636,15 @@ class ExportTestTab(QWidget):
 
     # ── Version folder loading ─────────────────────────────────────────────────
 
+    def prefill_from_version(self, path: str):
+        if not path or not os.path.isdir(path):
+            return
+        self._load_version_folder(path)
+        test_images = os.path.join(path, "dataset", "test", "images")
+        if os.path.isdir(test_images):
+            self._test_edit.setText(test_images)
+            self._out_edit.setText(os.path.join(test_images, "results"))
+
     def _load_version_folder(self, path: str):
         info = _validate_folder(path)
         if info is None:
