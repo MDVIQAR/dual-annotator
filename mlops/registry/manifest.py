@@ -87,6 +87,10 @@ def _build_default_manifest() -> dict:
             "best_val_loss": None,
             "best_epoch": None,
             "final_train_loss": None,
+            "final_val_loss": None,
+            "best_val_iou": None,
+            "final_train_iou": None,
+            "final_val_iou": None,
         },
 
         "artifacts": {
@@ -175,12 +179,18 @@ class ManifestWriter:
         data["status"] = status
         self._write(data)
 
-    def update_metrics(self, best_val_loss: float, best_epoch: int, final_train_loss: float):
+    def update_metrics(self, best_val_loss: float, best_epoch: int, final_train_loss: float,
+                       final_val_loss: float = None, best_val_iou: float = None,
+                       final_train_iou: float = None, final_val_iou: float = None):
         """Fill the metrics block in the manifest."""
         data = self._read()
-        data["metrics"]["best_val_loss"] = best_val_loss
-        data["metrics"]["best_epoch"] = best_epoch
+        data["metrics"]["best_val_loss"]   = best_val_loss
+        data["metrics"]["best_epoch"]      = best_epoch
         data["metrics"]["final_train_loss"] = final_train_loss
+        if final_val_loss   is not None: data["metrics"]["final_val_loss"]   = final_val_loss
+        if best_val_iou     is not None: data["metrics"]["best_val_iou"]     = best_val_iou
+        if final_train_iou  is not None: data["metrics"]["final_train_iou"]  = final_train_iou
+        if final_val_iou    is not None: data["metrics"]["final_val_iou"]    = final_val_iou
         self._write(data)
 
     def update_artifacts(self, weights=None, onnx=None, curves_plot=None, sample_preds=None):

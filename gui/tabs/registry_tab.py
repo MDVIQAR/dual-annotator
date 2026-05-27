@@ -325,22 +325,47 @@ class ComparePanel(QScrollArea):
         _add_section("Metrics")
         mx_a = manifest_a.get("metrics", {})
         mx_b = manifest_b.get("metrics", {})
-        bvl_a = mx_a.get("best_val_loss")
-        bvl_b = mx_b.get("best_val_loss")
-        bep_a = mx_a.get("best_epoch", "—")
-        bep_b = mx_b.get("best_epoch", "—")
-        ftl_a = mx_a.get("final_train_loss")
-        ftl_b = mx_b.get("final_train_loss")
+        bvl_a  = mx_a.get("best_val_loss");     bvl_b  = mx_b.get("best_val_loss")
+        bep_a  = mx_a.get("best_epoch", "—");   bep_b  = mx_b.get("best_epoch", "—")
+        bvi_a  = mx_a.get("best_val_iou");      bvi_b  = mx_b.get("best_val_iou")
+        ftl_a  = mx_a.get("final_train_loss");  ftl_b  = mx_b.get("final_train_loss")
+        fvl_a  = mx_a.get("final_val_loss");    fvl_b  = mx_b.get("final_val_loss")
+        fti_a  = mx_a.get("final_train_iou");   fti_b  = mx_b.get("final_train_iou")
+        fvi_a  = mx_a.get("final_val_iou");     fvi_b  = mx_b.get("final_val_iou")
         _add_row(
             f"Best Val Loss: {_fmt_loss(bvl_a)}   @ Epoch {bep_a}",
             f"Best Val Loss: {_fmt_loss(bvl_b)}   @ Epoch {bep_b}",
             num_a=bvl_a, num_b=bvl_b, lower_is_better=True,
         )
+        if bvi_a is not None or bvi_b is not None:
+            _add_row(
+                f"Best Val IoU: {_fmt_loss(bvi_a)}",
+                f"Best Val IoU: {_fmt_loss(bvi_b)}",
+                num_a=bvi_a, num_b=bvi_b, lower_is_better=False,
+            )
         _add_row(
             f"Final Train Loss: {_fmt_loss(ftl_a)}",
             f"Final Train Loss: {_fmt_loss(ftl_b)}",
             num_a=ftl_a, num_b=ftl_b, lower_is_better=True,
         )
+        if fvl_a is not None or fvl_b is not None:
+            _add_row(
+                f"Final Val Loss: {_fmt_loss(fvl_a)}",
+                f"Final Val Loss: {_fmt_loss(fvl_b)}",
+                num_a=fvl_a, num_b=fvl_b, lower_is_better=True,
+            )
+        if fti_a is not None or fti_b is not None:
+            _add_row(
+                f"Final Train IoU: {_fmt_loss(fti_a)}",
+                f"Final Train IoU: {_fmt_loss(fti_b)}",
+                num_a=fti_a, num_b=fti_b, lower_is_better=False,
+            )
+        if fvi_a is not None or fvi_b is not None:
+            _add_row(
+                f"Final Val IoU: {_fmt_loss(fvi_a)}",
+                f"Final Val IoU: {_fmt_loss(fvi_b)}",
+                num_a=fvi_a, num_b=fvi_b, lower_is_better=False,
+            )
 
         # ── Artifacts ──
         _add_section("Artifacts")

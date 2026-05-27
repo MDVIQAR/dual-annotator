@@ -261,6 +261,10 @@ class TrainWorker(QThread):
                     best_val_loss    = self._final_metrics.get("best_val_loss", 0.0),
                     best_epoch       = int(self._final_metrics.get("best_epoch", 0)),
                     final_train_loss = self._final_metrics.get("final_train_loss", 0.0),
+                    final_val_loss   = self._final_metrics.get("final_val_loss"),
+                    best_val_iou     = self._final_metrics.get("best_val_iou"),
+                    final_train_iou  = self._final_metrics.get("final_train_iou"),
+                    final_val_iou    = self._final_metrics.get("final_val_iou"),
                 )
             if os.path.isfile(os.path.join(self._version_folder, "best.pt")):
                 writer.update_artifacts(weights="best.pt")
@@ -288,6 +292,10 @@ class TrainWorker(QThread):
                     best_val_loss    = self._final_metrics.get("best_val_loss", 0.0),
                     best_epoch       = int(self._final_metrics.get("best_epoch", 0)),
                     final_train_loss = self._final_metrics.get("final_train_loss", 0.0),
+                    final_val_loss   = self._final_metrics.get("final_val_loss"),
+                    best_val_iou     = self._final_metrics.get("best_val_iou"),
+                    final_train_iou  = self._final_metrics.get("final_train_iou"),
+                    final_val_iou    = self._final_metrics.get("final_val_iou"),
                 )
             writer.update_artifacts(weights="best.pt")
             self.progress.emit(100)
