@@ -3100,7 +3100,7 @@ class AnnotationCanvas(QWidget):
                 first_x, first_y = self.polygon_points[0]
                 distance = math.sqrt((image_x - first_x)**2 + (image_y - first_y)**2)
                 
-                if distance < (3.0 / self.scale) and len(self.polygon_points) >= 3:
+                if distance < (8.0 / self.scale) and len(self.polygon_points) >= 3:
                     self.finish_polygon()
                 else:
                     self.polygon_points.append((image_x, image_y))
@@ -3426,8 +3426,8 @@ class AnnotationCanvas(QWidget):
             if len(self.bezier_points) >= 3:
                 first_pos = self.bezier_points[0]
                 dist = math.hypot(img_pos[0] - first_pos[0], img_pos[1] - first_pos[1])
-                # If closer than 3 pixels (scaled)
-                if dist < 3.0 / self.scale:
+                # If closer than 8 pixels (scaled)
+                if dist < 8.0 / self.scale:
                     self.finish_bezier()
                     return
             

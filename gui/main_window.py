@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (
     QComboBox, QFrame, QPushButton, QShortcut, QTextEdit, QLineEdit, QScrollArea,
     QTabWidget
 )
-from PyQt5.QtCore import Qt, QSize, pyqtSignal
+from PyQt5.QtCore import Qt, QSize, pyqtSignal, QTimer
 from PyQt5.QtGui import QIcon, QKeySequence, QFont, QColor, QPalette, QPolygonF
 import os
 
@@ -416,8 +416,17 @@ class MainWindow(QMainWindow):
     # ═══════════════════════════════════════════════════════════════════════════
 
     def _notify_collab(self, msg: str):
-        """Show a transient collaboration event in the status bar for 4 seconds."""
-        self.status_bar.showMessage(msg, 4000)
+        """Show a floating toast notification over the window for 3.5 seconds."""
+        toast = QLabel(msg, self)
+        toast.setStyleSheet(
+            "background:#1e293b; color:#e2e8f0; border:1px solid #6366f1;"
+            "border-radius:8px; padding:8px 16px; font-size:13px;"
+        )
+        toast.adjustSize()
+        toast.move(self.width() - toast.width() - 24, 64)
+        toast.show()
+        toast.raise_()
+        QTimer.singleShot(3500, toast.deleteLater)
 
     def _on_session_hosted(self, project_id: str, port: int):
         """Called by CollabTab when admin starts the server."""
@@ -2130,13 +2139,17 @@ class MainWindow(QMainWindow):
     
     def undo(self):
         if hasattr(self, 'canvas'):
-            self.canvas.undo()
-        self.status_bar.showMessage("Undo", 1000)
-    
+            if self.canvas.polygon_points or self.canvas.bezier_points:
+                self.canvas.undo_last_point()
+            else:
+                self.canvas.undo()
+
     def redo(self):
         if hasattr(self, 'canvas'):
-            self.canvas.redo()
-        self.status_bar.showMessage("Redo", 1000)
+            if self.canvas.polygon_points or self.canvas.bezier_points:
+                self.canvas.redo_last_point()
+            else:
+                self.canvas.redo()
     
     def toggle_pan_mode(self):
         """Toggle pan mode in canvas"""
