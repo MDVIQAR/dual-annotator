@@ -74,8 +74,8 @@ class TrainWorker(QThread):
 
     def _execute(self) -> tuple:
         # Step 1 — Generate version ID and create folder
-        version_id            = generate_version_id(self._config["annotator"])
         project               = self._config["project"]
+        version_id            = generate_version_id(self._registry_root, project)
         self._version_folder  = create_version_folder(self._registry_root, project, version_id)
 
         self.log.emit(f"[INFO] Version: {version_id}")
@@ -106,6 +106,11 @@ class TrainWorker(QThread):
         _write_atomic(config_json_path, config_to_save)
 
         # Step 4 — Create manifest
+        dataset_info = config_to_save["dataset_info"]
+        if self._config["model_type"] in ("unet", "concentric"):
+            out_classes = int(self._config["hyperparams"].get("out_classes", 2))
+            dataset_info["num_classes"] = max(out_classes - 1, 1)
+
         writer = ManifestWriter(self._version_folder)
         writer.create(
             version_id     = version_id,
@@ -117,7 +122,7 @@ class TrainWorker(QThread):
             variant        = self._config.get("variant", ""),
             camera         = self._config.get("camera", ""),
             commit_message = self._config["commit_message"],
-            dataset_info   = config_to_save["dataset_info"],
+            dataset_info   = dataset_info,
             hyperparams    = self._config["hyperparams"],
             augmentations  = self._config.get("augmentations", {}),
         )

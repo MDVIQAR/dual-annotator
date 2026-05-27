@@ -1,5 +1,5 @@
 from PyQt5.QtCore import QThread, pyqtSignal
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QRadioButton, QCheckBox, QSpinBox, QPushButton, QProgressBar, QMessageBox, QGroupBox, QButtonGroup
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QRadioButton, QCheckBox, QSpinBox, QPushButton, QProgressBar, QMessageBox, QGroupBox, QButtonGroup, QLineEdit, QFileDialog
 import os
 import json
 from datetime import datetime
@@ -182,6 +182,23 @@ class ExportDialog(QDialog):
         opt_layout.addWidget(self.chk_delta)
         opt_layout.addWidget(self.chk_annotated)
         opt_layout.addWidget(self.chk_timestamp)
+
+        # Output folder row
+        out_row = QHBoxLayout()
+        out_row.addWidget(QLabel("Output folder:"))
+        self._out_path_edit = QLineEdit()
+        self._out_path_edit.setPlaceholderText("Auto (next to image folder)")
+        self._out_path_edit.setStyleSheet(
+            "background-color:#161c2e;color:#ffffff;border:1px solid #2e3a58;"
+            "border-radius:4px;padding:4px;"
+        )
+        self._out_path_edit.setReadOnly(True)
+        out_row.addWidget(self._out_path_edit, 1)
+        self._browse_btn = QPushButton("Browse…")
+        self._browse_btn.clicked.connect(self._browse_output)
+        out_row.addWidget(self._browse_btn)
+        opt_layout.addLayout(out_row)
+
         opt_group.setLayout(opt_layout)
         layout.addWidget(opt_group)
 
@@ -245,6 +262,11 @@ class ExportDialog(QDialog):
             self.chk_annotated.setEnabled(True)
             self.chk_timestamp.setChecked(True)
 
+    def _browse_output(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Output Folder", self.image_folder)
+        if folder:
+            self._out_path_edit.setText(folder)
+
     def _toggle_split(self, state):
         enabled = state != 0
         self.spin_train.setEnabled(enabled)
@@ -302,11 +324,15 @@ class ExportDialog(QDialog):
         elif self.radio_concentric.isChecked(): fmt = "concentric"  # CONCENTRIC INTEGRATION
 
         # Output dir selection logic
-        ts = ""
-        if self.chk_timestamp.isChecked():
-            ts = "_" + datetime.now().strftime("%Y-%m-%d_%H-%M")
-        dir_name = f"{fmt}{ts}"
-        output_dir = os.path.join(self.image_folder, "exports", dir_name)
+        custom_path = self._out_path_edit.text().strip()
+        if custom_path:
+            output_dir = custom_path
+        else:
+            ts = ""
+            if self.chk_timestamp.isChecked():
+                ts = "_" + datetime.now().strftime("%Y-%m-%d_%H-%M")
+            dir_name = f"{fmt}{ts}"
+            output_dir = os.path.join(self.image_folder, "exports", dir_name)
 
         kwargs = {
             "output_dir": output_dir,

@@ -156,8 +156,10 @@ class DataPrepWorker(QThread):
         self.progress.emit(95)
 
         # ── Step 7: Write dataset_info.json ────────────────────────────
-        info["sha256"] = sha256
-        info["path"]   = staging
+        info["sha256"]       = sha256
+        info["path"]         = staging
+        info["class_names"]  = class_names
+        info["num_classes"]  = len(class_names)
         DataPreparator.write_dataset_info(staging, info)
         self.log.emit("  dataset_info.json written")
 
