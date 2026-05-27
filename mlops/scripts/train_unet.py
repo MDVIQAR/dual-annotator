@@ -37,6 +37,8 @@ class MetricCallback(pl.Callback):
         self._last_train_iou     = 0.0
         self._last_train_per_iou = 0.0
         self._best_val_iou       = 0.0
+        self._last_val_loss      = 0.0
+        self._last_val_iou       = 0.0
         # Extra metrics — None means not enabled
         self._last_train_prec     = None
         self._last_train_rec      = None
@@ -71,6 +73,9 @@ class MetricCallback(pl.Callback):
         val_loss    = float(m.get("val_loss",          0.0))
         val_iou     = float(m.get("val_iou",           0.0))
         val_per_iou = float(m.get("val_per_image_iou", 0.0))
+
+        self._last_val_loss = val_loss
+        self._last_val_iou  = val_iou
 
         if val_loss < self._best_val:
             self._best_val     = val_loss
@@ -223,7 +228,10 @@ def main():
             f"best_val_loss={metric_cb._best_val:.6f} "
             f"best_epoch={metric_cb._best_epoch} "
             f"final_train_loss={metric_cb._last_train_loss:.6f} "
-            f"best_val_iou={metric_cb._best_val_iou:.4f}",
+            f"final_val_loss={metric_cb._last_val_loss:.6f} "
+            f"best_val_iou={metric_cb._best_val_iou:.4f} "
+            f"final_train_iou={metric_cb._last_train_iou:.4f} "
+            f"final_val_iou={metric_cb._last_val_iou:.4f}",
             flush=True,
         )
         print("PROGRESS 100", flush=True)

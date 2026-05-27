@@ -273,11 +273,11 @@ _SETTINGS_DEFAULTS = {
     "image_height":        240,
     "in_channels":         3,
     "out_classes":              2,
-    "early_stopping_patience":  15,
-    "extra_metrics":            ["precision", "recall", "f1"],
+    "early_stopping_patience":  10,
+    "extra_metrics":            [],
     "device":                   "cpu",
     "num_workers":              0,
-    "repeat_factor":            2,
+    "repeat_factor":            1,
     "augmentations":       {},
     # YOLO advanced — optimizer
     "yolo_optimizer":       "AdamW",
@@ -571,8 +571,10 @@ class TrainingTab(QWidget):
         self._dataset_paths        = []   # original image paths loaded from dataset
         self._left_collapsed       = False
 
+        self._initialized = False
         self._setup_ui()
         self._restore_settings()
+        self._initialized = True
 
     # ------------------------------------------------------------------
     # UI construction
@@ -799,9 +801,9 @@ class TrainingTab(QWidget):
         self._device_cb = _NoScrollComboBox(); self._device_cb.addItems(["cpu", "cuda:0", "cuda:1"])
         self._in_channels_sp   = _NoScrollSpinBox(); self._in_channels_sp.setRange(1, 10)
         self._out_classes_sp   = _NoScrollSpinBox(); self._out_classes_sp.setRange(1, 256)
-        self._patience_sp      = _NoScrollSpinBox(); self._patience_sp.setRange(1, 200); self._patience_sp.setValue(15)
+        self._patience_sp      = _NoScrollSpinBox(); self._patience_sp.setRange(1, 200); self._patience_sp.setValue(10)
         self._num_workers_sp   = _NoScrollSpinBox(); self._num_workers_sp.setRange(0, 16)
-        self._repeat_factor_sp = _NoScrollSpinBox(); self._repeat_factor_sp.setRange(1, 20); self._repeat_factor_sp.setValue(2)
+        self._repeat_factor_sp = _NoScrollSpinBox(); self._repeat_factor_sp.setRange(1, 20); self._repeat_factor_sp.setValue(1)
         for w in (self._epochs_sp, self._batch_sp, self._lr_sp, self._width_sp,
                   self._height_sp, self._device_cb, self._in_channels_sp, self._out_classes_sp,
                   self._patience_sp, self._num_workers_sp, self._repeat_factor_sp):
@@ -819,7 +821,6 @@ class TrainingTab(QWidget):
         _unet_hp_sep.setStyleSheet("color: #555555; font-size: 10px; background: transparent; border: none;")
         _unet_hp_l.addWidget(_unet_hp_sep)
         for label, widget in [
-            ("Image Height",    self._height_sp),
             ("In Channels",     self._in_channels_sp),
             ("Out Classes",     self._out_classes_sp),
             ("Repeat Factor",   self._repeat_factor_sp),
@@ -827,11 +828,22 @@ class TrainingTab(QWidget):
             _row = _make_row(label, widget)
             _unet_hp_l.addLayout(_row)
 
+        self._width_row_widget = QWidget()
+        self._width_row_widget.setStyleSheet("QWidget { background: transparent; }")
+        _wr_l = QHBoxLayout(self._width_row_widget)
+        _wr_l.setContentsMargins(0, 0, 0, 0)
+        _wr_l.setSpacing(0)
+        _wr_lbl = QLabel("Image Width")
+        _wr_lbl.setFixedWidth(120)
+        _wr_l.addWidget(_wr_lbl)
+        _wr_l.addWidget(self._width_sp)
+
         layout.addWidget(_make_collapsible("Hyperparameters", _make_section([
             _make_row("Epochs",              self._epochs_sp),
             _make_row("Batch Size",          self._batch_sp),
             _make_row("Learning Rate (lr0)", self._lr_sp),
-            _make_row("Image Width",         self._width_sp),
+            self._width_row_widget,
+            _make_row("Image Height",        self._height_sp),
             _make_row("Early Stop Patience", self._patience_sp),
             _make_row("Num Workers",         self._num_workers_sp),
             _make_row("Device",              self._device_cb),
@@ -846,7 +858,7 @@ class TrainingTab(QWidget):
         for key, label in [("precision", "Precision"), ("recall", "Recall"), ("f1", "F1 / Dice Score")]:
             cb = QCheckBox(label)
             cb.setStyleSheet(_cb_style)
-            cb.setChecked(True)
+            cb.setChecked(False)
             cb.stateChanged.connect(self._autosave)
             self._metric_checkboxes[key] = cb
         layout.addWidget(_make_collapsible("Metrics to Track", _make_section(
@@ -1723,9 +1735,9 @@ class TrainingTab(QWidget):
         self._height_sp.setValue(int(s.get("image_height", 240)))
         self._in_channels_sp.setValue(int(s.get("in_channels", 3)))
         self._out_classes_sp.setValue(int(s.get("out_classes", 2)))
-        self._patience_sp.setValue(int(s.get("early_stopping_patience", 15)))
+        self._patience_sp.setValue(int(s.get("early_stopping_patience", 10)))
         self._num_workers_sp.setValue(int(s.get("num_workers", 0)))
-        self._repeat_factor_sp.setValue(int(s.get("repeat_factor", 2)))
+        self._repeat_factor_sp.setValue(int(s.get("repeat_factor", 1)))
         _enabled_metrics = set(s.get("extra_metrics", ["precision", "recall", "f1"]))
         for key, cb in self._metric_checkboxes.items():
             cb.setChecked(key in _enabled_metrics)
@@ -1789,11 +1801,27 @@ class TrainingTab(QWidget):
             self._aug_collapsible.setVisible(not is_yolo)
         if hasattr(self, "_unet_only_hp"):
             self._unet_only_hp.setVisible(not is_yolo)
+        if hasattr(self, "_width_row_widget"):
+            self._width_row_widget.setVisible(not is_yolo)
         if hasattr(self, "_aug_yolo_note"):
             self._aug_yolo_note.setVisible(is_yolo)
             self._aug_controls_widget.setVisible(not is_yolo)
         if hasattr(self, "_project_name_cb"):
             self._refresh_train_project_names()
+        if getattr(self, '_initialized', False):
+            if is_yolo:
+                self._epochs_sp.setValue(100)
+                self._batch_sp.setValue(4)
+                self._lr_sp.setValue(0.002)
+                self._height_sp.setValue(640)
+                self._patience_sp.setValue(40)
+            else:
+                self._epochs_sp.setValue(100)
+                self._batch_sp.setValue(4)
+                self._lr_sp.setValue(0.001)
+                self._width_sp.setValue(320)
+                self._height_sp.setValue(240)
+                self._patience_sp.setValue(10)
         self._autosave()
 
     def _on_yolo_task_changed(self):
@@ -1920,6 +1948,8 @@ class TrainingTab(QWidget):
         self._autosave()
 
     def _autosave(self):
+        if not getattr(self, '_initialized', False):
+            return
         s = self._settings
         s["task_type"] = "yolo" if self._radio_yolo.isChecked() else "unet"
         ann_data = self._annotator_cb.currentData()
