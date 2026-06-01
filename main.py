@@ -1,11 +1,25 @@
 # main.py
-# NOTE: torch must be imported FIRST on Windows to avoid a DLL initialization
-# conflict (WinError 1114) between PyTorch's c10.dll and PyQt5's Qt DLLs.
+import os
+import sys
+
+# On Python 3.8+ Windows changed DLL loading — PATH is no longer searched.
+# Inside a PyInstaller bundle torch's own add_dll_directory points to the
+# wrong path, so c10.dll fails with WinError 1114.  Fix: register torch/lib
+# explicitly before any import touches it.
+if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+    _torch_lib = os.path.join(sys._MEIPASS, "torch", "lib")
+    if os.path.isdir(_torch_lib):
+        os.environ["PATH"] = _torch_lib + os.pathsep + os.environ.get("PATH", "")
+        if hasattr(os, "add_dll_directory"):
+            try:
+                os.add_dll_directory(_torch_lib)
+            except OSError:
+                pass
+
 try:
     import torch  # noqa: F401
 except Exception:
     pass
-import sys
 import runpy
 
 if __name__ == '__main__':
