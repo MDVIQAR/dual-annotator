@@ -163,7 +163,7 @@ class VersionCard(QFrame):
         r2.setStyleSheet(f"color:{_MUTED};font-size:10px;")
         layout.addWidget(r2)
 
-        r3 = QLabel(f"Best loss: {_fmt_loss(summary.get('best_val_loss'))}  "
+        r3 = QLabel(f"Best IoU: {_fmt_loss(summary.get('best_val_iou'))}  "
                     f"{_fmt_date(summary.get('started_at', ''))}")
         r3.setStyleSheet(f"color:{_MUTED};font-size:10px;")
         layout.addWidget(r3)
@@ -1003,16 +1003,22 @@ class RegistryTab(QWidget):
 
         mx  = manifest.get("metrics", {})
         bvl = mx.get("best_val_loss")
+        bvi = mx.get("best_val_iou")
         bep = mx.get("best_epoch")
         ftl = mx.get("final_train_loss")
+        fvi = mx.get("final_val_iou")
         if bvl is None and ftl is None:
             self._d_mx_best.setText("No metrics recorded")
             self._d_mx_best.setStyleSheet(f"color:{_MUTED};")
             self._d_mx_final.setText("")
         else:
             self._d_mx_best.setStyleSheet(f"color:{_TEXT};")
-            self._d_mx_best.setText(f"Best Val Loss: {_fmt_loss(bvl)}   @ Epoch {bep or '—'}")
-            self._d_mx_final.setText(f"Final Train Loss: {_fmt_loss(ftl)}")
+            self._d_mx_best.setText(
+                f"Best Val Loss: {_fmt_loss(bvl)}   Best Val IoU: {_fmt_loss(bvi)}   @ Epoch {bep or '—'}"
+            )
+            self._d_mx_final.setText(
+                f"Final Train Loss: {_fmt_loss(ftl)}   Final Val IoU: {_fmt_loss(fvi)}"
+            )
 
         art     = manifest.get("artifacts", {})
         weights = art.get("weights")
