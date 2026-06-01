@@ -30,6 +30,7 @@ ultralytics>=8.0.0
 
 # ── ONNX export / inference ───────────────────────────────────────────────────
 onnx>=1.14.0
+onnxscript                  # required by torch.onnx.export in PyTorch 2.x
 onnxruntime>=1.16.0         # CPU inference; use onnxruntime-gpu for GPU
 
 # ── Visualisation (training loss/IoU chart) ───────────────────────────────────
