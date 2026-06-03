@@ -33,6 +33,11 @@ jobs:
           Copy-Item "C:\Windows\System32\vcruntime140_1.dll" -Destination vcruntime140_1.dll
           Copy-Item "C:\Windows\System32\msvcp140.dll"       -Destination msvcp140.dll
 
+      - name: Copy onnxscript as raw source for bundling
+        run: |
+          $loc = (pip show onnxscript | Select-String "^Location:").ToString().Split(": ", 2)[1].Trim()
+          Copy-Item "$loc\onnxscript" -Destination "onnxscript_src" -Recurse -Force
+
       - name: Build folder version
         run: |
           pyinstaller --onedir --windowed --name DualAnnotator `
@@ -41,13 +46,12 @@ jobs:
             --collect-all ultralytics `
             --collect-all segmentation_models_pytorch `
             --collect-all albumentations `
-            --hidden-import onnxscript `
-            --collect-data onnxscript `
             --hidden-import pytorch_lightning `
             --hidden-import torchmetrics `
             --hidden-import onnxruntime `
             --exclude-module onnx.reference `
             --add-data "mlops/scripts;mlops/scripts" `
+            --add-data "onnxscript_src;onnxscript" `
             --add-binary "vcruntime140.dll;." `
             --add-binary "vcruntime140_1.dll;." `
             --add-binary "msvcp140.dll;." `
