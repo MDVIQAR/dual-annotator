@@ -33,25 +33,6 @@ jobs:
           Copy-Item "C:\Windows\System32\vcruntime140_1.dll" -Destination vcruntime140_1.dll
           Copy-Item "C:\Windows\System32\msvcp140.dll"       -Destination msvcp140.dll
 
-      - name: Build single .exe (portable)
-        run: |
-          pyinstaller --onefile --windowed --name DualAnnotator-portable `
-            --collect-all torch `
-            --collect-all torchvision `
-            --collect-all ultralytics `
-            --collect-all segmentation_models_pytorch `
-            --collect-all albumentations `
-            --hidden-import onnxscript `
-            --hidden-import pytorch_lightning `
-            --hidden-import torchmetrics `
-            --hidden-import onnxruntime `
-            --exclude-module onnx.reference `
-            --add-data "mlops/scripts;mlops/scripts" `
-            --add-binary "vcruntime140.dll;." `
-            --add-binary "vcruntime140_1.dll;." `
-            --add-binary "msvcp140.dll;." `
-            main.py
-
       - name: Build folder version
         run: |
           pyinstaller --onedir --windowed --name DualAnnotator `
@@ -60,7 +41,8 @@ jobs:
             --collect-all ultralytics `
             --collect-all segmentation_models_pytorch `
             --collect-all albumentations `
-            --hidden-import onnxscript `
+            --collect-all onnxscript `
+            --exclude-module onnxscript.version_converter `
             --hidden-import pytorch_lightning `
             --hidden-import torchmetrics `
             --hidden-import onnxruntime `
@@ -79,17 +61,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/DualAnnotator-portable.exe
             dist/DualAnnotator-folder.zip
           body: |
             ## DualAnnotator ${{ github.ref_name }}
 
-            ### Download Options:
-            - **DualAnnotator-portable.exe** — Single file, no install needed. Just double-click.
-            - **DualAnnotator-folder.zip** — Extract and run. Faster launch time.
-
-            ### First time? Read this first:
-            Download the portable `.exe` — simplest option.
+            ### How to install:
+            1. Download **DualAnnotator-folder.zip**
+            2. Extract the zip anywhere (e.g. Desktop)
+            3. Open the extracted folder and double-click **DualAnnotator.exe**
 
             ### Requirements (for training to work):
             1. **Google Drive Desktop** must be installed and the shared drive must be mounted (the app saves trained models there).
