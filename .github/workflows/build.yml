@@ -50,6 +50,7 @@ jobs:
             --hidden-import torchmetrics `
             --hidden-import onnxruntime `
             --exclude-module onnx.reference `
+            --exclude-module onnxscript `
             --add-data "mlops/scripts;mlops/scripts" `
             --add-data "onnxscript_src;onnxscript" `
             --add-binary "vcruntime140.dll;." `
