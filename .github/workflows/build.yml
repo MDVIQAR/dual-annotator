@@ -27,6 +27,12 @@ jobs:
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
 
+      - name: Copy VC++ runtime DLLs for bundling
+        run: |
+          Copy-Item "C:\Windows\System32\vcruntime140.dll"   -Destination vcruntime140.dll
+          Copy-Item "C:\Windows\System32\vcruntime140_1.dll" -Destination vcruntime140_1.dll
+          Copy-Item "C:\Windows\System32\msvcp140.dll"       -Destination msvcp140.dll
+
       - name: Build single .exe (portable)
         run: |
           pyinstaller --onefile --windowed --name DualAnnotator-portable `
@@ -41,6 +47,9 @@ jobs:
             --hidden-import onnxruntime `
             --exclude-module onnx.reference `
             --add-data "mlops/scripts;mlops/scripts" `
+            --add-binary "vcruntime140.dll;." `
+            --add-binary "vcruntime140_1.dll;." `
+            --add-binary "msvcp140.dll;." `
             main.py
 
       - name: Build folder version
@@ -57,6 +66,9 @@ jobs:
             --hidden-import onnxruntime `
             --exclude-module onnx.reference `
             --add-data "mlops/scripts;mlops/scripts" `
+            --add-binary "vcruntime140.dll;." `
+            --add-binary "vcruntime140_1.dll;." `
+            --add-binary "msvcp140.dll;." `
             main.py
 
       - name: Zip folder version
@@ -81,4 +93,3 @@ jobs:
 
             ### Requirements (for training to work):
             1. **Google Drive Desktop** must be installed and the shared drive must be mounted (the app saves trained models there).
-            2. **Microsoft Visual C++ Redistributable** — install it if torch fails to load: https://aka.ms/vs/17/release/vc_redist.x64.exe

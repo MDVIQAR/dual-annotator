@@ -7,7 +7,15 @@ import sys
 # wrong path, so c10.dll fails with WinError 1114.  Fix: register torch/lib
 # explicitly before any import touches it.
 if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-    _torch_lib = os.path.join(sys._MEIPASS, "torch", "lib")
+    _bundle = sys._MEIPASS
+    # Register bundle root so bundled VC++ runtime DLLs are findable
+    if hasattr(os, "add_dll_directory"):
+        try:
+            os.add_dll_directory(_bundle)
+        except OSError:
+            pass
+    # Register torch/lib so c10.dll and friends can find each other
+    _torch_lib = os.path.join(_bundle, "torch", "lib")
     if os.path.isdir(_torch_lib):
         os.environ["PATH"] = _torch_lib + os.pathsep + os.environ.get("PATH", "")
         if hasattr(os, "add_dll_directory"):
