@@ -41,7 +41,7 @@ jobs:
             --collect-all ultralytics `
             --collect-all segmentation_models_pytorch `
             --collect-all albumentations `
-            --collect-all onnxscript `
+            --hidden-import onnxscript `
             --hidden-import pytorch_lightning `
             --hidden-import torchmetrics `
             --hidden-import onnxruntime `
@@ -60,7 +60,7 @@ jobs:
             --collect-all ultralytics `
             --collect-all segmentation_models_pytorch `
             --collect-all albumentations `
-            --collect-all onnxscript `
+            --hidden-import onnxscript `
             --hidden-import pytorch_lightning `
             --hidden-import torchmetrics `
             --hidden-import onnxruntime `
