@@ -53,9 +53,9 @@ jobs:
             --exclude-module onnxscript `
             --add-data "mlops/scripts;mlops/scripts" `
             --add-data "onnxscript_src;onnxscript" `
-            --add-binary "vcruntime140.dll;." `
-            --add-binary "vcruntime140_1.dll;." `
-            --add-binary "msvcp140.dll;." `
+            --add-binary "vcruntime140.dll;torch/lib" `
+            --add-binary "vcruntime140_1.dll;torch/lib" `
+            --add-binary "msvcp140.dll;torch/lib" `
             main.py
 
       - name: Zip folder version
