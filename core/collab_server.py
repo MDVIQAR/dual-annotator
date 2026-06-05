@@ -54,14 +54,15 @@ def decode_project_id(project_id: str):
 # ── Shared server state (passed to every request handler) ────────────────────
 
 class _ServerState:
-    def __init__(self, project_manager, on_join=None, on_leave=None):
-        self.pm          = project_manager       # ProjectManager instance
-        self.locks       = {}                    # {filename: username}
-        self.users       = {}                    # {username: last_active_ts}
-        self.activity    = []                    # [(timestamp, msg), …]
-        self._mu         = threading.Lock()
-        self._on_join    = on_join               # callable(username) or None
-        self._on_leave   = on_leave              # callable(username) or None
+    def __init__(self, project_manager, on_join=None, on_leave=None, on_classes_updated=None):
+        self.pm                  = project_manager
+        self.locks               = {}
+        self.users               = {}
+        self.activity            = []
+        self._mu                 = threading.Lock()
+        self._on_join            = on_join
+        self._on_leave           = on_leave
+        self._on_classes_updated = on_classes_updated
 
     def log(self, msg: str):
         self.activity.append((datetime.now().strftime("%H:%M:%S"), msg))
@@ -100,16 +101,45 @@ class _ServerState:
                 self.locks.pop(filename, None)
                 self.log(f"{username} released {filename}")
 
+    def merge_classes(self, incoming: list, username: str):
+        """Merge incoming classes into project_data; persist and notify if anything changed."""
+        if not self.pm.project_data:
+            return
+        with self._mu:
+            existing = {c["id"]: c for c in self.pm.project_data.get("classes", [])}
+            changed = False
+            for c in incoming:
+                if c["id"] not in existing:
+                    existing[c["id"]] = c
+                    self.log(f"{username} added class '{c['name']}'")
+                    changed = True
+                else:
+                    prev = existing[c["id"]]
+                    if prev.get("name") != c.get("name") or prev.get("color") != c.get("color"):
+                        existing[c["id"]] = c
+                        self.log(f"{username} updated class '{c['name']}'")
+                        changed = True
+            if changed:
+                merged = list(existing.values())
+                self.pm.project_data["classes"] = merged
+                self.pm.update_project_classes(merged)
+                classes_snapshot = list(merged)
+        if changed and self._on_classes_updated:
+            self._on_classes_updated(classes_snapshot)
+
     def snapshot(self) -> dict:
         with self._mu:
             statuses = {}
+            classes  = []
             if self.pm.project_data:
                 statuses = dict(self.pm.project_data.get("image_statuses", {}))
+                classes  = list(self.pm.project_data.get("classes", []))
             return {
                 "locks":    dict(self.locks),
                 "statuses": statuses,
                 "users":    list(self.users.keys()),
                 "activity": self.activity[-30:],
+                "classes":  classes,
             }
 
 
@@ -238,6 +268,12 @@ def _make_handler(state: _ServerState):
                 state.unregister_user(username)
                 self._send_json({"ok": True})
 
+            elif p == "/api/classes":
+                username = body.get("user", "unknown")
+                classes  = body.get("classes", [])
+                state.merge_classes(classes, username)
+                self._send_json({"ok": True})
+
             else:
                 self._send_json({"error": "unknown endpoint"}, 404)
 
@@ -256,11 +292,12 @@ class _ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 class CollabServer(QThread):
     """Runs the collaboration HTTP server in a background thread."""
 
-    started_ok   = pyqtSignal(str, int)   # local_ip, port
-    start_error  = pyqtSignal(str)
-    user_joined  = pyqtSignal(str)        # username
-    user_left    = pyqtSignal(str)        # username
-    activity_msg = pyqtSignal(str)        # log message
+    started_ok       = pyqtSignal(str, int)   # local_ip, port
+    start_error      = pyqtSignal(str)
+    user_joined      = pyqtSignal(str)        # username
+    user_left        = pyqtSignal(str)        # username
+    activity_msg     = pyqtSignal(str)
+    classes_updated  = pyqtSignal(list)       # full merged classes list
 
     def __init__(self, project_manager, port: int = 8765, parent=None):
         super().__init__(parent)
@@ -279,6 +316,7 @@ class CollabServer(QThread):
                 self.project_manager,
                 on_join=self.user_joined.emit,
                 on_leave=self.user_left.emit,
+                on_classes_updated=self.classes_updated.emit,
             )
             handler_cls  = _make_handler(self._state)
             self._server = _ThreadedHTTPServer(("0.0.0.0", self.port), handler_cls)

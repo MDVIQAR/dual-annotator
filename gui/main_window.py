@@ -433,11 +433,12 @@ class MainWindow(QMainWindow):
         self.collab_mode = "host"
         self.status_bar.showMessage(
             f"🖥️  Hosting session  ·  Project ID: {project_id}  ·  Port: {port}", 0)
-        # Wire join/leave notifications — server thread is started by now
+        # Wire join/leave and class-sync notifications
         srv = self.collab_tab._server
         if srv:
             srv.user_joined.connect(lambda u: self._notify_collab(f"👤 {u} joined the session"))
             srv.user_left.connect(lambda u: self._notify_collab(f"👋 {u} left the session"))
+            srv.classes_updated.connect(self._on_collab_classes_updated)
 
     def _on_session_joined(self, project_data: dict, client):
         """Called by CollabTab when this instance joins as a client."""
@@ -476,10 +477,11 @@ class MainWindow(QMainWindow):
         self.tab_widget.setCurrentWidget(self.annotate_tab)
         self.status_bar.showMessage(
             f"🔗  Joined session as '{client.username}'  ·  {len(images)} images", 0)
-        # Wire join/leave notifications from the sync poller
+        # Wire join/leave and class-sync notifications from the sync poller
         if client._poller:
             client._poller.user_joined.connect(lambda u: self._notify_collab(f"👤 {u} joined the session"))
             client._poller.user_left.connect(lambda u: self._notify_collab(f"👋 {u} left the session"))
+            client._poller.classes_updated.connect(self._on_collab_classes_updated)
 
     def _on_session_stopped(self):
         """Called when host stops server or client disconnects."""
@@ -1094,6 +1096,7 @@ class MainWindow(QMainWindow):
         self.data_prep_tab.open_in_training.connect(self._on_open_in_training)
         self.training_tab.training_completed.connect(self.registry_tab.refresh_csv)
         self.training_tab.training_completed.connect(self.export_test_tab.prefill_from_version)
+        self.training_tab.onnx_exported.connect(self.export_test_tab.prefill_from_version)
 
     def _on_retrain_requested(self, payload: dict):
         self.training_tab.load_from_manifest(payload)
@@ -1279,7 +1282,7 @@ class MainWindow(QMainWindow):
             }
         """)
         self.template_combo.addItem("-- No template --")
-        self.template_combo.currentIndexChanged.connect(self.on_template_selected)
+        self.template_combo.activated.connect(self.on_template_selected)
         layout.addWidget(self.template_combo)
         
         # Delete selected template button
@@ -1406,11 +1409,18 @@ class MainWindow(QMainWindow):
         
         lower_layout.addWidget(self.create_separator())
         
+        files_header_row = QHBoxLayout()
         files_label = QLabel("IMAGE FILES")
         files_label.setObjectName("section")
         files_label.setAlignment(Qt.AlignLeft)
         files_label.setStyleSheet("border: none;")
-        lower_layout.addWidget(files_label)
+        files_header_row.addWidget(files_label)
+        files_header_row.addStretch()
+        nav_hint = QLabel("◀ A / D ▶")
+        nav_hint.setStyleSheet("color: #888888; font-size: 10px; border: none;")
+        nav_hint.setToolTip("Use A / D keys to navigate images")
+        files_header_row.addWidget(nav_hint)
+        lower_layout.addLayout(files_header_row)
         
         # Search Box
         self.search_box = QLineEdit()
@@ -1422,8 +1432,15 @@ class MainWindow(QMainWindow):
         """)
         lower_layout.addWidget(self.search_box)
         
-        # File list widget
-        self.file_list = QListWidget()
+        # File list widget — arrow keys disabled (use A/D to navigate)
+        class _FileList(QListWidget):
+            def keyPressEvent(self, event):
+                if event.key() in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right):
+                    event.ignore()
+                    return
+                super().keyPressEvent(event)
+
+        self.file_list = _FileList()
         self.file_list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.file_list.itemClicked.connect(self.on_file_selected)
         lower_layout.addWidget(self.file_list, 1) # Set stretch to 1 here
@@ -1537,6 +1554,7 @@ class MainWindow(QMainWindow):
             idx = self.template_combo.findText(f"📋 {select_name}")
             if idx >= 0:
                 self.template_combo.setCurrentIndex(idx)
+                self.on_template_selected(idx)
     
     def on_template_selected(self, index):
         """Handle template selection from dropdown"""
@@ -1765,6 +1783,7 @@ class MainWindow(QMainWindow):
     
     def load_images_from_folder(self, folder_path):
         """Load all image files from the selected folder"""
+        self.current_image_index = -1
         self.file_list.clear()
         self.image_files = []
         
@@ -2175,310 +2194,48 @@ class MainWindow(QMainWindow):
     
     def _on_classes_changed(self):
         """Called when classes are added, removed, or edited to keep project.json in sync."""
+        classes = [{"id": cls.id, "name": cls.name, "color": cls.color}
+                   for cls in self.class_manager.get_all_classes()]
+
         if hasattr(self, "project_manager") and self.project_manager.project_data:
-            classes = []
-            for cls in self.class_manager.get_all_classes():
-                classes.append({
-                    "id": cls.id,
-                    "name": cls.name,
-                    "color": cls.color
-                })
             self.project_manager.update_project_classes(classes)
 
+        # Push to server so all participants receive the new class list
+        if self.collab_mode == "client" and self.collab_client:
+            self.collab_client.push_classes(classes)
+
+    def _on_collab_classes_updated(self, classes_list: list):
+        """Merge a remotely-updated class list into the local class_manager and refresh the panel."""
+        from core.class_manager import ClassCategory
+        changed = False
+        for c in classes_list:
+            existing = self.class_manager.classes.get(c["id"])
+            if existing is None:
+                cls = ClassCategory(name=c["name"], color=c["color"], class_id=c["id"])
+                self.class_manager.classes[c["id"]] = cls
+                changed = True
+            elif existing.name != c["name"] or existing.color != c["color"]:
+                existing.name  = c["name"]
+                existing.color = c["color"]
+                changed = True
+        if changed:
+            self.class_panel.refresh_list()
+            self._notify_collab("🎨 Class list updated by a teammate")
+
     def show_about(self):
-        """Show detailed Help / About dialog"""
-        from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
-                                     QWidget, QPushButton, QListWidget, QSplitter, QTextBrowser)
-        from PyQt5.QtCore import Qt, QTimer
+        """Open the Help & Documentation page in the system browser."""
+        import webbrowser, sys, os
 
-        dlg = QDialog(self)
-        dlg.setWindowTitle("DualAnnotator Help & Reference")
-        dlg.resize(1100, 800) # Maximum detailed window size
-        dlg.setStyleSheet("""
-            QDialog { background-color: #1e1e1e; color: #ffffff; }
-            QListWidget { background-color: #161616; color: #aaa; border: 1px solid #333; font-size: 14px; padding: 5px; outline: none; }
-            QListWidget::item { padding: 12px; border-radius: 4px; margin-bottom: 2px;}
-            QListWidget::item:selected { background-color: #2a4a6a; color: white; font-weight: bold; }
-            QListWidget::item:hover { background-color: #2a2a2a; }
-            QTextBrowser { background-color: #1e1e1e; color: #e0e0e0; border: none; font-size: 14px; padding: 20px; line-height: 1.6;}
-            QPushButton { background-color: #2a4a6a; color: #ffffff; border: 1px solid #8ab4f8; border-radius: 4px; padding: 8px 30px; font-size: 14px; font-weight: bold;}
-            QPushButton:hover { background-color: #3a5a7a; }
-        """)
+        if getattr(sys, 'frozen', False):
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-        outer = QVBoxLayout(dlg)
-        
-        splitter = QSplitter(Qt.Horizontal)
-        
-        # Left navigation panel
-        nav_list = QListWidget()
-        nav_list.setFixedWidth(280)
-        nav_items = [
-            "0. ℹ️ About DualAnnotator",
-            "1. 📚 Getting Started",
-            "2. 🏷️ Class Management",
-            "3. 🖱️ Canvas Navigation",
-            "4. 🎨 Drawing Tools",
-            "5. ⭕ Hollow Shapes",
-            "6. 💾 Autosave & Projects",
-            "7. 📋 Auto-Annotation",
-            "8. 📤 Exporting Data",
-            "9. 🔥 RAW → PNG",
-            "10. ⌨️ Keyboard Shortcuts"
-        ]
-        nav_list.addItems(nav_items)
-        
-        # Right content panel
-        browser = QTextBrowser()
-        browser.setOpenExternalLinks(True)
-        # Prevent tracking issues during programmatic clicks
-        browser._programmatic_scroll = False
-        
-        html_content = """
-        <style>
-            body { font-family: 'Segoe UI', Arial, sans-serif; }
-            h1 { color: #8ab4f8; font-size: 24px; border-bottom: 1px solid #333; padding-bottom: 6px; margin-top: 35px; margin-bottom: 10px;}
-            h2 { color: #aac4f0; font-size: 17px; margin-top: 20px; margin-bottom: 8px;}
-            p, li { font-size: 14px; line-height: 1.5; color: #cccccc; margin-bottom: 8px; margin-top: 4px;}
-            code { background-color: #2a2a2a; color: #8ab4f8; padding: 2px 5px; border-radius: 4px; font-family: 'Consolas', monospace; font-size: 13px;}
-            .ui-btn { background-color: #333; color: white; border: 1px solid #555; padding: 1px 6px; border-radius: 3px; font-size: 12px; font-weight: bold; }
-            .important { color: #f0b429; font-weight: bold; }
-            ul { margin-top: 0px; padding-left: 20px;}
-            table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-            th { border-bottom: 2px solid #555; padding: 8px; text-align: left; color: #8ab4f8; font-size: 14px;}
-            td { border-bottom: 1px solid #333; padding: 8px; color: #ccc;}
-        </style>
-        
-        <h1 id="about" style="margin-top: 0px;">0. About DualAnnotator</h1>
-        <p>DualAnnotator is an advanced, high-performance desktop annotation tool designed specifically for building top-tier <b>YOLO Object Detection</b> and <b>U-Net Segmentation</b> datasets. It was created to solve the need for pixel-perfect contours and precise hollow topologies (like seals and gaskets) that web-based annotators struggle with.</p>
-        <p>Built purely in Python and PyQt5, it natively handles seamless UI manipulation across massive images, scientific thermal processing, and AI template matching.</p>
+        help_path = os.path.join(base_dir, 'docs', 'help.html')
 
-        <h1 id="getting-started">1. Getting Started & The Three Modes</h1>
-        <p>Welcome! DualAnnotator runs three entirely distinct rendering modes simultaneously. You can switch between them using the top toolbar: [Mode: YOLO / UNet / Concentric].</p>
-        
-        <h2>YOLO Mode (Object Detection)</h2>
-        <p>Purely for creating rapid bounding boxes. When exporting, it flattens everything and outputs identical <code>[Class X Y W H]</code> text files used natively by YOLO AI architectures.</p>
-        
-        <h2>U-Net Mode (Segmentation)</h2>
-        <p>For drawing pixel-perfect polygons and hollow geometric shapes. Outputs exact binary black-and-white (or multi-color) PNG Masks representing the real topography of the shapes.</p>
-
-        <h2>Concentric Zones Mode (Advanced Segmentation)</h2>
-        <p>A specialized rendering mode leveraging an <b>inner-wins cutout rule</b>. Any shape drawn will automatically "cut away" or subtract the territory of all previously-drawn shapes inside of it. It operates identical to U-Net's masking visually, but you can layer massive overlapping zones and the system mathematically handles the physical segmentation borders for you!</p>
-        
-        <p class="important">Note: Switching modes on an image asks if you want to 'Keep Both' or 'Hide Previous'. No data is lost! It simply hides irrelevant shapes so you can visually focus on what you're doing.</p>
-
-        <h1 id="class-management">2. Class Management Deep Dive</h1>
-        <p>Before you pick up a drawing tool immediately, you must specify what class you are targeting using the <b>Class Sidebar Panel</b>!</p>
-
-        <h2>Assigning & Reassigning Shapes</h2>
-        <ul>
-            <li><b>To Start Drawing:</b> Simply click a Class in the left sidebar. Any new polygons or boxes you draw will now belong to that class instantly.</li>
-            <li><b>To Reassign a Shape:</b> If you trace a huge shape and realize it's under the wrong name, select the shape with the pointer tool (<code>N</code>), and then literally <b>click the correct class in the left panel</b>. The shape's color will swap immediately, reassigning its memory!</li>
-        </ul>
-
-        <h2>Managing the List</h2>
-        <ul>
-            <li><b>Edit & Colors:</b> Hitting the [Edit] button dynamically updates all shapes mapped to that class across entirely active canvas seamlessly.</li>
-            <li><b>Dangerous Deletes:</b> If you delete a class in the manager, the app scans everything. Any existing geometries using that identity will become 'unassigned' and must be corrected!</li>
-            <li><b>Drag and Drop Priority:</b> Classes can be click-and-dragged up and down in the list to reorder them logically.</li>
-            <li><b>Automatic Hotkeys (1-9):</b> The system automatically maps keyboard numbers <code>1</code> through <code>9</code> to the first 9 positions in your list. Pressing <code>1</code> on your keyboard instantly equips the first class without mouse movement!</li>
-        </ul>
-
-        <h1 id="canvas-navigation">3. Canvas Navigation & Selection Secrets</h1>
-        <p>There are several hidden features for manipulating the workspace completely fluidly without clicking UI buttons.</p>
-
-        <h2>Pan Mode (Moving the Image)</h2>
-        <p>If you are zoomed into a massive 4K image, you don't need to use the scrollbars:</p>
-        <ul>
-            <li><b>Middle Mouse Button:</b> Simply click and hold your <b>Scroll Wheel (Mouse 3)</b> anywhere on the canvas and drag your mouse to pan around instantly!</li>
-            <li><b>Spacebar:</b> Hold <code>Spacebar</code> on your keyboard, then Left-Click and drag.</li>
-        </ul>
-
-        <h2>Advanced Selection Tool (N)</h2>
-        <p>Select the pointer arrow from the toolbar. You can click on objects to highlight them.</p>
-        <ul>
-            <li><b>Shift + Click:</b> Hold <code>Shift</code> and click multiple different shapes. They will all highlight at once, allowing you to move or delete the entire group simultaneously.</li>
-            <li><b>Marquee Select:</b> Left-click on an empty part of the background and drag your mouse to cast a dotted "Selection Box". Any shape caught inside the box will be added to your group selection!</li>
-            <li><b>Cloning:</b> Hold <code>Ctrl</code>, click an active shape, and drag it. An identical clone will peel off instantly!</li>
-        </ul>
-
-        <h2>Nudging & Scaling (Keyboard Precision)</h2>
-        <p>Don't use your mouse if you need pixel-perfect accuracy.</p>
-        <ul>
-            <li><b>Micro Nudge:</b> Select a shape and tap the <code>Arrow Keys</code>. It will move exactly 1 pixel per tap.</li>
-            <li><b>Macro Nudge:</b> Hold <code>Shift + Arrow Keys</code> to jump 10 pixels per tap.</li>
-            <li><b>Live Scaling:</b> Select a shape, hold <code>Shift</code>, and scroll your <b>Mouse Wheel</b>. The shape will artificially inflate or deflate smoothly!</li>
-        </ul>
-
-        <h1 id="drawing-tools">4. Drawing Tools</h1>
-        <h2>The Active Toolset</h2>
-        <ul>
-            <li><b>Box (B):</b> Standard click-and-drag bounding box.</li>
-            <li><b>Polygon (P):</b> Drop continuous anchor points. Press <code>Enter</code> or click the starting point to lock and fill it.</li>
-            <li><b>Bezier (Q):</b> Drop anchors, hit <code>Enter</code> to lock the skeleton, and then freely drag the Yellow Diamond mid-point handles to bend smooth, perfect contours!</li>
-            <li><b>Circle (C):</b> Click the center, drag outwards for radius.</li>
-            <li><b>Ellipse (E):</b> Click the center, drag outwards for width/height.</li>
-        </ul>
-
-        <h2>Point-Level Undo / Redo</h2>
-        <p>If you are drawing a complex 50-point polygon and you mess up the 49th point, you do not need to restart!</p>
-        <p>Simply press <code>Ctrl + Z</code> gracefully <b>while you are actively drawing</b>. It will instantly delete the last point you dropped. If you went too far, press <code>Ctrl + Y</code> to redo the point!</p>
-
-        <h1 id="hollow-shapes">5. Hollow Shapes (Cutouts)</h1>
-        <p>Perfect for seals, mechanical gaskets, donuts, or picture frames.</p>
-        <h2>Creation</h2>
-        <p>You can hollow out <b>any</b> solid shape via the right-click context menu:</p>
-        <ul>
-            <li><b>Create Inner Shape:</b> Cores out the insides. A popup thickness slider window will appear allowing you to visually adjust the inner-diameter wall interactively across the canvas!</li>
-            <li><b>Create Outer Shape:</b> Same concept, but leaves the current shape as the core and expands the boundaries outwards instead.</li>
-        </ul>
-        <h2>Modification</h2>
-        <p>You can delete a hollow cavity at any time by right-clicking the object and selecting <b>Remove Inner Cutout</b>.</p>
-        <p class="important">Note: YOLO does not natively understand true transparent holes. If you export a Hollow Shape under YOLO Mode, it will realistically just compute a flat bounding box framing the outermost perimeter.</p>
-
-        <h1 id="autosave-projects">6. Autosave & Projects</h1>
-        <h2>Continuous Autosave</h2>
-        <p>You never need to remember to press "Save"! The application secretly saves the exact state of your canvas <b>800ms</b> after your last mouse release, ensuring zero interruptions to your workflow.</p>
-        
-        <h2>The Hidden Folder Structure</h2>
-        <p>When you open an image folder, the app generates a hidden <code>.dualannotator</code> directory. <b>Do not delete this if you wish to keep your project.</b></p>
-        <ul>
-            <li><code>project.json</code>: Contains all UI states, class lists, and colors.</li>
-            <li><code>annotations/*.json</code>: Stores lossless exact JSON mathematical vector data of every annotation you drew.</li>
-        </ul>
-        <h2>Project Recovery</h2>
-        <p>Re-opening a folder automatically restores everything down to the exact classes and shapes. If an image is renamed directly in Windows Explorer, the app will flag a mismatch warning on the bottom status bar, but it preserves your data safely!</p>
-
-        <h1 id="templates-auto">7. Templates & Auto-Annotation</h1>
-        <h2>Template Stamping</h2>
-        <p>Tired of drawing the exact same complex mechanical widget repeatedly?</p>
-        <ol>
-            <li>Draw it perfectly once.</li>
-            <li>Right-click the shape and select <b>Save as Template</b>.</li>
-            <li>Select the <b>Stamp Tool (T)</b> from the toolbar. Ensure your template is selected in the dropdown.</li>
-            <li>Simply click anywhere on the canvas to instantly drop identical, fully-formed shapes!</li>
-        </ol>
-
-        <h2>Template Matching (Computer Vision Automation)</h2>
-        <p>You can leverage OpenCV to automate your annotation completely!</p>
-        <p>Right-click a shape and select <b>Trigger Template Matching</b>. A sidebar panel will slide open. Click <b>Run Detection</b>, and the app will actively scan the massive current image and attempt to auto-paint templates across the rest of the matching visual signatures. If it misses objects or predicts false-positives, simply drag the <b>Threshold Slider</b> to recalibrate the AI block matches!</p>
-
-        <h1 id="exporting">8. Exporting Data</h1>
-        <p>Press <code>Ctrl + E</code> to open the Universal Mass Exporter menu. You can export safely at any time, it does not interrupt your active work!</p>
-        <h2>The Formats</h2>
-        <ul>
-            <li><b>YOLO (Txt):</b> Flattens everything into minimal bounding boxes. Generates <code>classes.txt</code> and <code>data.yaml</code>.</li>
-            <li><b>UNet / Concentric (Mask PNG):</b> Flattens everything into solid binary masks. Handles true hollow topologies perfectly! Choose whether you want flat Black/White or Multi-Class Grayscale representations.</li>
-            <li><b>Pascal VOC (XML):</b> Classic historical format mapping coordinates to physical pixels.</li>
-            <li><b>COCO (Json):</b> Translates thousands of annotations into the massive industry standard <code>instances_train.json</code> COCO structure.</li>
-        </ul>
-        <h2>Time-Saving Export Deltas</h2>
-        <p>The app dynamically organizes your data into Train/Val/Test folders based on slider percentages. 
-        If you check <b>"Only export changes"</b>, the app ensures that unchanged images simply reuse existing heavy computations, saving you massive amounts of waiting time on huge datasets!</p>
-
-        <h1 id="raw-png">9. RAW → PNG Converter Tool</h1>
-        <p>A built-in heavy-duty Thermal Image converter to process raw 16-bit binary <code>.raw</code> data directly from specialized camera hardware!</p>
-        <ul>
-            <li><b>NumPy Thread Acceleration:</b> Converts thousands of 16-bit Little-Endian binaries to standard 8-bit PNGs instantly via background processing.</li>
-            <li><b>Interactive ROI Crop:</b> Look at the preview canvas! You can use your mouse to draw an active Region of Interest (Crop Box) over the sample image. Hitting "Convert" will physically enforce that crop limit across all folders!</li>
-            <li><b>Advanced Normalizations:</b> 
-                <ul>
-                    <li><b>Original (Defect Padding):</b> Mathematically matches older C++ software parameters. Enforces a strict padding threshold (up to 1000 values) on both extreme ends to prevent thermal outliers from destroying the image contrast.</li>
-                    <li><b>Robust Percentile:</b> Mathematically cuts off the upper and lower 1% of extreme outlier pixels, natively hiding broken dead sensor pixels.</li>
-                </ul>
-            </li>
-            <li><b>Colormaps:</b> Remaps standard grayscale heat values out into scientific visual filters like Inferno or Viridis directly during conversion!</li>
-        </ul>
-
-        <h1 id="shortcuts">10. Master Keyboard Shortcuts</h1>
-        <table>
-            <tr><th>Key</th><th>Function</th><th>Key</th><th>Function</th></tr>
-            <tr><td><code>1-9</code></td><td>Auto-select Class</td><td><code>Ctrl+Z</code></td><td>Undo Shape / <b>Mid-Draw Point</b></td></tr>
-            <tr><td><code>P</code></td><td>Draw Polygon</td><td><code>Ctrl+Y</code></td><td>Redo Shape / <b>Mid-Draw Point</b></td></tr>
-            <tr><td><code>Q</code></td><td>Draw Bezier Curve</td><td><code>Ctrl+C / V</code></td><td>Copy & Paste Selection</td></tr>
-            <tr><td><code>C / E</code></td><td>Draw Circle / Ellipse</td><td><code>Del / Backspace</code></td><td>Delete Selection</td></tr>
-            <tr><td><code>F / O / H</code></td><td>Draw Hollow Variants</td><td><code>Ctrl+Del</code></td><td>Wipe Entire Canvas</td></tr>
-            <tr><td><code>B</code></td><td>Draw Bounding Box</td><td><code>Ctrl+Drag</code></td><td>Clone Selection</td></tr>
-            <tr><td><code>N</code></td><td>Selection Pointer</td><td><code>Ctrl+A</code></td><td>Select All</td></tr>
-            <tr><td><code>T</code></td><td>Template Stamp Tool</td><td><code>Ctrl+F</code></td><td>Fit Image to Screen</td></tr>
-            <tr><td><code>A / D</code></td><td>Flip Prev/Next Image</td><td><code>+/-</code></td><td>Zoom In/Out</td></tr>
-            <tr><td><code>Tab</code></td><td>Jump to Unannotated</td><td><code>Middle Click / Space</code></td><td>Toggle Hand Pan Mode</td></tr>
-            <tr><td><code>Ctrl+E</code></td><td>Mass Exporter Menu</td><td><code>Arrows</code></td><td>Micro Nudge (1px)</td></tr>
-            <tr><td><code>Enter</code></td><td>Finish Polygons</td><td><code>Shift+Arrows</code></td><td>Macro Nudge (10px)</td></tr>
-            <tr><td><code>Shift+Scroll</code></td><td>Scale/Resize Shape</td><td><code>Shift+Click</code></td><td>Multi-select Shapes</td></tr>
-        </table>
-        
-        <br>
-        <p style="text-align:center; color:#555; font-size: 12px; margin-top:30px;">DualAnnotator Core Engine &nbsp;·&nbsp; Python 3.9+ &nbsp;·&nbsp; PyQt5 &nbsp;·&nbsp; OpenCV</p>
-        """
-        browser.setHtml(html_content)
-
-        # Pre-calculated scroll sync variables
-        nav_anchors = [
-            "about", "getting-started", "class-management", "canvas-navigation", "drawing-tools",
-            "hollow-shapes", "autosave-projects", "templates-auto",
-            "exporting", "raw-png", "shortcuts"
-        ]
-        
-        # When user clicks the left list, scroll to exactly that anchor.
-        def scroll_to_section(idx):
-            if idx < len(nav_anchors):
-                browser._programmatic_scroll = True
-                browser.scrollToAnchor(nav_anchors[idx])
-                # Reset programmatic lock shortly after to allow natural scroll tracking to resume
-                QTimer.singleShot(100, lambda: setattr(browser, '_programmatic_scroll', False))
-
-        nav_list.currentRowChanged.connect(scroll_to_section)
-        
-        # Bi-directional sync: As you scroll, update the left list highlights.
-        y_positions = []
-        
-        def track_scroll(val):
-            # Do not track if the scroll was commanded by the QListWidget click
-            if getattr(browser, '_programmatic_scroll', False):
-                return
-                
-            nonlocal y_positions
-            # Calculate the literal document Y bounds lazily on first scroll
-            if not y_positions:
-                doc = browser.document()
-                layout = doc.documentLayout()
-                headers = [
-                    "0. About DualAnnotator", "1. Getting Started", "2. Class Management", "3. Canvas Navigation",
-                    "4. Drawing Tools", "5. Hollow Shapes", "6. Autosave",
-                    "7. Templates", "8. Exporting", "9. RAW", "10. Master Keyboard"
-                ]
-                for h in headers:
-                    cursor = doc.find(h)
-                    if not cursor.isNull():
-                        y_positions.append(layout.blockBoundingRect(cursor.block()).y())
-                    else:
-                        y_positions.append(-1)
-                        
-            # Determine which header we are currently visually underneath
-            current_idx = 0
-            for i, pos_y in enumerate(y_positions):
-                if pos_y != -1 and val >= (pos_y - 20):  # 20px overlap buffer
-                    current_idx = i
-                    
-            if nav_list.currentRow() != current_idx:
-                nav_list.blockSignals(True)
-                nav_list.setCurrentRow(current_idx)
-                nav_list.blockSignals(False)
-                
-        browser.verticalScrollBar().valueChanged.connect(track_scroll)
-        
-        splitter.addWidget(nav_list)
-        splitter.addWidget(browser)
-        splitter.setSizes([280, 820])
-        
-        outer.addWidget(splitter)
-        
-        # Bottom Close Button
-        btn_lyt = QHBoxLayout()
-        btn = QPushButton("Close Reference")
-        btn.clicked.connect(dlg.accept)
-        btn_lyt.addStretch()
-        btn_lyt.addWidget(btn)
-        outer.addLayout(btn_lyt)
-
-        dlg.exec_()
+        if os.path.exists(help_path):
+            webbrowser.open(f'file:///{os.path.abspath(help_path).replace(os.sep, "/")}')
+        else:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Help Not Found",
+                                f"Could not locate help.html at:\n{help_path}")

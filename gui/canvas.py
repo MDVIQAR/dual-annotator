@@ -489,22 +489,34 @@ class AnnotationCanvas(QWidget):
         if not self.selected_shapes:
             return
         self.clipboard_shapes = [s.copy() for s in self.selected_shapes]
+        self.clipboard_shape = None  # clear single clipboard so group paste takes priority
         print(f"📋 Copied {len(self.clipboard_shapes)} shapes to clipboard")
 
-    def paste_group(self):
-        """Paste clipboard_shapes with a small offset."""
+    def paste_group(self, cursor_pos=None):
+        """Paste clipboard_shapes at cursor position (or with small offset if no cursor)."""
         if not getattr(self, 'clipboard_shapes', None):
             if self.clipboard_shape and self.pixmap and not self.pixmap.isNull():
-                cursor_pos = self.mapFromGlobal(self.cursor().pos())
-                self.start_paste(cursor_pos)
+                pos = cursor_pos or self.mapFromGlobal(self.cursor().pos())
+                self.start_paste(pos)
             return
         self.save_state()
-        offset_x = 20 / max(self.image_width, 1)
-        offset_y = 20 / max(self.image_height, 1)
         new_shapes = []
         for s in self.clipboard_shapes:
-            c = s.copy()
-            new_shapes.append(c)
+            new_shapes.append(s.copy())
+
+        # Determine move delta
+        if cursor_pos and self.image_width and self.image_height:
+            # Move group centroid to cursor
+            img_x, img_y = self.widget_to_image(cursor_pos)
+            cursor_nx = img_x / self.image_width
+            cursor_ny = img_y / self.image_height
+            centroid_x, centroid_y = self._shapes_centroid(new_shapes)
+            offset_x = cursor_nx - centroid_x
+            offset_y = cursor_ny - centroid_y
+        else:
+            offset_x = 20 / max(self.image_width, 1)
+            offset_y = 20 / max(self.image_height, 1)
+
         # Skip inner shapes whose outer is also being pasted (move() recurses)
         new_ids = set(id(c) for c in new_shapes)
         inner_ids_to_skip = set()
@@ -516,6 +528,7 @@ class AnnotationCanvas(QWidget):
             if id(c) not in inner_ids_to_skip and getattr(c, 'hollow_role', None) != 'inner':
                 if hasattr(c, 'move'):
                     c.move(offset_x, offset_y)
+
         self._clear_multi_selection()
         for s in new_shapes:
             s.selected = True
@@ -768,7 +781,14 @@ class AnnotationCanvas(QWidget):
         else:
             shape.attach_inner(inner)
         self.shapes.append(inner)
-            
+
+        # Select the newly created outer/inner composite shape
+        for s in self.shapes:
+            s.selected = False
+        inner.selected = True
+        self.selected_shape = inner
+        self.selected_shapes = [inner]
+
         self._hollow_preview_mode = None
         self._hollow_preview_shape = None
         self.annotation_changed.emit()  # AUTOSAVE INTEGRATION
@@ -2714,10 +2734,10 @@ class AnnotationCanvas(QWidget):
             return
         
         elif key == Qt.Key_V and event.modifiers() == Qt.ControlModifier:
+            cursor_pos = self.mapFromGlobal(self.cursor().pos())
             if getattr(self, 'clipboard_shapes', None):
-                self.paste_group()
+                self.paste_group(cursor_pos=cursor_pos)
             elif self.clipboard_shape and self.pixmap and not self.pixmap.isNull():
-                cursor_pos = self.mapFromGlobal(self.cursor().pos())
                 self.start_paste(cursor_pos)
             return
         
@@ -2806,12 +2826,13 @@ class AnnotationCanvas(QWidget):
         """Copy the selected shape to clipboard"""
         if self.selected_shape and hasattr(self.selected_shape, 'copy'):
             self.clipboard_shape = self.selected_shape.copy()
+            self.clipboard_shapes = []  # clear group clipboard so single paste takes priority
             shape_type = getattr(self.selected_shape, 'type', 'box')
             print(f"📋 Copied {shape_type}")
             return True
         else:
             print("⚠️ No shape selected to copy or copy not supported")
-            return False    
+            return False
     
     def start_paste(self, pos):
         """Start pasting a shape at cursor position"""
@@ -2996,14 +3017,17 @@ class AnnotationCanvas(QWidget):
     def finish_drag_copy(self):
         """Finish dragging copy"""
         if self.drag_copy and self.drag_copy_shape:
-            self.save_state()  # Save state for the new copy
+            self.save_state()
             print("✅ Drag copy completed")
+            # Keep the copied shape selected so nudge/deselect work immediately
+            self.selected_shape = self.drag_copy_shape
+            self.selected_shapes = [self.drag_copy_shape]
             self.drag_copy = False
             self.drag_copy_shape = None
             self.drag_start_pos = None
             self.original_shape = None
             self.resizing = False
-            self.annotation_changed.emit()  # AUTOSAVE INTEGRATION
+            self.annotation_changed.emit()
             self.update()
             return True
         return False
@@ -3992,16 +4016,41 @@ class AnnotationCanvas(QWidget):
         if self.selected_shape:
             self.save_template_from_shape(self.selected_shape)
     
+    def _shapes_centroid(self, shapes):
+        """Return normalized (cx, cy) centroid of a list of shapes."""
+        centers = []
+        for s in shapes:
+            if getattr(s, 'hollow_role', None) == 'inner':
+                continue
+            if hasattr(s, 'center_x') and hasattr(s, 'center_y'):
+                centers.append((s.center_x, s.center_y))
+            elif hasattr(s, 'x') and hasattr(s, 'y') and hasattr(s, 'width') and hasattr(s, 'height'):
+                centers.append((s.x + s.width / 2, s.y + s.height / 2))
+            elif hasattr(s, 'points') and s.points:
+                cx = sum(p[0] for p in s.points) / len(s.points)
+                cy = sum(p[1] for p in s.points) / len(s.points)
+                centers.append((cx, cy))
+        if not centers:
+            return 0.5, 0.5
+        return sum(c[0] for c in centers) / len(centers), sum(c[1] for c in centers) / len(centers)
+
     def paste_at_cursor(self, pos):
-        """Paste clipboard shape at cursor position"""
+        """Paste clipboard at cursor position — handles both single and group clipboard."""
+        if getattr(self, 'clipboard_shapes', None):
+            self.paste_group(cursor_pos=pos)
+            return
         if self.clipboard_shape and self.pixmap and not self.pixmap.isNull():
             image_x, image_y = self.widget_to_image(pos)
+            cursor_nx = image_x / self.image_width
+            cursor_ny = image_y / self.image_height
             pasted = self.clipboard_shape.copy()
-            pasted.move(
-                (image_x / self.image_width) - pasted.x if hasattr(pasted, 'x') else 0,
-                (image_y / self.image_height) - pasted.y if hasattr(pasted, 'y') else 0
-            )
+            cx, cy = self._shapes_centroid([pasted])
+            pasted.move(cursor_nx - cx, cursor_ny - cy)
             self.save_state()
             self.shapes.append(pasted)
+            pasted.selected = True
+            self.selected_shape = pasted
+            self.selected_shapes = [pasted]
+            self.annotation_changed.emit()
             self.update()
             print("📋 Shape pasted")

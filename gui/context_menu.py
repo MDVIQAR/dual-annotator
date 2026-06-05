@@ -105,8 +105,9 @@ class ShapeContextMenu(QMenu):
             self.addSeparator()
         
         # --- General actions ---
-        if canvas.clipboard_shape and local_pos:
-            paste_act = self.addAction("📋 Paste Shape (Ctrl+V)")
+        has_clipboard = canvas.clipboard_shape or getattr(canvas, 'clipboard_shapes', None)
+        if has_clipboard and local_pos:
+            paste_act = self.addAction("📋 Paste (Ctrl+V)")
             paste_act.triggered.connect(lambda: self.request_paste.emit(local_pos))
         
         if canvas.undo_stack:

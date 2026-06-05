@@ -1,77 +1,279 @@
 # Dual Annotator
 
-A desktop annotation tool for building YOLO object detection and U-Net segmentation datasets.
+A desktop application for annotating images and training YOLO / U-Net models — all in one place.
 Built with Python and PyQt5.
 
-## Features
-# Annotation:
+---
 
-YOLO mode — bounding box annotation for object detection
-UNet mode — segmentation annotation with solid and hollow shapes
-8 shape types — box, polygon, bezier curve, circle, ellipse, frame (hollow rect), donut (hollow circle), hollow ellipse
-Hollow shapes — create inner/outer offset shapes via right-click context menu with live preview
-Multi-class support — colour-coded classes with add/edit/delete
-Template system — save any shape as a reusable stamp template
+## What It Does
 
-Editing:
+Dual Annotator covers the full ML pipeline from raw images to a tested model:
 
-Copy, paste, and resize shapes
-Ctrl+drag to clone a shape
-Undo / redo (up to 50 steps)
-Pan (middle-click drag or Space) and zoom (scroll wheel)
-Right-click context menu on any shape
+1. **Convert** raw images (RAW → PNG)
+2. **Annotate** with 8 shape types across YOLO and U-Net modes
+3. **Prepare** a train/val/test dataset split
+4. **Train** a YOLO or U-Net model
+5. **Export** the trained model to ONNX and run inference on test images
+6. **Registry** to track all trained model versions
+7. **Collaborate** with teammates over a shared server
 
-Project & Save:
+---
 
-Open any image folder as a project
-Autosave — every annotation change is saved automatically (800ms debounce)
-Resume previous projects — annotations persist across sessions
-Per-image status tracking (unannotated / in progress / annotated / skipped)
-Image hash validation — warns if source image changes after annotation
+## Requirements
 
-Export (YOLO):
+- Python 3.9 or higher
+- Windows 10/11 (primary), macOS, Linux
+- Git
 
-Export annotated images as YOLO .txt label files
-Generates data.yaml and classes.txt automatically
-Train / val / test split with configurable percentages and fixed random seed
-Delta export — only re-exports images that changed since the last export
-Copies source images into the correct split folders
-Saves annotated image copies with bounding boxes drawn on them
-Additional formats: COCO JSON, Pascal VOC XML
+---
 
 ## Installation
-**Requirements:**
-- Python 3.9 or higher
-- Windows, macOS, or Linux
+
+### 1. Check Python
 
 ```bash
-# 1. Clone the repository
+python --version
+```
+
+If Python is not installed or below 3.9, download it from [python.org](https://www.python.org/downloads/).
+After installing, verify again:
+
+```bash
+python --version
+```
+
+### 2. Clone the repository
+
+```bash
 git clone https://github.com/MDVIQAR/dual-annotator.git
 cd dual-annotator
+```
 
-# 2. Create a virtual environment
+### 3. Create a virtual environment
+
+```bash
 python -m venv venv
+```
 
-# 3. Activate the virtual environment
-# Windows:
+### 4. Activate the virtual environment
+
+**Windows:**
+
+```bash
 venv\Scripts\activate
-# macOS / Linux:
+```
+
+**macOS / Linux:**
+
+```bash
 source venv/bin/activate
+```
 
-# 4. Install dependencies
+You should see `(venv)` in your terminal prompt.
+
+### 5. Install dependencies
+
+```bash
 pip install -r requirements.txt
+```
 
-# 5. Run
+### 6. Run
+
+```bash
 python main.py
 ```
 
+---
+
+## Tabs Overview
+
+| Tab | What it does |
+| --- | ------------ |
+| **RAW → PNG** | Batch convert RAW camera files to PNG with a preview gallery |
+| **Annotate** | Draw and manage annotations on images |
+| **Data Prep** | Build train/val/test splits and generate `dataset_info.json` |
+| **Train** | Configure hyperparameters and train YOLO or U-Net models |
+| **Export Test** | Export a trained model to ONNX and run inference on test images |
+| **Registry** | Browse all trained model versions with metrics and metadata |
+| **Coin Rotator** | Specialized tool for rotational image augmentation |
+| **Settings** | App-wide preferences |
+| **Collaborate** | Connect to a shared server to annotate with teammates |
+
+---
+
+## Annotation
+
+### Modes
+
+- **YOLO mode** — bounding box annotation for object detection
+- **UNet mode** — segmentation annotation with solid and hollow shapes
+
+### Shape Types
+
+| Key | Shape |
+| --- | ----- |
+| `B` | Bounding Box |
+| `P` | Polygon |
+| `Q` | Bezier Polygon |
+| `C` | Circle |
+| `E` | Ellipse |
+| `F` | Frame (hollow rectangle) |
+| `O` | Donut (hollow circle) |
+| `H` | Hollow Ellipse |
+
+### Hollow Shapes
+
+Right-click any shape → **Create Inner Shape** or **Create Outer Shape**.
+A thickness slider gives a live preview before confirming.
+
+### Templates
+
+Right-click a shape → **Save as Template** to store it as a reusable stamp.
+Select a template from the dropdown and click anywhere to place it.
+
+### Editing
+
+- **Resize** — drag any handle
+- **Move** — drag the interior
+- **Nudge** — arrow keys (configurable step size)
+- **Clone** — Ctrl + drag
+- **Copy / Paste** — Ctrl+C / Ctrl+V (pastes at cursor position)
+- **Multi-select** — rubber band drag, then move or copy the group
+- **Undo / Redo** — Ctrl+Z / Ctrl+Y (50 steps)
+
+### Navigation
+
+- **A / D** — previous / next image
+- **Tab** — jump to next unannotated image
+- **Scroll wheel** — zoom in/out
+- **Middle-click drag or Space** — pan
+- **Ctrl+0** — fit image to screen
+
+### Autosave
+
+Every change saves automatically. There is no Save button.
+Annotations are stored in a hidden `.dualannotator/` folder inside the image directory — they travel with the images if you move the folder.
+
+```text
+your_images/
+├── image_001.jpg
+├── image_002.jpg
+└── .dualannotator/
+    ├── project.json
+    └── annotations/
+        ├── image_001.jpg.json
+        └── image_002.jpg.json
+```
+
+---
+
+## Export (Annotations)
+
+**File → Export Annotations… (Ctrl+E)**
+
+Supported formats:
+
+- **YOLO** — `.txt` label files + `data.yaml` + `classes.txt`
+- **COCO JSON**
+- **Pascal VOC XML**
+
+Features:
+
+- Configurable train / val / test split with fixed random seed
+- Delta export — only re-exports images that changed since last export
+- Annotated image copies with shapes drawn on them
+
+YOLO output structure:
+
+```text
+exports/yolo_2026-06-05/
+├── images/
+│   ├── train/
+│   ├── val/
+│   └── test/
+├── labels/
+│   ├── train/
+│   ├── val/
+│   └── test/
+├── annotated/
+├── data.yaml
+└── classes.txt
+```
+
+---
+
+## Training Pipeline
+
+1. **Data Prep tab** — point to your images and labels folders, set the split, click **Prepare Dataset**. Or use **Import Existing Dataset** if you already have a split.
+2. **Train tab** — pick YOLO or U-Net, set hyperparameters (epochs, batch size, learning rate, image size, etc.), run pre-flight checks, then click **Start Training**.
+3. Training metrics (loss, IoU / mAP) plot live as training runs.
+4. When training finishes, click **Export to ONNX** to produce a cross-platform model file.
+
+---
+
+## Export Test (Inference)
+
+Drop a trained version folder onto the Export Test tab (or browse to it).
+The tab auto-fills the model path (`best.pt`) and test images folder.
+Click **Run Inference** — results appear in a zoomable gallery.
+
+- Both `.pt` (PyTorch) and `.onnx` are accepted for inference.
+- ONNX models are exported at **opset 11** (IR version 6) for broad runtime compatibility.
+
+---
+
+## Registry
+
+All trained versions are listed with their metrics, hyperparameters, training date, and model type.
+You can compare versions and open any version folder directly.
+
+---
+
+## Collaboration
+
+Connect to a shared annotation server so multiple users can annotate the same dataset.
+The Collaborate tab handles connection, sync, and conflict resolution.
+
+---
+
+## Keyboard Shortcuts
+
+| Key | Action |
+| --- | ------ |
+| `B` | Bounding Box tool |
+| `P` | Polygon tool |
+| `Q` | Bezier Polygon tool |
+| `C` | Circle tool |
+| `E` | Ellipse tool |
+| `F` | Frame tool |
+| `O` | Donut tool |
+| `H` | Hollow Ellipse tool |
+| `A` / `D` | Previous / next image |
+| `Tab` | Next unannotated image |
+| `Space` | Toggle pan mode |
+| `Ctrl+0` | Fit image to screen |
+| `Ctrl+Z` | Undo |
+| `Ctrl+Y` | Redo |
+| `Ctrl+C` | Copy selected shape / group |
+| `Ctrl+V` | Paste at cursor |
+| `Ctrl+A` | Select all shapes |
+| `Ctrl+Drag` | Clone shape |
+| `Del` | Delete selected shape / group |
+| `Arrow keys` | Nudge selected shape |
+| `Ctrl+E` | Export annotations |
+| `Enter` | Finish polygon / bezier drawing |
+| `Esc` | Cancel drawing |
+
+---
+
+## Project Structure
+
+```text
 DualAnnotator/
 ├── main.py                        ← entry point
 ├── requirements.txt
-├── README.md
-├── .gitignore
 ├── core/
-│   ├── annotation.py              ← BoundingBox (YOLO bbox)
+│   ├── annotation.py              ← BoundingBox
 │   ├── bezier_shape.py            ← BezierPolygonShape
 │   ├── circle_shape.py            ← CircleShape
 │   ├── class_manager.py           ← ClassCategory, ClassManager
@@ -87,84 +289,30 @@ DualAnnotator/
 │       ├── yolo_exporter.py       ← YOLO .txt + data.yaml + classes.txt
 │       ├── coco_exporter.py       ← COCO JSON
 │       └── voc_exporter.py        ← Pascal VOC XML
-└── gui/
-    ├── canvas.py                  ← drawing canvas (AnnotationCanvas)
-    ├── class_panel.py             ← class list UI
-    ├── context_menu.py            ← right-click shape menu
-    ├── export_dialog.py           ← export settings dialog
-    ├── export_summary_dialog.py   ← post-export summary
-    ├── main_window.py             ← main application window
-    ├── mode_switch_dialog.py      ← YOLO ↔ UNet mode switch dialog
-    ├── shape_toolbar.py           ← left toolbar
-    └── thickness_dialog.py        ← hollow shape offset slider
+├── gui/
+│   ├── canvas.py                  ← drawing canvas
+│   ├── class_panel.py             ← class list UI
+│   ├── context_menu.py            ← right-click shape menu
+│   ├── main_window.py             ← main application window
+│   ├── shape_toolbar.py           ← left toolbar
+│   └── tabs/
+│       ├── raw_to_png_tab.py
+│       ├── data_prep_tab.py
+│       ├── training_tab.py
+│       ├── export_test_tab.py
+│       ├── registry_tab.py
+│       ├── collab_tab.py
+│       ├── coin_rotator_tab.py
+│       └── settings_tab.py
+└── mlops/
+    └── scripts/
+        ├── train_unet.py
+        ├── export_onnx.py
+        └── infer_unet.py
+```
 
-How It Works
-Annotation workflow
+---
 
-File → Open Image Folder — select a folder of images
-Select a class from the right panel (or add one with the + button)
-Select a shape tool from the left toolbar
-Draw on the canvas
-Annotations are saved automatically — no save button needed
+## License
 
-Hollow shapes
-Draw any shape, then right-click it and choose Create Inner Shape or
-Create Outer Shape. A slider lets you set the offset with a live preview.
-For YOLO export, hollow shapes export as the outer bounding box only.
-Exporting
-
-File → Export Annotations... (Ctrl+E)
-Choose format, output folder, and split percentages
-Click Export — runs in background, progress bar updates live
-A summary shows counts, split distribution, and opens the output folder
-
-Save file location
-Annotations are saved in a hidden .dualannotator/ folder inside your image
-directory. This folder travels with your images if you move the folder.
-your_images/
-├── image_001.jpg
-├── image_002.jpg
-└── .dualannotator/
-    ├── project.json
-    └── annotations/
-        ├── image_001.jpg.json
-        └── image_002.jpg.json
-
-Export output structure
-your_images/exports/yolo_2026-03-14_18-44/
-├── labels/
-│   ├── train/   image_001.txt ...
-│   ├── val/     image_007.txt ...
-│   └── test/    image_009.txt ...
-├── images/
-│   ├── train/   image_001.jpg ...
-│   ├── val/     ...
-│   └── test/    ...
-├── annotated/   image_001.jpg (with boxes drawn)
-├── data.yaml
-└── classes.txt
-
-
-Keyboard Shortcuts
-
-
-YOLO Label Format:
-Each .txt file contains one line per annotation:
-<class_index> <cx_norm> <cy_norm> <w_norm> <h_norm>
-
-All values are normalised to [0.0, 1.0]. For all shape types, the export
-uses the bounding box of the shape. Hollow shapes export the outer boundary
-bounding box only.
-
-Example data.yaml:
-path: /path/to/exports/yolo_2026-03-14/
-train: images/train
-val: images/val
-test: images/test
-nc: 3
-names:
-  - seal
-  - cap
-  - packet
-
-  
+MIT

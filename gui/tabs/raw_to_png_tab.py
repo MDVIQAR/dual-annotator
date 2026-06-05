@@ -751,6 +751,15 @@ class RawToPngTab(QWidget):
         norm_layout.addWidget(self.norm_combo)
         settings_layout.addLayout(norm_layout)
 
+        self.norm_note = QLabel("⚠ Not applied when Colormap is 'C++ Original' — that mode maps 16-bit values directly to its palette, bypassing normalization.")
+        self.norm_note.setWordWrap(True)
+        self.norm_note.setStyleSheet("color: #888; font-size: 10px; padding: 2px 0 4px 0;")
+        self.norm_note.setVisible(self.cmap_combo.currentText() == "C++ Original")
+        self.cmap_combo.currentTextChanged.connect(
+            lambda t: self.norm_note.setVisible(t == "C++ Original")
+        )
+        settings_layout.addWidget(self.norm_note)
+
         self.chk_downscale = QCheckBox("Downscale to 1080p limit")
         self.chk_downscale.setChecked(True)
         self.chk_downscale.setStyleSheet("color: #ccc;")
@@ -779,8 +788,19 @@ class RawToPngTab(QWidget):
         """)
         self.btn_cancel.clicked.connect(self._cancel_conversion)
 
+        self.btn_clear_all = QPushButton("🗑 Clear All")
+        self.btn_clear_all.setFixedHeight(36)
+        self.btn_clear_all.setFont(QFont("Segoe UI", 10))
+        self.btn_clear_all.setToolTip("Reset everything — folders, preview, gallery, and console")
+        self.btn_clear_all.setStyleSheet("""
+            QPushButton { background-color: #3a2a1a; color: #ffaa55; border: 1px solid #665533; border-radius: 5px; }
+            QPushButton:hover { background-color: #5a3a1a; }
+        """)
+        self.btn_clear_all.clicked.connect(self._clear_all)
+
         btn_row.addWidget(self.btn_run, 3)
         btn_row.addWidget(self.btn_cancel, 2)
+        btn_row.addWidget(self.btn_clear_all, 2)
         settings_layout.addLayout(btn_row)
 
         left_layout.addWidget(settings_group)
@@ -803,7 +823,8 @@ class RawToPngTab(QWidget):
         self.gallery_list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.gallery_list.setIconSize(QSize(140, 78))
         self.gallery_list.setSpacing(2)
-        self.gallery_list.setFixedHeight(280)
+        self.gallery_list.setMinimumHeight(150)
+        self.gallery_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.gallery_list.setStyleSheet("""
             QListWidget { background-color: #111; border: 1px solid #333; border-radius: 4px; color: #ccc; font-size: 11px; outline: none; }
             QListWidget::item { padding: 5px 4px; border-bottom: 1px solid #222; }
@@ -834,8 +855,7 @@ class RawToPngTab(QWidget):
         gallery_footer.addWidget(self.btn_open_annotate)
         gallery_layout.addLayout(gallery_footer)
 
-        left_layout.addWidget(gallery_group)
-        left_layout.addStretch()
+        left_layout.addWidget(gallery_group, stretch=1)
 
         # ===== RIGHT PANEL (Preview & Console) =====
         right_panel = QSplitter(Qt.Vertical)
@@ -858,6 +878,12 @@ class RawToPngTab(QWidget):
         
         roi_layout.addStretch()
         
+        self.btn_reset_roi = QPushButton("↺ Reset ROI")
+        self.btn_reset_roi.setStyleSheet(self._btn_style())
+        self.btn_reset_roi.setToolTip("Reset crop region to full image (Right-click canvas also works)")
+        self.btn_reset_roi.clicked.connect(self._reset_roi)
+        roi_layout.addWidget(self.btn_reset_roi)
+
         self.btn_fit = QPushButton("🔍 Fit to Screen")
         self.btn_fit.setStyleSheet(self._btn_style())
         self.btn_fit.setToolTip("Reset Zoom and Pan (Double-Click image also works)")
@@ -872,6 +898,7 @@ class RawToPngTab(QWidget):
         console_layout = QVBoxLayout(console_widget)
         console_layout.setContentsMargins(0, 10, 0, 0)
         
+        prog_row = QHBoxLayout()
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedHeight(25)
         self.progress_bar.setValue(0)
@@ -879,7 +906,16 @@ class RawToPngTab(QWidget):
             QProgressBar { border: 1px solid #333; border-radius: 4px; text-align: center; color: white; background-color: #1e1e1e; }
             QProgressBar::chunk { background-color: #8ab4f8; width: 10px; }
         """)
-        console_layout.addWidget(self.progress_bar)
+        prog_row.addWidget(self.progress_bar)
+
+        btn_clear_log = QPushButton("Clear Log")
+        btn_clear_log.setFixedHeight(25)
+        btn_clear_log.setFixedWidth(80)
+        btn_clear_log.setToolTip("Clear the console output and reset progress bar")
+        btn_clear_log.setStyleSheet("background-color: #2a2a2a; color: #aaa; border: 1px solid #444; border-radius: 4px; font-size: 10px;")
+        btn_clear_log.clicked.connect(self._clear_console)
+        prog_row.addWidget(btn_clear_log)
+        console_layout.addLayout(prog_row)
 
         self.console = QTextEdit()
         self.console.setReadOnly(True)
@@ -1045,11 +1081,19 @@ class RawToPngTab(QWidget):
         downscale = self.chk_downscale.isChecked()
         cam = self.cam_combo.currentText()
 
+        # If output folder already has PNGs, ask what to do
+        if os.path.isdir(out_dir) and glob.glob(os.path.join(out_dir, "*.png")):
+            new_out = self._ask_output_folder_action(out_dir)
+            if new_out is None:
+                return
+            out_dir = new_out
+            self.out_dir_input.setText(out_dir)
+
         self.btn_run.setEnabled(False)
         self.btn_cancel.setEnabled(True)
         self.progress_bar.setValue(0)
         self.console.clear()
-        
+
         # If the ROI is exactly the full image boundaries, set it to None to save processing
         roi_to_use = self.current_roi
         if roi_to_use and self.preview_canvas.img_w > 0:
@@ -1094,6 +1138,72 @@ class RawToPngTab(QWidget):
         )
         if reply == QMessageBox.Yes:
             self.conversion_completed.emit(out_dir)
+
+    def _clear_all(self):
+        if self.worker and self.worker.isRunning():
+            self.worker.stop()
+            self.worker.wait()
+            self.worker = None
+        self.in_dir_input.clear()
+        self.out_dir_input.clear()
+        self.preview_file = None
+        self.current_roi = None
+        self._gallery_folder = None
+        self.preview_canvas.image_pixmap = None
+        self.preview_canvas.roi = None
+        self.preview_canvas._img_array = None
+        self.preview_canvas.update()
+        self.gallery_list.clear()
+        self.gallery_count_label.setText("0 images")
+        self.btn_open_annotate.setEnabled(False)
+        self.console.clear()
+        self.console.append("System ready. Select a directory containing .raw or .tif files.")
+        self.progress_bar.setValue(0)
+        self.roi_status.setText("Region of Interest: Full Image (Right-click to reset)")
+        self.btn_run.setEnabled(True)
+        self.btn_cancel.setEnabled(False)
+
+    def _clear_console(self):
+        self.console.clear()
+        self.progress_bar.setValue(0)
+
+    def _reset_roi(self):
+        if self.preview_canvas.image_pixmap:
+            self.preview_canvas.roi = (0, 0, self.preview_canvas.img_w, self.preview_canvas.img_h)
+            self.preview_canvas.roi_changed.emit(self.preview_canvas.roi)
+            self.preview_canvas.update()
+
+    def _ask_output_folder_action(self, current_out_dir):
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Output Folder Already Has Files")
+        msg.setText(
+            f"The output folder already contains PNG files:\n{current_out_dir}\n\n"
+            "What would you like to do?"
+        )
+        btn_overwrite = msg.addButton("Overwrite (Same Folder)", QMessageBox.AcceptRole)
+        btn_auto     = msg.addButton("Auto-generate New Folder", QMessageBox.ActionRole)
+        btn_browse   = msg.addButton("Browse for Folder...",     QMessageBox.ActionRole)
+        msg.addButton("Cancel", QMessageBox.RejectRole)
+        msg.exec_()
+        clicked = msg.clickedButton()
+        if clicked == btn_overwrite:
+            return current_out_dir
+        if clicked == btn_auto:
+            return self._auto_generate_folder(current_out_dir)
+        if clicked == btn_browse:
+            folder = QFileDialog.getExistingDirectory(self, "Select Output Folder")
+            return folder if folder else None
+        return None
+
+    def _auto_generate_folder(self, base_dir):
+        base = base_dir
+        parts = base_dir.rsplit('_', 1)
+        if len(parts) == 2 and parts[1].isdigit():
+            base = parts[0]
+        counter = 2
+        while os.path.exists(f"{base}_{counter}"):
+            counter += 1
+        return f"{base}_{counter}"
 
     def _groupbox_style(self): return "QGroupBox { border: 1px solid #444; border-radius: 6px; margin-top: 12px; padding-top: 15px; color: #aaa; font-weight: bold; } QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }"
     def _input_style(self): return "background-color: #1e1e1e; color: white; border: 1px solid #444; border-radius: 4px; padding: 6px;"

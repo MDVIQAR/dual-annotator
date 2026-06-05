@@ -182,7 +182,12 @@ class _DropZone(QLabel):
         if not urls:
             self._reset()
             return
-        self._apply(urls[0].toLocalFile())
+        path = urls[0].toLocalFile()
+        tab = self.parent()
+        if tab and hasattr(tab, '_load_version_folder'):
+            tab._load_version_folder(path)
+        else:
+            self._apply(path)
 
     def _apply(self, path: str):
         info = _validate_folder(path)
@@ -562,6 +567,7 @@ class ExportTestTab(QWidget):
         self._gallery_layout.addStretch()
 
         self._scroll.setWidget(self._gallery_widget)
+        self._scroll.viewport().installEventFilter(self)
         lay.addWidget(self._scroll)
 
         return frame
@@ -583,6 +589,16 @@ class ExportTestTab(QWidget):
         for item in self._gallery_items:
             item.set_zoom(self._zoom_h, gallery_w)
 
+    def eventFilter(self, obj, event):
+        if obj is self._scroll.viewport() and event.type() == event.Wheel:
+            if event.modifiers() & Qt.ControlModifier:
+                if event.angleDelta().y() > 0:
+                    self._zoom_in()
+                else:
+                    self._zoom_out()
+                return True
+        return super().eventFilter(obj, event)
+
     # ── Browse actions ────────────────────────────────────────────────────────
 
     def _browse_folder(self):
@@ -591,8 +607,10 @@ class ExportTestTab(QWidget):
             self._load_version_folder(path)
 
     def _browse_onnx(self):
+        current = self._onnx_edit.text().strip()
+        start_dir = os.path.dirname(current) if current and os.path.exists(os.path.dirname(current)) else ""
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select Model", "",
+            self, "Select Model", start_dir,
             "Model files (*.pt *.onnx);;PyTorch (*.pt);;ONNX (*.onnx)"
         )
         if not path:
@@ -644,6 +662,7 @@ class ExportTestTab(QWidget):
         if os.path.isdir(test_images):
             self._test_edit.setText(test_images)
             self._out_edit.setText(os.path.join(test_images, "results"))
+        self._update_infer_btn()
 
     def _load_version_folder(self, path: str):
         info = _validate_folder(path)

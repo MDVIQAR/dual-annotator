@@ -85,6 +85,7 @@ def main():
                     model,
                     dummy,
                     out_path,
+                    dynamo          = False,
                     opset_version   = 11,
                     input_names     = ["input"],
                     output_names    = ["output"],

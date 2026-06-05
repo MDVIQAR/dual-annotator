@@ -336,6 +336,22 @@ class BezierPolygonShape(Shape):
                 self.points[idx] = (ox + dx / self.image_width, oy + dy / self.image_height)
                 result = True
 
+        elif handle_name.startswith('ctrl_inner_'):
+            idx = int(handle_name.split('_')[2])
+            if hasattr(self, '_inner_ctrl_origin') and idx < len(self._inner_ctrl_origin):
+                orig = self._inner_ctrl_origin[idx]
+                if orig is not None:
+                    ox, oy = orig
+                else:
+                    n = len(self.inner_points)
+                    j = (idx + 1) % n
+                    ox = (self.inner_points[idx][0] + self.inner_points[j][0]) / 2
+                    oy = (self.inner_points[idx][1] + self.inner_points[j][1]) / 2
+                if not hasattr(self, 'inner_control_points'):
+                    self.inner_control_points = [None] * len(self.inner_points)
+                self.inner_control_points[idx] = (ox + dx / self.image_width, oy + dy / self.image_height)
+                result = True
+
         elif handle_name.startswith('ctrl_'):
             idx = int(handle_name.split('_')[1])
             if idx < len(self._ctrl_origin):
@@ -356,36 +372,15 @@ class BezierPolygonShape(Shape):
             if hasattr(self, '_inner_origin') and 0 <= idx < len(self._inner_origin):
                 ox, oy = self._inner_origin[idx]
                 self.inner_points[idx] = (ox + dx / self.image_width, oy + dy / self.image_height)
-                
-                # move control points attached to this inner node along with it
                 if hasattr(self, 'inner_control_points') and self.inner_control_points:
                     inner_ctrl_orig = getattr(self, '_inner_ctrl_origin', [])
-                    # The control point preceding this vertex
                     prev_idx = (idx - 1) % len(self.inner_points)
                     if prev_idx < len(inner_ctrl_orig) and inner_ctrl_orig[prev_idx] is not None:
                         cox, coy = inner_ctrl_orig[prev_idx]
                         self.inner_control_points[prev_idx] = (cox + dx / self.image_width, coy + dy / self.image_height)
-                    # The control point succeeding this vertex
                     if idx < len(inner_ctrl_orig) and inner_ctrl_orig[idx] is not None:
                         cox, coy = inner_ctrl_orig[idx]
                         self.inner_control_points[idx] = (cox + dx / self.image_width, coy + dy / self.image_height)
-                result = True
-
-        elif handle_name.startswith('ctrl_inner_'):
-            idx = int(handle_name.split('_')[2])
-            if hasattr(self, '_inner_ctrl_origin') and idx < len(self._inner_ctrl_origin):
-                orig = self._inner_ctrl_origin[idx]
-                if orig is not None:
-                    ox, oy = orig
-                else:
-                    n = len(self.inner_points)
-                    j = (idx + 1) % n
-                    ox = (self.inner_points[idx][0] + self.inner_points[j][0]) / 2
-                    oy = (self.inner_points[idx][1] + self.inner_points[j][1]) / 2
-                
-                if not hasattr(self, 'inner_control_points'):
-                    self.inner_control_points = [None] * len(self.inner_points)
-                self.inner_control_points[idx] = (ox + dx / self.image_width, oy + dy / self.image_height)
                 result = True
 
         # If any inner or outer geometry changed and we have inner anchors/shapes,

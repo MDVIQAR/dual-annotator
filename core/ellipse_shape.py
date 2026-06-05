@@ -125,18 +125,27 @@ class EllipseShape(Shape):
                                     if not k.startswith('_') and k != 'id':
                                         setattr(self.inner_shape, k, v)
                                 return False
-                        elif len(res) == 4: # Ellipse or Box inside
-                            ix1, iy1, ix2, iy2 = res
-                            bcx = (ix1 + ix2) / 2
-                            bcy = (iy1 + iy2) / 2
-                            brx = abs(ix2 - ix1) / 2
-                            bry = abs(iy2 - iy1) / 2
-                            if abs(bcx - cx_o) + brx > rx_o - MIN_GAP or abs(bcy - cy_o) + bry > ry_o - MIN_GAP:
-                                restored = self.inner_shape.__class__.from_dict(old_state, (self.image_width, self.image_height))
-                                for k, v in restored.__dict__.items():
-                                    if not k.startswith('_') and k != 'id':
-                                        setattr(self.inner_shape, k, v)
-                                return False
+                        elif len(res) == 4:
+                            if getattr(self.inner_shape, 'type', None) == 'ellipse':
+                                cx_i, cy_i, rx_i, ry_i = res
+                                if abs(cx_i - cx_o) + rx_i > rx_o - MIN_GAP or abs(cy_i - cy_o) + ry_i > ry_o - MIN_GAP:
+                                    restored = self.inner_shape.__class__.from_dict(old_state, (self.image_width, self.image_height))
+                                    for k, v in restored.__dict__.items():
+                                        if not k.startswith('_') and k != 'id':
+                                            setattr(self.inner_shape, k, v)
+                                    return False
+                            else:
+                                ix1, iy1, ix2, iy2 = res
+                                bcx = (ix1 + ix2) / 2
+                                bcy = (iy1 + iy2) / 2
+                                brx = abs(ix2 - ix1) / 2
+                                bry = abs(iy2 - iy1) / 2
+                                if abs(bcx - cx_o) + brx > rx_o - MIN_GAP or abs(bcy - cy_o) + bry > ry_o - MIN_GAP:
+                                    restored = self.inner_shape.__class__.from_dict(old_state, (self.image_width, self.image_height))
+                                    for k, v in restored.__dict__.items():
+                                        if not k.startswith('_') and k != 'id':
+                                            setattr(self.inner_shape, k, v)
+                                    return False
                     return True
                 else:
                     return self.inner_shape.resize_from_handle(inner_handle, dx, dy)
@@ -188,14 +197,21 @@ class EllipseShape(Shape):
                 cx_i, cy_i, r_i = res
                 if abs(cx_i - new_cx) + r_i > new_rx - MIN_GAP or abs(cy_i - new_cy) + r_i > new_ry - MIN_GAP:
                     return False
-            elif len(res) == 4: # Ellipse or Box inside
-                ix1, iy1, ix2, iy2 = res
-                bcx = (ix1 + ix2) / 2
-                bcy = (iy1 + iy2) / 2
-                brx = abs(ix2 - ix1) / 2
-                bry = abs(iy2 - iy1) / 2
-                if abs(bcx - new_cx) + brx > new_rx - MIN_GAP or abs(bcy - new_cy) + bry > new_ry - MIN_GAP:
-                    return False
+            elif len(res) == 4:
+                if getattr(self.inner_shape, 'type', None) == 'ellipse':
+                    # (cx, cy, rx, ry) — convert to bounding box half-extents
+                    cx_i, cy_i, rx_i, ry_i = res
+                    if abs(cx_i - new_cx) + rx_i > new_rx - MIN_GAP or abs(cy_i - new_cy) + ry_i > new_ry - MIN_GAP:
+                        return False
+                else:
+                    # BoundingBox returns (x1, y1, x2, y2)
+                    ix1, iy1, ix2, iy2 = res
+                    bcx = (ix1 + ix2) / 2
+                    bcy = (iy1 + iy2) / 2
+                    brx = abs(ix2 - ix1) / 2
+                    bry = abs(iy2 - iy1) / 2
+                    if abs(bcx - new_cx) + brx > new_rx - MIN_GAP or abs(bcy - new_cy) + bry > new_ry - MIN_GAP:
+                        return False
 
         self.center_x = new_cx / self.image_width
         self.center_y = new_cy / self.image_height

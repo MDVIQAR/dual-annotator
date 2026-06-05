@@ -47,17 +47,19 @@ def _post(base_url: str, path: str, payload: dict, timeout: int = 10):
 
 class SyncPoller(QThread):
     """Polls /api/sync every 500ms and emits the result."""
-    synced      = pyqtSignal(dict)   # full sync snapshot
-    error       = pyqtSignal(str)
-    user_joined = pyqtSignal(str)    # username that just connected
-    user_left   = pyqtSignal(str)    # username that just disconnected
+    synced          = pyqtSignal(dict)   # full sync snapshot
+    error           = pyqtSignal(str)
+    user_joined     = pyqtSignal(str)    # username that just connected
+    user_left       = pyqtSignal(str)    # username that just disconnected
+    classes_updated = pyqtSignal(list)   # full merged class list when it changes
 
     def __init__(self, base_url: str, interval_ms: int = 500, parent=None):
         super().__init__(parent)
-        self.base_url    = base_url
-        self.interval_ms = interval_ms
-        self._running    = False
-        self._known_users = None   # None = not seeded yet (first poll is silent)
+        self.base_url         = base_url
+        self.interval_ms      = interval_ms
+        self._running         = False
+        self._known_users     = None   # None = not seeded yet (first poll is silent)
+        self._classes_hash    = None   # None = not seeded yet
 
     def run(self):
         self._running = True
@@ -65,15 +67,28 @@ class SyncPoller(QThread):
             try:
                 data = _get(self.base_url, "/api/sync", timeout=4)
                 self.synced.emit(data)
-                current = set(data.get("users", []))
+
+                # ── user join/leave detection ──────────────────────────────
+                current_users = set(data.get("users", []))
                 if self._known_users is None:
-                    self._known_users = current   # seed silently on first poll
+                    self._known_users = current_users
                 else:
-                    for u in current - self._known_users:
+                    for u in current_users - self._known_users:
                         self.user_joined.emit(u)
-                    for u in self._known_users - current:
+                    for u in self._known_users - current_users:
                         self.user_left.emit(u)
-                    self._known_users = current
+                    self._known_users = current_users
+
+                # ── class change detection ─────────────────────────────────
+                current_classes = data.get("classes", [])
+                classes_hash = str([(c.get("id"), c.get("name"), c.get("color"))
+                                    for c in current_classes])
+                if self._classes_hash is None:
+                    self._classes_hash = classes_hash   # seed silently
+                elif self._classes_hash != classes_hash:
+                    self._classes_hash = classes_hash
+                    self.classes_updated.emit(current_classes)
+
             except Exception as e:
                 self.error.emit(str(e))
             time.sleep(self.interval_ms / 1000.0)
@@ -219,6 +234,16 @@ class CollabClient:
                   {"user": self.username})
         except Exception:
             pass
+
+    def push_classes(self, classes_list: list) -> bool:
+        """Push the full class list to the server so all participants stay in sync."""
+        try:
+            _post(self.base_url, "/api/classes",
+                  {"user": self.username, "classes": classes_list})
+            return True
+        except Exception as e:
+            print(f"[CollabClient] push_classes error: {e}")
+            return False
 
     def get_sync(self) -> dict:
         """Manual one-shot sync."""

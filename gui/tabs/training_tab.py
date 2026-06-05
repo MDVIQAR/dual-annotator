@@ -552,6 +552,7 @@ def _make_collapsible(title: str, content: QWidget, collapsed: bool = False) -> 
 
 class TrainingTab(QWidget):
     training_completed = pyqtSignal(str)
+    onnx_exported = pyqtSignal(str)  # emitted with version folder path after successful ONNX export
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2362,6 +2363,8 @@ class TrainingTab(QWidget):
             self._rc_onnx_btn.setEnabled(False)
             self._rc_onnx_status.setText(f"best.onnx saved to: {self._last_version_folder}")
             self._rc_onnx_status.setStyleSheet("color: #4caf50; font-size: 11px;")
+            if self._last_version_folder:
+                self.onnx_exported.emit(self._last_version_folder)
         else:
             self._rc_onnx_btn.setText("⚙  Export to ONNX")
             self._rc_onnx_btn.setEnabled(True)
