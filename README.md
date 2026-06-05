@@ -29,17 +29,17 @@ Dual Annotator covers the full ML pipeline from raw images to a tested model:
 
 ## Installation
 
-### 1. Check Python
+### 1. Install Python 3.11.9
+
+This project requires **Python 3.11.9** exactly (other versions are untested or unsupported).
+
+Download: [python.org/downloads/release/python-3119](https://www.python.org/downloads/release/python-3119/)
+
+After installing, verify:
 
 ```bash
 python --version
-```
-
-If Python is not installed or below 3.9, download it from [python.org](https://www.python.org/downloads/).
-After installing, verify again:
-
-```bash
-python --version
+# Expected: Python 3.11.9
 ```
 
 ### 2. Clone the repository
@@ -49,10 +49,18 @@ git clone https://github.com/MDVIQAR/dual-annotator.git
 cd dual-annotator
 ```
 
-### 3. Create a virtual environment
+### 3. Create a virtual environment with Python 3.11
+
+**Windows:**
 
 ```bash
-python -m venv venv
+py -3.11 -m venv venv
+```
+
+**macOS / Linux:**
+
+```bash
+python3.11 -m venv venv
 ```
 
 ### 4. Activate the virtual environment

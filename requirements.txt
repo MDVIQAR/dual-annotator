@@ -1,6 +1,17 @@
 # ── Python version ────────────────────────────────────────────────────────────
-# Requires Python 3.11.x  (tested on 3.11.9)
-# Python 3.12+ is untested; Python <3.10 is unsupported.
+# Requires Python 3.11.9 (exact version used in development)
+# Python 3.12+ is untested; Python <3.11 is unsupported.
+# Download: https://www.python.org/downloads/release/python-3119/
+#
+# Create venv with the exact Python version (Windows):
+#   py -3.11 -m venv venv
+#   venv\Scripts\activate
+#   pip install -r requirements.txt
+#
+# macOS / Linux:
+#   python3.11 -m venv venv
+#   source venv/bin/activate
+#   pip install -r requirements.txt
 
 # ── GUI ───────────────────────────────────────────────────────────────────────
 PyQt5==5.15.10
