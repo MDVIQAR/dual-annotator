@@ -31,6 +31,15 @@ jobs:
       # collect_all("torch") in the spec grabs them from the torch wheel.
       # The runtime hook + main.py preloader handle DLL search paths at runtime.
 
+      - name: Copy all torch DLLs to staging folder
+        run: |
+          $torchLib = python -c "import torch, os; print(os.path.join(os.path.dirname(torch.__file__), 'lib'))"
+          Write-Host "Torch lib directory: $torchLib"
+          Write-Host "DLLs in torch/lib:"
+          Get-ChildItem "$torchLib\*.dll" | ForEach-Object { Write-Host "  $($_.Name) ($($_.Length) bytes)" }
+          New-Item -ItemType Directory -Force -Path "torch_dlls"
+          Copy-Item "$torchLib\*.dll" -Destination "torch_dlls\" -Force
+
       - name: Build with spec file
         run: |
           pyinstaller DualAnnotator.spec

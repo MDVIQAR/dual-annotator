@@ -47,7 +47,11 @@ for pkg in packages_to_collect:
 a = Analysis(
     ["main.py"],
     pathex=[],
-    binaries=all_binaries,
+    binaries=[
+        *all_binaries,
+        # Force-include ALL torch DLLs — collect_all misses some (e.g. asmjit.dll, fbgemm.dll)
+        ("torch_dlls/*.dll", "torch/lib"),
+    ],
     datas=[
         # Training / inference scripts (run via runpy in-process)
         ("mlops/scripts/*.py", "mlops/scripts"),
