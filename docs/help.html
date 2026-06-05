@@ -3335,6 +3335,7 @@
             <a class="sidebar-link" href="#dp-split">Train / Val Split</a>
             <a class="sidebar-link" href="#dp-prepare">Prepare Dataset</a>
             <a class="sidebar-link" href="#dp-import">Import Existing Dataset</a>
+            <a class="sidebar-link" href="#dp-datasetinfo">dataset_info.json</a>
 
           </nav>
         </aside>
@@ -3784,6 +3785,88 @@ Test/  (optional)
               <div class="tip-text">If a flat layout is detected (all images in one folder, no train/val split),
                 the Generate button stays disabled. Use <strong>Prepare Dataset</strong> above to split the dataset
                 first.</div>
+            </div>
+          </div>
+
+          <!-- ═══════ DATASET_INFO.JSON ═══════ -->
+          <div class="doc-section" id="dp-datasetinfo">
+            <div class="doc-section-label">Reference</div>
+            <h2>dataset_info.json</h2>
+            <p>Every time Data Prep runs — either via <strong>Prepare Dataset</strong> or <strong>Import Existing Dataset</strong> — it writes a <code>dataset_info.json</code> manifest file into the root of the output folder. The Training tab reads this file to verify the dataset and populate the run summary. Without it, the Training tab will not accept the folder.</p>
+
+            <div class="tip-box" style="border-left-color:#f87171;background:rgba(248,113,113,0.06);margin:16px 0;">
+              <div class="tip-icon">⚠️</div>
+              <div class="tip-text"><strong>Do not edit or delete this file.</strong> If it is missing or corrupted, re-run Data Prep on the same source folders to regenerate it.</div>
+            </div>
+
+            <h3 style="margin:24px 0 12px;font-size:15px;color:var(--text);">Fields written</h3>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px;">
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">project</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Project name from the Hierarchy section.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>"coin_detector"</code></div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">task_type</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Which model type this dataset is for.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>"yolo"</code> or <code>"unet"</code></div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">output_folder</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Absolute path to the staged dataset root on disk.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>"C:/GoogleDrive/.../dataset_v1"</code></div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">created_at</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">ISO 8601 timestamp of when Data Prep ran.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>"2025-06-01T14:32:07"</code></div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">train_count / val_count / test_count</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Number of images in each split. The Training tab displays these as the dataset summary.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>800 / 100 / 50</code></div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">class_names</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">List of class label strings. YOLO only — UNet stores an empty list since it uses binary masks.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>["head", "tail", "rim"]</code></div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">num_classes</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Count of unique classes. Derived from <code>class_names</code>. Always <code>0</code> for UNet.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>3</code></div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">sha256</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Hash of the dataset contents. Used by the Registry to detect duplicate datasets. Filled after preparation completes.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>"a3f9c2..."</code></div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">data_yaml</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Path to the YOLO <code>data.yaml</code> config file. Empty string for UNet datasets.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>"C:/GoogleDrive/.../data.yaml"</code></div>
+              </div>
+
+            </div>
+
+            <div class="img-dialog" style="margin:20px 0;">
+              <img src="assets/data-prep/datset.json.png" alt="dataset_info.json example" class="zoomable" onclick="openLightbox(this.src,'dataset_info.json — example file')">
+              <div class="img-caption">A typical <code>dataset_info.json</code> as written by Data Prep</div>
+            </div>
+
+            <div class="tip-box">
+              <div class="tip-icon">💡</div>
+              <div class="tip-text">The <code>data.yaml</code> file (YOLO only) is written alongside <code>dataset_info.json</code> and contains the folder paths and class names in the format YOLO training scripts expect. You do not need to edit it manually.</div>
             </div>
           </div>
 
@@ -4702,11 +4785,466 @@ Test/  (optional)
     </section>
 
     <section class="tab-section" id="tab-registry">
-      <div class="coming-soon">
-        <div class="coming-soon-icon">🗄️</div>
-        <h2>Registry — Coming Soon</h2>
-        <p>This section is being built. Check back shortly.</p>
-      </div>
+      <div class="tab-layout">
+
+        <!-- ── SIDEBAR ── -->
+        <aside class="doc-sidebar">
+          <div class="sidebar-title">Contents</div>
+          <nav class="sidebar-nav">
+
+            <div class="sidebar-section">Overview</div>
+            <a class="sidebar-link active" href="#reg-overview">What is the Registry?</a>
+
+            <div class="sidebar-section">Left Panel</div>
+            <a class="sidebar-link" href="#reg-modeltype">Model Type Filter</a>
+            <a class="sidebar-link" href="#reg-filters">Cascading Filters</a>
+            <a class="sidebar-link" href="#reg-cards">Version Cards</a>
+            <a class="sidebar-link" href="#reg-storage">Storage &amp; CSV</a>
+
+            <div class="sidebar-section">Detail View</div>
+            <a class="sidebar-link" href="#reg-detail">Version Detail</a>
+            <a class="sidebar-link" href="#reg-dataset">Dataset</a>
+            <a class="sidebar-link" href="#reg-hyperparams">Hyperparameters</a>
+            <a class="sidebar-link" href="#reg-metrics">Metrics</a>
+            <a class="sidebar-link" href="#reg-artifacts">Artifacts</a>
+            <a class="sidebar-link" href="#reg-crash">Crash Info</a>
+
+            <div class="sidebar-section">Actions</div>
+            <a class="sidebar-link" href="#reg-actions">Action Buttons</a>
+            <a class="sidebar-link" href="#reg-compare">Compare Mode</a>
+
+            <div class="sidebar-section">Reference</div>
+            <a class="sidebar-link" href="#reg-status">Status Badge Reference</a>
+
+          </nav>
+        </aside>
+
+        <!-- ── CONTENT ── -->
+        <div class="doc-content">
+
+          <!-- ═══════ OVERVIEW ═══════ -->
+          <div class="doc-section" id="reg-overview">
+            <div class="doc-section-label">Overview</div>
+            <h2>What is the Registry?</h2>
+            <p>The Registry is DualAnnotator's model version database. Every time you train a model — whether it completes, crashes, or is cancelled — a record is automatically written to Google Drive. The Registry tab lets you browse all those records, inspect their training details, compare two versions side-by-side, and take actions like re-exporting to ONNX or cloning a run to retrain.</p>
+
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:20px 0;">
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:16px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:6px;">Automatic</div>
+                <div style="color:var(--text-dim);font-size:13px;">Every training run creates a version record — no manual save needed. Completed, crashed, and cancelled runs are all tracked.</div>
+              </div>
+              <div style="background:#1a2318;border:1px solid var(--border);border-left:3px solid #81c784;border-radius:8px;padding:16px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:6px;">Structured</div>
+                <div style="color:var(--text-dim);font-size:13px;">Records are organised by Model Type → Project → ID → Variant → Camera. The cascading filter drills down to exactly the run you want.</div>
+              </div>
+              <div style="background:#1e1a2e;border:1px solid var(--border);border-left:3px solid #a78bfa;border-radius:8px;padding:16px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:6px;">Comparable</div>
+                <div style="color:var(--text-dim);font-size:13px;">Select any two versions and switch to Compare mode for a side-by-side diff of dataset, hyperparameters, and all metrics with colour-coded winners.</div>
+              </div>
+            </div>
+
+            <div class="tip-box" style="border-left-color:#f87171;background:rgba(248,113,113,0.06);">
+              <div class="tip-icon">⚠️</div>
+              <div class="tip-text"><strong>Google Drive required.</strong> The Registry reads from and writes to the Google Drive folder set in Settings. If that path is not configured, the left panel shows a warning and no versions are listed.</div>
+            </div>
+          </div>
+
+          <!-- ═══════ MODEL TYPE FILTER ═══════ -->
+          <div class="doc-section" id="reg-modeltype">
+            <div class="doc-section-label">Left Panel</div>
+            <h2>Model Type Filter</h2>
+            <p>At the top of the left panel are two toggle buttons — <strong>UNet</strong> and <strong>YOLO</strong>. Clicking one activates it (highlighted in blue) and loads only projects of that type into the cascading dropdowns. Clicking the same button again deselects it and resets the panel.</p>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:16px 0;">
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;">YOLO</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Shows all YOLO object-detection runs. Metrics focus on loss; IoU is shown when available.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. coin detection, defect detection</div>
+              </div>
+              <div style="background:#1a2318;border:1px solid var(--border);border-left:3px solid #81c784;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;">UNet</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Shows all UNet segmentation runs. Metrics include both Loss and IoU columns in Compare mode.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. mask segmentation, boundary detection</div>
+              </div>
+            </div>
+
+            <div class="tip-box">
+              <div class="tip-icon">💡</div>
+              <div class="tip-text">Only one model type can be active at a time. The dropdowns reset every time you switch types.</div>
+            </div>
+          </div>
+
+          <!-- ═══════ CASCADING FILTERS ═══════ -->
+          <div class="doc-section" id="reg-filters">
+            <div class="doc-section-label">Left Panel</div>
+            <h2>Cascading Filters</h2>
+            <p>Below the model type toggles are four dropdowns that narrow down the list step by step. Each dropdown is populated only after the one above it is selected — so <strong>ID</strong> options only appear once a <strong>Project</strong> is chosen, and so on.</p>
+
+            <div class="step-card">
+              <div class="step-num">1</div>
+              <div class="step-body">
+                <div class="step-title">Project</div>
+                <p class="step-desc">The top-level project name — e.g. <code>coin_detector</code>. Contains one or more Project IDs underneath it.</p>
+              </div>
+            </div>
+            <div class="step-card">
+              <div class="step-num">2</div>
+              <div class="step-body">
+                <div class="step-title">ID</div>
+                <p class="step-desc">A sub-grouping within the project — typically a date or experiment identifier. If only one ID exists it is auto-selected.</p>
+              </div>
+            </div>
+            <div class="step-card">
+              <div class="step-num">3</div>
+              <div class="step-body">
+                <div class="step-title">Variant</div>
+                <p class="step-desc">A named configuration variant — e.g. <code>baseline</code>, <code>augmented</code>. Auto-selected when only one exists.</p>
+              </div>
+            </div>
+            <div class="step-card">
+              <div class="step-num">4</div>
+              <div class="step-body">
+                <div class="step-title">Camera</div>
+                <p class="step-desc">The camera source for this run — e.g. <code>cam_A</code>, <code>overhead</code>. Once selected, all version cards for that leaf node are loaded into the list below.</p>
+              </div>
+            </div>
+
+            <div class="tip-box">
+              <div class="tip-icon">💡</div>
+              <div class="tip-text">These four levels match exactly the hierarchy you fill in when running Data Prep or Training. The folder structure on Google Drive mirrors this hierarchy.</div>
+            </div>
+          </div>
+
+          <!-- ═══════ VERSION CARDS ═══════ -->
+          <div class="doc-section" id="reg-cards">
+            <div class="doc-section-label">Left Panel</div>
+            <h2>Version Cards</h2>
+            <p>Once a Camera is selected, the scrollable list fills with one card per training run. Each card shows a quick summary — click any card to load its full detail in the right panel.</p>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:16px 0;">
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;">Version ID</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Auto-generated identifier for the run, shown in bold at the top of the card.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>v20250601_143207</code></div>
+              </div>
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;">Status Badge</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Colour-coded pill showing the run's outcome — completed, crashed, cancelled, etc. See Status Reference below.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <span style="background:#1b5e20;color:#4caf50;border-radius:3px;padding:1px 6px;font-size:11px;">COMPLETED</span></div>
+              </div>
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;">Architecture</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Model architecture used. For UNet, the encoder is shown in parentheses.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>Unet (resnet34)</code> or <code>yolov8n</code></div>
+              </div>
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;">Best IoU &amp; Date</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Best validation IoU achieved and the date the run started — for a quick at-a-glance comparison.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>Best IoU: 0.8712  Jun 1, 2025 14:32</code></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ═══════ STORAGE & CSV ═══════ -->
+          <div class="doc-section" id="reg-storage">
+            <div class="doc-section-label">Left Panel</div>
+            <h2>Storage &amp; CSV</h2>
+
+            <div class="step-card">
+              <div class="step-num" style="font-size:16px;">💾</div>
+              <div class="step-body">
+                <div class="step-title">Storage Usage</div>
+                <p class="step-desc">At the bottom of the left panel a small label shows the total disk space used by all versions under the currently selected Camera node — weights, ONNX files, and manifests combined.</p>
+              </div>
+            </div>
+            <div class="step-card">
+              <div class="step-num" style="font-size:16px;">📊</div>
+              <div class="step-body">
+                <div class="step-title">Refresh Models CSV</div>
+                <p class="step-desc">Clicking this button scans the entire registry and writes a <code>models_registry.csv</code> file to the Google Drive root. Each row is one version with all its hyperparameters and metrics — useful for filtering and sorting outside the app in Excel or Python.</p>
+              </div>
+            </div>
+
+            <div class="tip-box">
+              <div class="tip-icon">💡</div>
+              <div class="tip-text">The CSV is also refreshed automatically each time the Registry tab loads, so it is always up to date for any external tooling that reads it.</div>
+            </div>
+          </div>
+
+          <!-- ═══════ VERSION DETAIL ═══════ -->
+          <div class="doc-section" id="reg-detail">
+            <div class="doc-section-label">Detail View</div>
+            <h2>Version Detail</h2>
+            <p>Clicking a version card loads the right panel with the full manifest for that run. The detail view is divided into sections — Dataset, Hyperparameters, Metrics, Artifacts, and optionally Crash Info.</p>
+
+            <div class="step-card">
+              <div class="step-num" style="font-size:16px;">🏷️</div>
+              <div class="step-body">
+                <div class="step-title">Header — Version ID &amp; Status</div>
+                <p class="step-desc">The version ID is shown in bold at the top. The status badge sits beside it. Below the header is the <strong>commit message</strong> you typed before training — shown in italic muted text as a reminder of what this run was for.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- ═══════ DATASET SECTION ═══════ -->
+          <div class="doc-section" id="reg-dataset">
+            <div class="doc-section-label">Detail View</div>
+            <h2>Dataset</h2>
+            <p>The Dataset section of the detail view shows what data was used to train this version.</p>
+
+            <div class="step-card">
+              <div class="step-num" style="font-size:16px;">🔢</div>
+              <div class="step-body">
+                <div class="step-title">Image Counts</div>
+                <p class="step-desc">Train, Val, and Test image counts — taken from the <code>dataset_info.json</code> at the time of training.</p>
+              </div>
+            </div>
+            <div class="step-card">
+              <div class="step-num" style="font-size:16px;">🏷️</div>
+              <div class="step-body">
+                <div class="step-title">Classes</div>
+                <p class="step-desc">Class names and count. YOLO only — UNet runs show 0 classes since they use binary masks.</p>
+              </div>
+            </div>
+            <div class="step-card">
+              <div class="step-num" style="font-size:16px;">#</div>
+              <div class="step-body">
+                <div class="step-title">SHA-256 Hash</div>
+                <p class="step-desc">A hash of the dataset at training time. If the dataset folder still exists on this machine, the Registry reads its current <code>dataset_info.json</code> and compares hashes. If they differ, a yellow warning appears — meaning the dataset has been modified since this model was trained, so the version's performance may not reflect what training on the current data would produce.</p>
+              </div>
+            </div>
+            <div class="step-card">
+              <div class="step-num" style="font-size:16px;">📁</div>
+              <div class="step-body">
+                <div class="step-title">Dataset Path</div>
+                <p class="step-desc">The absolute path to the staged dataset folder. If the folder is found on this machine, the path is shown with a folder icon and the <strong>Open Dataset Folder</strong> button is enabled. If not found (e.g. on a different machine), it shows "Dataset not found on this machine".</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- ═══════ HYPERPARAMETERS ═══════ -->
+          <div class="doc-section" id="reg-hyperparams">
+            <div class="doc-section-label">Detail View</div>
+            <h2>Hyperparameters</h2>
+            <p>The exact settings used for this training run, recorded at the moment training started.</p>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:16px 0;">
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;">Architecture / Encoder</div>
+                <div style="color:var(--text-dim);font-size:13px;">Model backbone. For UNet the encoder (e.g. resnet34) is shown alongside the architecture.</div>
+              </div>
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;">Epochs / Batch / LR</div>
+                <div style="color:var(--text-dim);font-size:13px;">Number of training epochs, batch size, and learning rate as entered in the Training tab.</div>
+              </div>
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;">Image Size / Channels / Classes</div>
+                <div style="color:var(--text-dim);font-size:13px;">Input resolution (width × height), number of input channels, and number of output classes.</div>
+              </div>
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;">Device / Encoder Weights</div>
+                <div style="color:var(--text-dim);font-size:13px;">Training device (cuda / cpu) and the pre-trained encoder weights used (e.g. imagenet).</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ═══════ METRICS ═══════ -->
+          <div class="doc-section" id="reg-metrics">
+            <div class="doc-section-label">Detail View</div>
+            <h2>Metrics</h2>
+            <p>Training outcomes recorded when the run finished or was stopped.</p>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:16px 0;">
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;">Best Val Loss &amp; Best Val IoU</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">The lowest validation loss and highest validation IoU achieved during training, and the epoch at which they occurred.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">Lower loss = better. Higher IoU = better.</div>
+              </div>
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;">Final Train Loss &amp; Final Val IoU</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">The loss and IoU at the last completed epoch — useful to check if the model was still improving when stopped.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">If Final ≈ Best, training had converged.</div>
+              </div>
+            </div>
+
+            <div class="tip-box">
+              <div class="tip-icon">💡</div>
+              <div class="tip-text">If the run crashed or was cancelled before any epoch completed, the metrics section shows "No metrics recorded".</div>
+            </div>
+          </div>
+
+          <!-- ═══════ ARTIFACTS ═══════ -->
+          <div class="doc-section" id="reg-artifacts">
+            <div class="doc-section-label">Detail View</div>
+            <h2>Artifacts</h2>
+            <p>Files produced by the training run and stored in the version folder on Google Drive.</p>
+
+            <div class="step-card">
+              <div class="step-num" style="font-size:16px;">⚖️</div>
+              <div class="step-body">
+                <div class="step-title">Weights — best.pt</div>
+                <p class="step-desc">The best model checkpoint saved by the trainer. A ✓ is appended when the file is confirmed to exist on disk. This is the file used for ONNX export and inference.</p>
+              </div>
+            </div>
+            <div class="step-card">
+              <div class="step-num" style="font-size:16px;">🔄</div>
+              <div class="step-body">
+                <div class="step-title">ONNX Status</div>
+                <p class="step-desc">Shows whether the model has been exported to ONNX. If exported, the opset version and export date are displayed. If not, the <strong>Export ONNX</strong> button in the action bar is enabled for completed runs that have weights.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- ═══════ CRASH INFO ═══════ -->
+          <div class="doc-section" id="reg-crash">
+            <div class="doc-section-label">Detail View</div>
+            <h2>Crash Info</h2>
+            <p>This section appears only when a version has status <span style="background:#7f0000;color:#ef9a9a;border-radius:3px;padding:1px 6px;font-size:11px;font-weight:bold;">CRASHED</span>. It shows the crash reason and a hint for fixing it.</p>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:16px 0;">
+              <div style="background:#2a0000;border:1px solid #7f0000;border-left:3px solid #ef5350;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:#ef9a9a;margin-bottom:4px;font-size:13px;">Reason</div>
+                <div style="color:var(--text-dim);font-size:13px;">A short description of what went wrong — e.g. out-of-memory, missing file, dataset error.</div>
+              </div>
+              <div style="background:#2a0000;border:1px solid #7f0000;border-left:3px solid #ef5350;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:#ef9a9a;margin-bottom:4px;font-size:13px;">Hint</div>
+                <div style="color:var(--text-dim);font-size:13px;">A suggested fix — e.g. "Reduce batch size", "Check dataset path", "Free GPU memory".</div>
+              </div>
+            </div>
+
+            <div class="tip-box">
+              <div class="tip-icon">💡</div>
+              <div class="tip-text">After fixing the issue, use <strong>Clone &amp; Re-train</strong> to start a new run with the same settings. The crashed version stays in the registry as a record.</div>
+            </div>
+          </div>
+
+          <!-- ═══════ ACTION BUTTONS ═══════ -->
+          <div class="doc-section" id="reg-actions">
+            <div class="doc-section-label">Actions</div>
+            <h2>Action Buttons</h2>
+            <p>A row of buttons at the bottom of the detail view lets you act on the selected version.</p>
+
+            <div class="step-card">
+              <div class="step-num" style="font-size:16px;">📂</div>
+              <div class="step-body">
+                <div class="step-title">Open Folder</div>
+                <p class="step-desc">Opens the version's folder in Windows Explorer — the folder on Google Drive that contains <code>best.pt</code>, <code>config.json</code>, <code>manifest.json</code>, and optionally <code>model.onnx</code>.</p>
+              </div>
+            </div>
+            <div class="step-card">
+              <div class="step-num" style="font-size:16px;">🗄️</div>
+              <div class="step-body">
+                <div class="step-title">Open Dataset Folder</div>
+                <p class="step-desc">Opens the staged dataset folder that was used to train this version. Only enabled when the dataset path is found on the current machine.</p>
+              </div>
+            </div>
+            <div class="step-card">
+              <div class="step-num" style="font-size:16px;">📋</div>
+              <div class="step-body">
+                <div class="step-title">Copy Weights Path</div>
+                <p class="step-desc">Copies the full path to <code>best.pt</code> to the clipboard. Useful for pasting into other tools or scripts. A small "✓ Copied" confirmation appears briefly.</p>
+              </div>
+            </div>
+            <div class="step-card">
+              <div class="step-num" style="font-size:16px;">⚙️</div>
+              <div class="step-body">
+                <div class="step-title">Export ONNX</div>
+                <p class="step-desc">Converts <code>best.pt</code> to <code>model.onnx</code> and writes it into the version folder. Only enabled for <strong>completed</strong> runs that have weights and have not yet been exported. A thin progress bar appears while the export runs. Once done, the button changes to "✓ ONNX Ready" and the artifact line updates.</p>
+              </div>
+            </div>
+            <div class="step-card">
+              <div class="step-num" style="font-size:16px;">🔁</div>
+              <div class="step-body">
+                <div class="step-title">Clone &amp; Re-train</div>
+                <p class="step-desc">Loads the selected version's hyperparameters and dataset path back into the Training tab so you can start a new run with those settings as a starting point. Available for completed, crashed, cancelled, and partial runs. The original version is not modified.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- ═══════ COMPARE MODE ═══════ -->
+          <div class="doc-section" id="reg-compare">
+            <div class="doc-section-label">Actions</div>
+            <h2>Compare Mode</h2>
+            <p>Compare mode lets you pick two versions from the same Camera node and view them side-by-side with automatic difference highlighting.</p>
+
+            <div class="step-card">
+              <div class="step-num">1</div>
+              <div class="step-body">
+                <div class="step-title">Enable Compare</div>
+                <p class="step-desc">Click the <strong>Compare</strong> button in the top-right of the left panel. It turns orange when active. A hint label appears: "Click a card for [A], click another for [B]".</p>
+              </div>
+            </div>
+            <div class="step-card">
+              <div class="step-num">2</div>
+              <div class="step-body">
+                <div class="step-title">Select Version A</div>
+                <p class="step-desc">Click any version card. It highlights in <strong style="color:#4fc3f7;">blue</strong> — that is slot A. Clicking the same card again deselects it.</p>
+              </div>
+            </div>
+            <div class="step-card">
+              <div class="step-num">3</div>
+              <div class="step-body">
+                <div class="step-title">Select Version B</div>
+                <p class="step-desc">Click a second card. It highlights in <strong style="color:#ffa040;">orange</strong> — that is slot B. The right panel immediately shows the side-by-side comparison.</p>
+              </div>
+            </div>
+            <div class="step-card">
+              <div class="step-num">4</div>
+              <div class="step-body">
+                <div class="step-title">Read the Diff</div>
+                <p class="step-desc">The comparison is split into four sections — Dataset, Hyperparameters, Metrics, Artifacts. Values are colour-coded: <strong style="color:#4caf50;">green</strong> = better, <strong style="color:#f87171;">red</strong> = worse, <strong style="color:#ffc107;">yellow</strong> = different (no clear winner), white = identical. For numeric metrics, "better" means lower loss or higher IoU.</p>
+              </div>
+            </div>
+
+            <div class="tip-box">
+              <div class="tip-icon">💡</div>
+              <div class="tip-text">Clicking <strong>Compare</strong> again exits compare mode, clears both selections, and returns to the empty detail state.</div>
+            </div>
+          </div>
+
+          <!-- ═══════ STATUS REFERENCE ═══════ -->
+          <div class="doc-section" id="reg-status">
+            <div class="doc-section-label">Reference</div>
+            <h2>Status Badge Reference</h2>
+            <p>Every version card and detail header shows a status badge. Here is what each colour means.</p>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:16px 0;">
+
+              <div style="background:#1b2e1f;border:1px solid #2e5232;border-left:3px solid #4caf50;border-radius:8px;padding:14px;display:flex;align-items:flex-start;gap:12px;">
+                <span style="background:#1b5e20;color:#4caf50;border-radius:4px;padding:2px 8px;font-weight:bold;font-size:10px;white-space:nowrap;">COMPLETED</span>
+                <div style="color:var(--text-dim);font-size:13px;">Training finished normally. <code>best.pt</code> is saved. ONNX export and re-train are available.</div>
+              </div>
+
+              <div style="background:#1a2800;border:1px solid #3a5000;border-left:3px solid #8bc34a;border-radius:8px;padding:14px;display:flex;align-items:flex-start;gap:12px;">
+                <span style="background:#1a3a00;color:#8bc34a;border-radius:4px;padding:2px 8px;font-weight:bold;font-size:10px;white-space:nowrap;">TRAINING</span>
+                <div style="color:var(--text-dim);font-size:13px;">A training run is currently in progress for this version. Detail and compare are still readable.</div>
+              </div>
+
+              <div style="background:#2a0000;border:1px solid #5a1010;border-left:3px solid #f87171;border-radius:8px;padding:14px;display:flex;align-items:flex-start;gap:12px;">
+                <span style="background:#7f0000;color:#ef9a9a;border-radius:4px;padding:2px 8px;font-weight:bold;font-size:10px;white-space:nowrap;">CRASHED</span>
+                <div style="color:var(--text-dim);font-size:13px;">Training stopped with an error. The Crash Info section shows the reason and a fix hint. Re-train is available.</div>
+              </div>
+
+              <div style="background:#242424;border:1px solid #444;border-left:3px solid #9e9e9e;border-radius:8px;padding:14px;display:flex;align-items:flex-start;gap:12px;">
+                <span style="background:#333333;color:#9e9e9e;border-radius:4px;padding:2px 8px;font-weight:bold;font-size:10px;white-space:nowrap;">CANCELLED</span>
+                <div style="color:var(--text-dim);font-size:13px;">Training was manually stopped by clicking Stop. Metrics up to that epoch are saved. Re-train is available.</div>
+              </div>
+
+              <div style="background:#221400;border:1px solid #4a3000;border-left:3px solid #ffa040;border-radius:8px;padding:14px;display:flex;align-items:flex-start;gap:12px;">
+                <span style="background:#2a1a00;color:#ffa040;border-radius:4px;padding:2px 8px;font-weight:bold;font-size:10px;white-space:nowrap;">PARTIAL</span>
+                <div style="color:var(--text-dim);font-size:13px;">Training completed some epochs but not all — typically due to early exit or a non-fatal interruption. Re-train is available.</div>
+              </div>
+
+              <div style="background:#0d1f2a;border:1px solid #1a3a4a;border-left:3px solid #4fc3f7;border-radius:8px;padding:14px;display:flex;align-items:flex-start;gap:12px;">
+                <span style="background:#0d2a3a;color:#4fc3f7;border-radius:4px;padding:2px 8px;font-weight:bold;font-size:10px;white-space:nowrap;">SYNCING</span>
+                <div style="color:var(--text-dim);font-size:13px;">Google Drive is still uploading this version's files. Wait for sync to complete before using the artifacts.</div>
+              </div>
+
+            </div>
+          </div>
+
+        </div><!-- /doc-content -->
+      </div><!-- /tab-layout -->
     </section>
 
     <section class="tab-section" id="tab-coins">
