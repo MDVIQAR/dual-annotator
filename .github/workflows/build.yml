@@ -19,44 +19,21 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
-          pip install pyinstaller
+          pip install pyinstaller==6.11.1
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
 
-      - name: Copy VC++ runtime DLLs for bundling
-        run: |
-          Copy-Item "C:\Windows\System32\vcruntime140.dll"   -Destination vcruntime140.dll
-          Copy-Item "C:\Windows\System32\vcruntime140_1.dll" -Destination vcruntime140_1.dll
-          Copy-Item "C:\Windows\System32\msvcp140.dll"       -Destination msvcp140.dll
+      # No more manual VC++ DLL copying needed.
+      # collect_all("torch") in the spec grabs them from the torch wheel.
+      # The runtime hook + main.py preloader handle DLL search paths at runtime.
 
-      - name: Copy onnxscript as raw source for bundling
+      - name: Build with spec file
         run: |
-          $loc = (pip show onnxscript | Select-String "^Location:").ToString().Split(": ", 2)[1].Trim()
-          Copy-Item "$loc\onnxscript" -Destination "onnxscript_src" -Recurse -Force
-
-      - name: Build folder version
-        run: |
-          pyinstaller --onedir --windowed --name DualAnnotator `
-            --collect-all torch `
-            --collect-all torchvision `
-            --collect-all ultralytics `
-            --collect-all segmentation_models_pytorch `
-            --collect-all albumentations `
-            --hidden-import pytorch_lightning `
-            --hidden-import torchmetrics `
-            --hidden-import onnxruntime `
-            --exclude-module onnx.reference `
-            --exclude-module onnxscript `
-            --add-data "mlops/scripts;mlops/scripts" `
-            --add-data "onnxscript_src;onnxscript" `
-            --add-binary "vcruntime140.dll;torch/lib" `
-            --add-binary "vcruntime140_1.dll;torch/lib" `
-            --add-binary "msvcp140.dll;torch/lib" `
-            main.py
+          pyinstaller DualAnnotator.spec
 
       - name: Zip folder version
         run: |
@@ -70,10 +47,11 @@ jobs:
           body: |
             ## DualAnnotator ${{ github.ref_name }}
 
-            ### How to install:
+            ### How to install
             1. Download **DualAnnotator-folder.zip**
             2. Extract the zip anywhere (e.g. Desktop)
             3. Open the extracted folder and double-click **DualAnnotator.exe**
 
-            ### Requirements (for training to work):
-            1. **Google Drive Desktop** must be installed and the shared drive must be mounted (the app saves trained models there).
+            ### Requirements
+            - Windows 10 or later
+            - **Google Drive Desktop** must be installed and the shared drive mounted
