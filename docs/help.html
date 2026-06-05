@@ -3905,6 +3905,9 @@ Test/  (optional)
             <a class="sidebar-link" href="#train-stop">Stop Training</a>
             <a class="sidebar-link" href="#train-onnx">Export to ONNX</a>
 
+            <div class="sidebar-section">Reference</div>
+            <a class="sidebar-link" href="#train-manifest">manifest.json</a>
+
           </nav>
         </aside>
 
@@ -4514,6 +4517,141 @@ Test/  (optional)
             </div>
           </div>
 
+          <!-- ═══════ MANIFEST.JSON ═══════ -->
+          <div class="doc-section" id="train-manifest">
+            <div class="doc-section-label">Reference</div>
+            <h2>manifest.json</h2>
+            <p>At the moment training starts, DualAnnotator creates a <code>manifest.json</code> file inside the model version folder on Google Drive. This file is the single source of truth for everything about that training run — it is updated live as training progresses and finalised when the run ends. The Registry tab reads this file to display version details and power the Compare view.</p>
+
+            <div class="tip-box" style="border-left-color:#f87171;background:rgba(248,113,113,0.06);margin:16px 0;">
+              <div class="tip-icon">⚠️</div>
+              <div class="tip-text"><strong>Do not edit or delete this file.</strong> All writes are atomic — data is written to a <code>.tmp</code> file first, then moved into place. If the file becomes corrupted, the version will show as "unknown" in the Registry.</div>
+            </div>
+
+            <h3 style="margin:24px 0 12px;font-size:15px;color:var(--text);">Top-level fields</h3>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px;">
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">version_id</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Auto-generated ID — version number + date + time of the run.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>"v3_2026-05-21_14-11"</code></div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">model_type</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Which model type was trained.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;"><code>"yolo"</code> or <code>"unet"</code></div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">status</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Current state of the run. Updated live — starts as <code>"training"</code>, ends as one of the terminal states.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;"><code>"training"</code> → <code>"completed"</code> / <code>"crashed"</code> / <code>"cancelled"</code> / <code>"partial"</code></div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">sync_complete</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Set to <code>true</code> as the very last write after a completed or partial run — signals to teammates that Google Drive has fully synced this version.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;"><code>false</code> while training or if crashed</div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">annotator</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Name of the person who started the run — taken from the Run Info section.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>"Alice"</code></div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">commit_message</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">The short description you typed before starting training — shown in italic in the Registry detail view.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>"increased batch size, added flip aug"</code></div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">started_at / finished_at</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">ISO timestamps for when the run started and when it ended. <code>finished_at</code> is <code>null</code> while training is active.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>"2026-05-21T14:11:03"</code></div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">project / project_name / project_id / variant / camera</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">The full hierarchy key and its individual parts — mirrors the cascading filter in the Registry tab.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>project: "unet/SnipeX/SLXCAP/CRC/cam0"</code></div>
+              </div>
+
+            </div>
+
+            <h3 style="margin:24px 0 12px;font-size:15px;color:var(--text);">Nested objects</h3>
+
+            <div style="display:grid;grid-template-columns:1fr;gap:10px;margin-bottom:20px;">
+
+              <div style="background:#1a1e18;border:1px solid var(--border);border-left:3px solid #81c784;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:6px;font-size:13px;font-family:monospace;">dataset</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:8px;">The dataset used for this run, snapshotted at training start.</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;">
+                  <div style="color:#6b7280;"><code>absolute_path</code> — full path to dataset folder on this machine</div>
+                  <div style="color:#6b7280;"><code>relative_path</code> — fallback path relative to a datasets root</div>
+                  <div style="color:#6b7280;"><code>sha256</code> — hash to detect if dataset changes after training</div>
+                  <div style="color:#6b7280;"><code>train_count / val_count / test_count</code> — image counts per split</div>
+                  <div style="color:#6b7280;"><code>classes</code> — list of class names (YOLO); empty for UNet</div>
+                  <div style="color:#6b7280;"><code>num_classes</code> — count of classes</div>
+                </div>
+              </div>
+
+              <div style="background:#1a1e18;border:1px solid var(--border);border-left:3px solid #81c784;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:6px;font-size:13px;font-family:monospace;">hyperparams</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:8px;">Every training setting, recorded at the moment the run started.</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;">
+                  <div style="color:#6b7280;"><code>architecture</code> — model backbone (e.g. <code>yolov8n</code>, <code>Unet</code>)</div>
+                  <div style="color:#6b7280;"><code>encoder / encoder_weights</code> — UNet only (e.g. <code>resnet34 / imagenet</code>)</div>
+                  <div style="color:#6b7280;"><code>epochs / batch_size / learning_rate</code></div>
+                  <div style="color:#6b7280;"><code>image_width / image_height / in_channels / out_classes</code></div>
+                  <div style="color:#6b7280;"><code>device</code> — <code>"cuda"</code> or <code>"cpu"</code></div>
+                </div>
+              </div>
+
+              <div style="background:#1a1e18;border:1px solid var(--border);border-left:3px solid #81c784;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:6px;font-size:13px;font-family:monospace;">metrics</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:8px;">Training outcomes written at the end of the run. All values are <code>null</code> if training never completed an epoch.</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;">
+                  <div style="color:#6b7280;"><code>best_val_loss / best_val_iou / best_epoch</code></div>
+                  <div style="color:#6b7280;"><code>final_train_loss / final_val_loss</code></div>
+                  <div style="color:#6b7280;"><code>final_train_iou / final_val_iou</code></div>
+                </div>
+              </div>
+
+              <div style="background:#1a1e18;border:1px solid var(--border);border-left:3px solid #81c784;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:6px;font-size:13px;font-family:monospace;">artifacts</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:8px;">File names of outputs saved to the version folder.</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;">
+                  <div style="color:#6b7280;"><code>weights</code> — <code>"best.pt"</code> once saved</div>
+                  <div style="color:#6b7280;"><code>onnx</code> — <code>"best.onnx"</code> after export</div>
+                  <div style="color:#6b7280;"><code>curves_plot</code> — loss/IoU curve image</div>
+                  <div style="color:#6b7280;"><code>sample_preds</code> — sample prediction image</div>
+                </div>
+              </div>
+
+              <div style="background:#1a1e18;border:1px solid var(--border);border-left:3px solid #81c784;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:6px;font-size:13px;font-family:monospace;">onnx_config</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:8px;">Populated when ONNX export is run — either from the Training tab result card or the Registry action button.</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;">
+                  <div style="color:#6b7280;"><code>exported</code> — <code>true</code> / <code>false</code></div>
+                  <div style="color:#6b7280;"><code>opset_version</code> — ONNX opset used (default 11)</div>
+                  <div style="color:#6b7280;"><code>input_shape</code> — model input tensor shape</div>
+                  <div style="color:#6b7280;"><code>exported_at</code> — ISO timestamp of export</div>
+                </div>
+              </div>
+
+              <div style="background:#1a1e18;border:1px solid var(--border);border-left:3px solid #81c784;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:6px;font-size:13px;font-family:monospace;">crash_info / augmentations</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:8px;"><code>crash_info</code> is <code>null</code> normally; set to <code>{"reason": "...", "hint": "..."}</code> when the run crashes. <code>augmentations</code> is a dict of the augmentation settings active at training start — used when cloning a run for re-training.</div>
+              </div>
+
+            </div>
+
+          </div>
+
         </div><!-- /doc-content -->
       </div><!-- /tab-layout -->
     </section>
@@ -4541,6 +4679,9 @@ Test/  (optional)
             <div class="sidebar-section">Results Gallery</div>
             <a class="sidebar-link" href="#exp-gallery">Gallery Layout</a>
             <a class="sidebar-link" href="#exp-zoom">Zoom Controls</a>
+
+            <div class="sidebar-section">Reference</div>
+            <a class="sidebar-link" href="#exp-config">config.json</a>
 
           </nav>
         </aside>
@@ -4780,6 +4921,113 @@ Test/  (optional)
             </div>
           </div>
 
+          <!-- ═══════ CONFIG.JSON ═══════ -->
+          <div class="doc-section" id="exp-config">
+            <div class="doc-section-label">Reference</div>
+            <h2>config.json</h2>
+            <p>When training starts, the training worker writes a <code>config.json</code> file into the model version folder alongside <code>manifest.json</code> and <code>best.pt</code>. It captures the complete set of settings used for that run — including all hyperparameters, dataset info, and augmentations. The Export &amp; Test tab reads this file when you load a version folder, using it to automatically detect the model type and configure the inference engine correctly.</p>
+
+            <div class="tip-box" style="border-left-color:#f87171;background:rgba(248,113,113,0.06);margin:16px 0;">
+              <div class="tip-icon">⚠️</div>
+              <div class="tip-text"><strong>Required by Export &amp; Test.</strong> The version folder must contain both <code>config.json</code> and <code>best.pt</code> to be accepted by the drop zone. If either file is missing the folder is rejected.</div>
+            </div>
+
+            <h3 style="margin:24px 0 12px;font-size:15px;color:var(--text);">Top-level fields</h3>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px;">
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">model_type</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Read by Export &amp; Test to decide gallery layout and which inference engine to use.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;"><code>"yolo"</code> or <code>"unet"</code></div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">annotator / annotator_name</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Initials and full name of the person who trained this version.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>"AK"</code> / <code>"Alice Kumar"</code></div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">commit_message</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">The short note typed before training — carried here from the Training tab Run Info form.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>"baseline run, no augmentation"</code></div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">dataset_folder</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Absolute path to the dataset snapshot copied into the version folder at training time.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>".../v3_.../dataset"</code></div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">pretrained_weights</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Path to a custom pre-trained checkpoint used as a starting point — empty if training started from scratch.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;"><code>""</code> or a path to a <code>.pt</code> file</div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">project / project_name / project_id / variant / camera / gdrive_root</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Full hierarchy key and its individual parts — same values as in <code>manifest.json</code>.</div>
+              </div>
+
+            </div>
+
+            <h3 style="margin:24px 0 12px;font-size:15px;color:var(--text);">Nested objects</h3>
+
+            <div style="display:grid;grid-template-columns:1fr;gap:10px;margin-bottom:20px;">
+
+              <div style="background:#1a2318;border:1px solid var(--border);border-left:3px solid #81c784;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:6px;font-size:13px;font-family:monospace;">dataset_info</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:8px;">Snapshot of the dataset at training time — same fields as <code>dataset_info.json</code>.</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;">
+                  <div style="color:#6b7280;"><code>train_count / val_count / test_count</code></div>
+                  <div style="color:#6b7280;"><code>class_names / num_classes / sha256</code></div>
+                  <div style="color:#6b7280;"><code>absolute_path</code> — path to the version-local dataset copy</div>
+                  <div style="color:#6b7280;"><code>relative_path</code> — always <code>"dataset"</code> (sibling folder)</div>
+                </div>
+              </div>
+
+              <div style="background:#1a2318;border:1px solid var(--border);border-left:3px solid #81c784;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:6px;font-size:13px;font-family:monospace;">hyperparams</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:8px;">All training settings. Common fields apply to both model types; YOLO-prefixed fields apply only when <code>model_type</code> is <code>"yolo"</code>.</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;margin-bottom:8px;">
+                  <div style="color:#6b7280;"><code>architecture</code> — e.g. <code>Unet</code>, <code>yolov8n</code></div>
+                  <div style="color:#6b7280;"><code>encoder / encoder_weights</code> — UNet only</div>
+                  <div style="color:#6b7280;"><code>in_channels / out_classes</code></div>
+                  <div style="color:#6b7280;"><code>epochs / batch_size / learning_rate</code></div>
+                  <div style="color:#6b7280;"><code>image_width / image_height</code></div>
+                  <div style="color:#6b7280;"><code>device</code> — <code>"cuda"</code> or <code>"cpu"</code></div>
+                  <div style="color:#6b7280;"><code>num_workers / repeat_factor</code></div>
+                  <div style="color:#6b7280;"><code>early_stopping_patience / extra_metrics</code></div>
+                </div>
+                <div style="color:#9aa8c0;font-size:11px;font-weight:600;margin-bottom:4px;">YOLO-only fields</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:12px;">
+                  <div style="color:#6b7280;"><code>yolo_optimizer / yolo_lrf / yolo_momentum</code></div>
+                  <div style="color:#6b7280;"><code>yolo_weight_decay / yolo_warmup_epochs / yolo_cos_lr</code></div>
+                  <div style="color:#6b7280;"><code>yolo_box / yolo_cls / yolo_dfl / yolo_dropout</code></div>
+                  <div style="color:#6b7280;"><code>yolo_overlap_mask / yolo_mask_ratio</code></div>
+                  <div style="color:#6b7280;"><code>yolo_hsv_h / yolo_hsv_s / yolo_hsv_v</code></div>
+                  <div style="color:#6b7280;"><code>yolo_fliplr / yolo_flipud / yolo_degrees</code></div>
+                  <div style="color:#6b7280;"><code>yolo_translate / yolo_scale / yolo_mosaic</code></div>
+                  <div style="color:#6b7280;"><code>yolo_mixup / yolo_copy_paste / yolo_close_mosaic</code></div>
+                  <div style="color:#6b7280;"><code>yolo_amp / yolo_cache / yolo_save_period / yolo_plots</code></div>
+                </div>
+              </div>
+
+              <div style="background:#1a2318;border:1px solid var(--border);border-left:3px solid #81c784;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:6px;font-size:13px;font-family:monospace;">augmentations</div>
+                <div style="color:var(--text-dim);font-size:13px;">Dict of augmentation settings active at training start — mirrors what was configured in the Augmentations panel. Used when cloning a run via Registry → Clone &amp; Re-train.</div>
+              </div>
+
+            </div>
+
+            <div class="tip-box">
+              <div class="tip-icon">💡</div>
+              <div class="tip-text"><code>config.json</code> and <code>manifest.json</code> are complementary — <code>config.json</code> is what the training script reads to know what to do, while <code>manifest.json</code> is what the Registry reads to know what happened. They overlap on hyperparams and dataset info by design so each is self-contained.</div>
+            </div>
+          </div>
+
         </div><!-- /doc-content -->
       </div><!-- /tab-layout -->
     </section>
@@ -4815,6 +5063,8 @@ Test/  (optional)
 
             <div class="sidebar-section">Reference</div>
             <a class="sidebar-link" href="#reg-status">Status Badge Reference</a>
+            <a class="sidebar-link" href="#reg-csv">models_registry.csv</a>
+            <a class="sidebar-link" href="#reg-settings">registry_settings.json</a>
 
           </nav>
         </aside>
@@ -4841,6 +5091,11 @@ Test/  (optional)
                 <div style="font-weight:600;color:var(--text);margin-bottom:6px;">Comparable</div>
                 <div style="color:var(--text-dim);font-size:13px;">Select any two versions and switch to Compare mode for a side-by-side diff of dataset, hyperparameters, and all metrics with colour-coded winners.</div>
               </div>
+            </div>
+
+            <div class="img-figure" style="margin:20px 0;">
+              <img src="assets/registry/main.png" alt="Registry tab overview" class="zoomable" onclick="openLightbox(this.src,'Registry Tab — Overview')">
+              <div class="img-caption">Registry tab — left panel (filter + version cards) and right panel (version detail)</div>
             </div>
 
             <div class="tip-box" style="border-left-color:#f87171;background:rgba(248,113,113,0.06);">
@@ -4983,6 +5238,11 @@ Test/  (optional)
                 <div class="step-title">Header — Version ID &amp; Status</div>
                 <p class="step-desc">The version ID is shown in bold at the top. The status badge sits beside it. Below the header is the <strong>commit message</strong> you typed before training — shown in italic muted text as a reminder of what this run was for.</p>
               </div>
+            </div>
+
+            <div class="img-figure" style="margin:20px 0;">
+              <img src="assets/registry/model.png" alt="Registry version detail panel" class="zoomable" onclick="openLightbox(this.src,'Registry — Version Detail')">
+              <div class="img-caption">Version detail panel — Dataset, Hyperparameters, Metrics, Artifacts, and action buttons</div>
             </div>
           </div>
 
@@ -5196,6 +5456,11 @@ Test/  (optional)
               </div>
             </div>
 
+            <div class="img-figure" style="margin:20px 0;">
+              <img src="assets/registry/compare.gif" alt="Compare mode side-by-side diff" class="zoomable" onclick="openLightbox(this.src,'Registry — Compare Mode')">
+              <div class="img-caption">Compare mode — two versions selected (blue A, orange B) with colour-coded metric diff on the right</div>
+            </div>
+
             <div class="tip-box">
               <div class="tip-icon">💡</div>
               <div class="tip-text">Clicking <strong>Compare</strong> again exits compare mode, clears both selections, and returns to the empty detail state.</div>
@@ -5240,6 +5505,129 @@ Test/  (optional)
                 <div style="color:var(--text-dim);font-size:13px;">Google Drive is still uploading this version's files. Wait for sync to complete before using the artifacts.</div>
               </div>
 
+            </div>
+          </div>
+
+          <!-- ═══════ MODELS_REGISTRY.CSV ═══════ -->
+          <div class="doc-section" id="reg-csv">
+            <div class="doc-section-label">Reference</div>
+            <h2>models_registry.csv</h2>
+            <p>Saved at <code>{gdrive_root}/models_registry.csv</code> — a flat spreadsheet with one row per trained version across all projects. Generated automatically each time the Registry tab loads, and on demand via <strong>📊 Refresh Models CSV</strong>. Open it in Excel, Google Sheets, or Python to sort, filter, and track models outside the app.</p>
+
+            <div class="tip-box" style="border-left-color:#ffa040;background:rgba(255,160,64,0.06);margin:16px 0;">
+              <div class="tip-icon">⭐</div>
+              <div class="tip-text"><strong>The <code>deployed</code> and <code>deployed_date</code> columns are the only columns you should edit manually.</strong> Every regeneration preserves the values you entered there — all other columns are overwritten from the manifest.</div>
+            </div>
+
+            <h3 style="margin:24px 0 12px;font-size:15px;color:var(--text);">Columns</h3>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px;">
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">version_id</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Unique run identifier — use this to look up a version in the Registry tab.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>v3_2026-05-21_14-11</code></div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">project</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Full hierarchy key for this version's camera node.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>unet/SnipeX/SLXCAP/CRC/cam0</code></div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">version_count</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Total number of versions under this camera node at the time the CSV was last refreshed.</div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">architecture / commit_message</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Model backbone and the commit note from the Training tab Run Info form.</div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">encoder / encoder_weights</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">UNet encoder name and pre-trained weights. Empty for YOLO runs.</div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">in_channels / out_classes / batch_size / learning_rate</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Core hyperparameters for comparing runs at a glance.</div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">image_width / image_height / device</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Input resolution and compute device used during training.</div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">train_count / val_count / test_count / num_classes / class_names</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Dataset statistics. <code>class_names</code> are pipe-separated (<code>|</code>) to stay CSV-safe.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>head|tail|rim</code></div>
+              </div>
+
+              <div style="background:#1b2e1f;border:1px solid #2e5232;border-left:3px solid #4caf50;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:#c8e6c9;margin-bottom:4px;font-size:13px;font-family:monospace;">deployed</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;"><strong>Manually editable.</strong> Mark a version as deployed — e.g. <code>yes</code>, <code>production</code>, or any label you prefer. Preserved across CSV regenerations.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>yes</code> or <code>production_v2</code></div>
+              </div>
+
+              <div style="background:#1b2e1f;border:1px solid #2e5232;border-left:3px solid #4caf50;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:#c8e6c9;margin-bottom:4px;font-size:13px;font-family:monospace;">deployed_date</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;"><strong>Manually editable.</strong> Date the model was deployed to production. Preserved across CSV regenerations.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>2026-05-15</code></div>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- ═══════ REGISTRY_SETTINGS.JSON ═══════ -->
+          <div class="doc-section" id="reg-settings">
+            <div class="doc-section-label">Reference</div>
+            <h2>registry_settings.json</h2>
+            <p>Stored locally at <code>%LOCALAPPDATA%\DualAnnotator\registry_settings.json</code> — this is the app's own config file, not a Google Drive file. It remembers your GDrive path, annotator list, and the last staged dataset between sessions. Unlike the other JSON files, this one is safe to keep as-is across reinstalls since it lives in AppData rather than the project folder.</p>
+
+            <div class="tip-box" style="border-left-color:#f87171;background:rgba(248,113,113,0.06);margin:16px 0;">
+              <div class="tip-icon">⚠️</div>
+              <div class="tip-text">Do not share or commit this file — it contains absolute paths that are specific to your machine. Each team member has their own copy in their own AppData.</div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:16px 0;">
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">gdrive_root</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Absolute path to the Google Drive folder that acts as the registry root. Set in the Settings tab.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>"C:/Users/Alice/Google Drive/My Drive/Registry"</code></div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">local_root</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Optional secondary local path that mirrors the GDrive hierarchy for faster access. Usually left empty.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;"><code>""</code> if not configured</div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">annotators</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">List of team members added in the Settings tab. Each has a <code>name</code> and <code>initials</code> — initials are stored in <code>manifest.json</code> as the <code>annotator</code> field.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;">e.g. <code>[{"name": "Alice Kumar", "initials": "AK"}]</code></div>
+              </div>
+
+              <div style="background:#141b2b;border:1px solid var(--border);border-left:3px solid #8ab4f8;border-radius:8px;padding:14px;">
+                <div style="font-weight:600;color:var(--text);margin-bottom:4px;font-size:13px;font-family:monospace;">staged_dataset</div>
+                <div style="color:var(--text-dim);font-size:13px;margin-bottom:4px;">Persisted between the Data Prep and Training tabs — stores the path, model type, hierarchy fields, and dataset_info of the last prepared dataset so Training can auto-fill without you browsing again.</div>
+                <div style="color:#6b7280;font-size:12px;font-style:italic;"><code>{}</code> if no dataset has been prepared yet</div>
+              </div>
+
+            </div>
+
+            <div class="img-dialog" style="margin:20px 0;">
+              <img src="assets/registry/root registry.png" alt="registry_settings.json example" class="zoomable" onclick="openLightbox(this.src,'registry_settings.json — example file')">
+              <div class="img-caption">A typical <code>registry_settings.json</code> as stored in AppData</div>
+            </div>
+
+            <div class="tip-box">
+              <div class="tip-icon">💡</div>
+              <div class="tip-text">If you move your Google Drive folder or switch accounts, update <code>gdrive_root</code> in the Settings tab. The app will re-read this file on the next launch.</div>
             </div>
           </div>
 
