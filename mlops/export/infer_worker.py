@@ -7,11 +7,11 @@ and streams PROGRESS / RESULT lines to the UI.
 
 import os
 import re
-import sys
 import subprocess
 import pathlib
 
 from PyQt5.QtCore import QThread, pyqtSignal
+from mlops.utils import find_python
 
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07|\r')
 
@@ -51,7 +51,7 @@ class InferWorker(QThread):
             raise FileNotFoundError(f"Inference script not found: {script}")
 
         cmd = [
-            sys.executable, script,
+            find_python(), script,
             "--onnx",        self._onnx_path,
             "--config",      self._config_path,
             "--test-folder", self._test_folder,

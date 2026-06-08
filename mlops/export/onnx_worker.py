@@ -6,11 +6,11 @@ and streams PROGRESS / STATUS lines to the UI.
 """
 import os
 import re
-import sys
 import subprocess
 import pathlib
 
 from PyQt5.QtCore import QThread, pyqtSignal
+from mlops.utils import find_python
 
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07|\r')
 
@@ -36,7 +36,7 @@ class OnnxWorker(QThread):
 
     def _execute(self):
         script = os.path.join(self._scripts_dir, "export_onnx.py")
-        cmd = [sys.executable, script, "--version-folder", self._version_folder]
+        cmd = [find_python(), script, "--version-folder", self._version_folder]
 
         project_root = str(pathlib.Path(__file__).resolve().parents[2])
         env = os.environ.copy()

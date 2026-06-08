@@ -21,7 +21,6 @@ import json
 import re
 import shutil
 import subprocess
-import sys
 
 from mlops.registry import RegistrySettings
 
@@ -32,6 +31,7 @@ from PyQt5.QtCore import QThread, pyqtSignal
 from mlops.registry.manifest import generate_version_id, ManifestWriter
 from mlops.registry.utils import create_version_folder
 from mlops.training.config_builder import parse_metric_line
+from mlops.utils import find_python
 
 _GRACEFUL_TIMEOUT = 300   # seconds to wait for graceful stop before force-kill
 
@@ -133,8 +133,10 @@ class TrainWorker(QThread):
         model_type  = self._config["model_type"]
         script_path = os.path.join(self._scripts_dir, f"train_{model_type}.py")
 
+        python_exe = find_python()
         self.log.emit(f"[INFO] Launching: {script_path}")
-        cmd = [sys.executable, script_path, "--config", config_json_path, "--out", self._version_folder]
+        self.log.emit(f"[INFO] Python: {python_exe}")
+        cmd = [python_exe, script_path, "--config", config_json_path, "--out", self._version_folder]
 
         import pathlib
         project_root = str(pathlib.Path(__file__).resolve().parents[2])
