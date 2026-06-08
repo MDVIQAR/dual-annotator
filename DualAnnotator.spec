@@ -53,8 +53,8 @@ a = Analysis(
         ("torch_dlls/*.dll", "torch/lib"),
     ],
     datas=[
-        # Training / inference scripts (run via runpy in-process)
-        ("mlops/scripts/*.py", "mlops/scripts"),
+        # Full mlops package (scripts import from mlops.registry, mlops.training etc.)
+        ("mlops", "mlops"),
         # Help page and all its assets
         ("docs", "docs"),
         *all_datas,
