@@ -93,6 +93,55 @@ python main.py
 
 ---
 
+## Building the .exe from source
+
+### Prerequisites
+
+- Python 3.11.x
+- Git with LFS (`git lfs install`)
+
+### Steps
+
+```powershell
+# Clone (with LFS for images)
+git clone https://github.com/MDVIQAR/dual-annotator.git
+cd dual-annotator
+git lfs pull
+
+# Create venv and install dependencies
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+pip install pyinstaller==6.11.1
+
+# Stage torch DLLs
+$torchLib = python -c "import torch, os; print(os.path.join(os.path.dirname(torch.__file__), 'lib'))"
+New-Item -ItemType Directory -Force -Path "torch_dlls"
+Copy-Item "$torchLib\*.dll" -Destination "torch_dlls\" -Force
+
+# Build
+pyinstaller DualAnnotator.spec
+```
+
+The exe will be at `dist\DualAnnotator\DualAnnotator.exe`.
+
+### Setting up training (required once after building)
+
+Create a venv **next to the exe** so training and inference work:
+
+```powershell
+cd dist\DualAnnotator
+python -m venv venv
+venv\Scripts\activate
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+pip install pytorch-lightning segmentation-models-pytorch albumentations torchmetrics ultralytics onnxruntime
+```
+
+> **Note:** The GUI works immediately without this step. The venv is only needed when you click **Start Training** or run inference.
+
+---
+
 ## Tabs Overview
 
 | Tab | What it does |
