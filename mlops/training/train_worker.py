@@ -21,6 +21,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 
 from mlops.registry import RegistrySettings
 
@@ -143,8 +144,7 @@ class TrainWorker(QThread):
         env = os.environ.copy()
         env["PYTHONPATH"] = project_root + os.pathsep + env.get("PYTHONPATH", "")
 
-        self._proc = subprocess.Popen(
-            cmd,
+        popen_kwargs = dict(
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -153,6 +153,10 @@ class TrainWorker(QThread):
             bufsize=1,
             env=env,
         )
+        if sys.platform == "win32":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+        self._proc = subprocess.Popen(cmd, **popen_kwargs)
 
         # Step 5 — Read stdout line by line
         # When cancelled we do NOT terminate here — the stop_requested sentinel

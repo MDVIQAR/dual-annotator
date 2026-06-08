@@ -7,6 +7,7 @@ and streams PROGRESS / STATUS lines to the UI.
 import os
 import re
 import subprocess
+import sys
 import pathlib
 
 from PyQt5.QtCore import QThread, pyqtSignal
@@ -42,8 +43,7 @@ class OnnxWorker(QThread):
         env = os.environ.copy()
         env["PYTHONPATH"] = project_root + os.pathsep + env.get("PYTHONPATH", "")
 
-        self._proc = subprocess.Popen(
-            cmd,
+        popen_kwargs = dict(
             stdout   = subprocess.PIPE,
             stderr   = subprocess.STDOUT,
             text     = True,
@@ -52,6 +52,10 @@ class OnnxWorker(QThread):
             bufsize  = 1,
             env      = env,
         )
+        if sys.platform == "win32":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+        self._proc = subprocess.Popen(cmd, **popen_kwargs)
 
         for raw_line in self._proc.stdout:
             line = _ANSI_RE.sub("", raw_line).rstrip()

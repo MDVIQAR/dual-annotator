@@ -8,6 +8,7 @@ and streams PROGRESS / RESULT lines to the UI.
 import os
 import re
 import subprocess
+import sys
 import pathlib
 
 from PyQt5.QtCore import QThread, pyqtSignal
@@ -65,8 +66,7 @@ class InferWorker(QThread):
         env = os.environ.copy()
         env["PYTHONPATH"] = project_root + os.pathsep + env.get("PYTHONPATH", "")
 
-        proc = subprocess.Popen(
-            cmd,
+        popen_kwargs = dict(
             stdout   = subprocess.PIPE,
             stderr   = subprocess.STDOUT,
             text     = True,
@@ -75,6 +75,10 @@ class InferWorker(QThread):
             bufsize  = 1,
             env      = env,
         )
+        if sys.platform == "win32":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+        proc = subprocess.Popen(cmd, **popen_kwargs)
 
         for raw_line in proc.stdout:
             line = _ANSI_RE.sub("", raw_line).rstrip()
