@@ -41,6 +41,7 @@ test_*.py
 # PyInstaller
 dist/
 build/
+torch_dlls/
 
 # Ultralytics auto-downloaded weights (re-downloaded on demand, not for source control)
 *.pt
