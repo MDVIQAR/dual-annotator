@@ -55,6 +55,8 @@ a = Analysis(
     datas=[
         # Training / inference scripts (run via runpy in-process)
         ("mlops/scripts/*.py", "mlops/scripts"),
+        # Help page and all its assets
+        ("docs", "docs"),
         *all_datas,
     ],
     hiddenimports=[
