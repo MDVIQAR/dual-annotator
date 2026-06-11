@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 import argparse
 import json
+import time
 import cv2
 
 _VALID_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif"}
@@ -71,6 +72,7 @@ def main():
 
         print(f"[INFO] Task: {yolo_task}  arch: {arch}  imgsz: {image_width}  conf: {args.conf}", flush=True)
         total = len(images)
+        total_infer_time = 0.0
 
         for i, img_name in enumerate(images):
             img_path = os.path.join(test_folder, img_name)
@@ -78,13 +80,16 @@ def main():
                 print(f"[WARNING] Skipping missing file: {img_path}", flush=True)
                 continue
 
+            t0 = time.perf_counter()
             results = model(img_path, imgsz=image_width, conf=args.conf, verbose=False)
+            dt = (time.perf_counter() - t0) * 1000  # milliseconds
+            total_infer_time += dt
 
             boxes = results[0].boxes
             n_det = len(boxes) if boxes is not None else 0
             if n_det > 0:
                 max_conf = float(boxes.conf.max())
-                print(f"[INFO] {img_name}: {n_det} det(s), max_conf={max_conf:.3f}", flush=True)
+                print(f"[INFO] {img_name}: {n_det} det(s), max_conf={max_conf:.3f}, {dt:.1f}ms", flush=True)
             else:
                 # Probe at near-zero conf to diagnose threshold vs. no-detection
                 probe       = model(img_path, imgsz=image_width, conf=0.001, verbose=False)
@@ -104,6 +109,11 @@ def main():
             print(f"PROGRESS {pct}", flush=True)
             # Protocol: name | original_path | annotated_path
             print(f"RESULT {img_name}|{img_path}|{out_path}", flush=True)
+
+        if total > 0:
+            avg_ms = total_infer_time / total
+            fps = 1000.0 / avg_ms if avg_ms > 0 else 0
+            print(f"[INFO] Inference time: {avg_ms:.1f}ms/image avg ({fps:.1f} FPS)", flush=True)
 
         print(f"DONE total={total}", flush=True)
 

@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 import argparse
 import json
+import time
 import cv2
 import numpy as np
 
@@ -126,6 +127,7 @@ def main():
         print("PROGRESS 0", flush=True)
 
         total = len(images)
+        total_infer_time = 0.0
 
         for i, img_name in enumerate(images):
             img_path = os.path.join(test_folder, img_name)
@@ -137,7 +139,12 @@ def main():
             orig_w, orig_h = img_bgr.shape[1], img_bgr.shape[0]
 
             batch  = preprocess(img_bgr, in_channels, image_width, image_height)
+
+            t0 = time.perf_counter()
             logits = run_inference(batch)  # 1, C, H, W
+            dt = (time.perf_counter() - t0) * 1000  # milliseconds
+            total_infer_time += dt
+            print(f"[INFO] {img_name}: {dt:.1f}ms", flush=True)
 
             if out_classes == 1:
                 pred = (logits[0, 0] > 0).astype(np.uint8)
@@ -161,6 +168,11 @@ def main():
             pct = int((i + 1) / total * 100)
             print(f"PROGRESS {pct}", flush=True)
             print(f"RESULT {img_name}|{orig_path}|{mask_path}|{overlay_path}", flush=True)
+
+        if total > 0:
+            avg_ms = total_infer_time / total
+            fps = 1000.0 / avg_ms if avg_ms > 0 else 0
+            print(f"[INFO] Inference time: {avg_ms:.1f}ms/image avg ({fps:.1f} FPS)", flush=True)
 
         print(f"DONE total={total}", flush=True)
 
