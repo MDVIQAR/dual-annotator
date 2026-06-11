@@ -279,6 +279,14 @@ _SETTINGS_DEFAULTS = {
     "num_workers":              0,
     "repeat_factor":            1,
     "augmentations":       {},
+    # UNet — loss / optimizer / scheduler / regularization
+    "unet_loss_fn":         "focal",
+    "unet_optimizer":       "Adam",
+    "unet_scheduler":       "cosine",
+    "unet_weight_decay":    0.0,
+    "unet_momentum":        0.9,
+    "unet_gradient_clip":   0.0,
+    "unet_label_smoothing": 0.0,
     # YOLO advanced — optimizer
     "yolo_optimizer":       "AdamW",
     "yolo_lrf":             0.01,
@@ -828,6 +836,90 @@ class TrainingTab(QWidget):
         ]:
             _row = _make_row(label, widget)
             _unet_hp_l.addLayout(_row)
+
+        # ── UNet Loss Function ──
+        self._unet_loss_cb = _NoScrollComboBox()
+        self._unet_loss_cb.addItems([
+            "focal",          # FocalLoss (team default)
+            "dice_ce",        # Dice + CrossEntropy combo
+            "focal_dice",     # Focal + Dice combo
+            "dice",           # Dice only
+            "ce",             # CrossEntropy only
+            "jaccard",        # Jaccard (IoU) loss
+            "jaccard_ce",     # Jaccard + CE combo
+            "tversky",        # Tversky loss
+            "tversky_ce",     # Tversky + CE combo
+            "lovasz",         # Lovász loss
+        ])
+        self._unet_loss_cb.setStyleSheet(_INPUT_STYLE)
+        self._unet_loss_cb.currentTextChanged.connect(self._autosave)
+
+        # ── UNet Optimizer ──
+        self._unet_optimizer_cb = _NoScrollComboBox()
+        self._unet_optimizer_cb.addItems(["Adam", "AdamW", "SGD", "RMSprop", "NAdam", "RAdam"])
+        self._unet_optimizer_cb.setStyleSheet(_INPUT_STYLE)
+        self._unet_optimizer_cb.currentTextChanged.connect(self._autosave)
+
+        # ── UNet LR Scheduler ──
+        self._unet_scheduler_cb = _NoScrollComboBox()
+        self._unet_scheduler_cb.addItems([
+            "cosine",            # CosineAnnealingLR (team default)
+            "reduce_plateau",    # ReduceLROnPlateau
+            "cosine_restarts",   # CosineAnnealingWarmRestarts
+            "step",              # StepLR
+            "exponential",       # ExponentialLR
+            "one_cycle",         # OneCycleLR
+            "none",              # Constant LR (no scheduler)
+        ])
+        self._unet_scheduler_cb.setStyleSheet(_INPUT_STYLE)
+        self._unet_scheduler_cb.currentTextChanged.connect(self._autosave)
+
+        # ── Weight Decay (L2 regularization) ──
+        def _unet_dsb(lo, hi, default, decimals=3, step=0.001):
+            w = _NoScrollDoubleSpinBox()
+            w.setRange(lo, hi); w.setDecimals(decimals)
+            w.setSingleStep(step); w.setValue(default)
+            w.setStyleSheet(_INPUT_STYLE)
+            w.valueChanged.connect(self._autosave)
+            return w
+
+        self._unet_weight_decay_sp = _unet_dsb(0.0, 0.1, 0.0, 6, 0.00001)
+
+        # ── Momentum (only relevant for SGD and RMSprop) ──
+        self._unet_momentum_sp = _unet_dsb(0.0, 1.0, 0.9, 2, 0.01)
+
+        # ── Gradient Clipping (0 = disabled) ──
+        self._unet_grad_clip_sp = _unet_dsb(0.0, 10.0, 0.0, 1, 0.1)
+
+        # ── Label Smoothing (0 = disabled, used by CE-based losses) ──
+        self._unet_label_smoothing_sp = _unet_dsb(0.0, 0.3, 0.0, 2, 0.01)
+
+        # ── Momentum row (needs toggle visibility) ──
+        self._unet_momentum_row = QWidget()
+        self._unet_momentum_row.setStyleSheet("QWidget { background: transparent; }")
+        _mom_l = QHBoxLayout(self._unet_momentum_row)
+        _mom_l.setContentsMargins(0, 0, 0, 0)
+        _mom_l.setSpacing(0)
+        _mom_lbl = QLabel("Momentum")
+        _mom_lbl.setFixedWidth(120)
+        _mom_l.addWidget(_mom_lbl)
+        _mom_l.addWidget(self._unet_momentum_sp)
+        self._unet_momentum_row.setVisible(False)  # hidden by default (Adam doesn't use it)
+
+        # ── Show/hide momentum when optimizer changes ──
+        self._unet_optimizer_cb.currentTextChanged.connect(self._on_unet_optimizer_changed)
+
+        # ── Build collapsible section ──
+        _unet_adv = _make_collapsible("UNet Optimizer & Loss", _make_section([
+            _make_row("Loss Function",    self._unet_loss_cb),
+            _make_row("Optimizer",        self._unet_optimizer_cb),
+            _make_row("LR Scheduler",     self._unet_scheduler_cb),
+            _make_row("Weight Decay",     self._unet_weight_decay_sp),
+            self._unet_momentum_row,
+            _make_row("Gradient Clip",    self._unet_grad_clip_sp),
+            _make_row("Label Smoothing",  self._unet_label_smoothing_sp),
+        ]))
+        _unet_hp_l.addWidget(_unet_adv)
 
         self._width_row_widget = QWidget()
         self._width_row_widget.setStyleSheet("QWidget { background: transparent; }")
@@ -1743,6 +1835,15 @@ class TrainingTab(QWidget):
         for key, cb in self._metric_checkboxes.items():
             cb.setChecked(key in _enabled_metrics)
         self._device_cb.setCurrentText(s.get("device", "cpu"))
+        # UNet — loss / optimizer / scheduler / regularization
+        self._unet_loss_cb.setCurrentText(s.get("unet_loss_fn", "focal"))
+        self._unet_optimizer_cb.setCurrentText(s.get("unet_optimizer", "Adam"))
+        self._unet_scheduler_cb.setCurrentText(s.get("unet_scheduler", "cosine"))
+        self._unet_weight_decay_sp.setValue(float(s.get("unet_weight_decay", 0.0)))
+        self._unet_momentum_sp.setValue(float(s.get("unet_momentum", 0.9)))
+        self._unet_grad_clip_sp.setValue(float(s.get("unet_gradient_clip", 0.0)))
+        self._unet_label_smoothing_sp.setValue(float(s.get("unet_label_smoothing", 0.0)))
+        self._on_unet_optimizer_changed(self._unet_optimizer_cb.currentText())
         # YOLO advanced
         self._yolo_optimizer_cb.setCurrentText(s.get("yolo_optimizer", "AdamW"))
         self._yolo_lrf_sp.setValue(float(s.get("yolo_lrf", 0.01)))
@@ -1844,6 +1945,10 @@ class TrainingTab(QWidget):
         if hasattr(self, "_yolo_seg_options_col"):
             self._yolo_seg_options_col.setVisible(not is_det)
         self._autosave()
+
+    def _on_unet_optimizer_changed(self, text):
+        """Show momentum row only for SGD and RMSprop."""
+        self._unet_momentum_row.setVisible(text in ("SGD", "RMSprop"))
 
     def _current_train_model_type(self) -> str:
         return "yolo" if self._radio_yolo.isChecked() else "unet"
@@ -1979,6 +2084,13 @@ class TrainingTab(QWidget):
         s["device"]                    = self._device_cb.currentText()
         s["num_workers"]               = self._num_workers_sp.value()
         s["repeat_factor"]             = self._repeat_factor_sp.value()
+        s["unet_loss_fn"]         = self._unet_loss_cb.currentText()
+        s["unet_optimizer"]       = self._unet_optimizer_cb.currentText()
+        s["unet_scheduler"]       = self._unet_scheduler_cb.currentText()
+        s["unet_weight_decay"]    = self._unet_weight_decay_sp.value()
+        s["unet_momentum"]        = self._unet_momentum_sp.value()
+        s["unet_gradient_clip"]   = self._unet_grad_clip_sp.value()
+        s["unet_label_smoothing"] = self._unet_label_smoothing_sp.value()
         if self._aug_widgets:
             s["augmentations"]  = self._get_aug_config()
         # YOLO advanced
@@ -2092,6 +2204,14 @@ class TrainingTab(QWidget):
             "num_workers":               self._num_workers_sp.value(),
             "repeat_factor":             self._repeat_factor_sp.value(),
             "augmentations":      self._get_aug_config() if not self._radio_yolo.isChecked() else {},
+            # UNet — loss / optimizer / scheduler / regularization
+            "unet_loss_fn":         self._unet_loss_cb.currentText(),
+            "unet_optimizer":       self._unet_optimizer_cb.currentText(),
+            "unet_scheduler":       self._unet_scheduler_cb.currentText(),
+            "unet_weight_decay":    self._unet_weight_decay_sp.value(),
+            "unet_momentum":        self._unet_momentum_sp.value(),
+            "unet_gradient_clip":   self._unet_grad_clip_sp.value(),
+            "unet_label_smoothing": self._unet_label_smoothing_sp.value(),
             # YOLO advanced
             "yolo_optimizer":     self._yolo_optimizer_cb.currentText(),
             "yolo_lrf":           self._yolo_lrf_sp.value(),

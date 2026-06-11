@@ -20,7 +20,10 @@ from torchmetrics.classification import (
 
 class SegModel(pl.LightningModule):
     def __init__(self, arch, encoder_name, encoder_weights, in_channels, out_classes,
-                 lr=0.001, extra_metrics=None):
+                 lr=0.001, extra_metrics=None,
+                 loss_fn="focal", optimizer_name="Adam", scheduler_name="cosine",
+                 weight_decay=0.0, momentum=0.9, label_smoothing=0.0,
+                 total_epochs=100):
         super().__init__()
         self.save_hyperparameters()
 
@@ -34,11 +37,12 @@ class SegModel(pl.LightningModule):
             classes=out_classes,
         )
 
+        # Build loss (mode is auto-selected from out_classes)
+        self._loss = self._build_loss(loss_fn, out_classes, label_smoothing)
+
         _em = set(extra_metrics or [])
 
         if out_classes == 1:
-            self.dice_loss = smp.losses.DiceLoss(mode="binary")
-            self.ce_loss   = torch.nn.BCEWithLogitsLoss()
             self.train_iou = BinaryJaccardIndex()
             self.val_iou   = BinaryJaccardIndex()
             if "precision" in _em:
@@ -51,8 +55,6 @@ class SegModel(pl.LightningModule):
                 self.train_f1 = BinaryF1Score()
                 self.val_f1   = BinaryF1Score()
         else:
-            self.dice_loss = smp.losses.DiceLoss(mode="multiclass")
-            self.ce_loss   = torch.nn.CrossEntropyLoss()
             self.train_iou = MulticlassJaccardIndex(num_classes=out_classes)
             self.val_iou   = MulticlassJaccardIndex(num_classes=out_classes)
             if "precision" in _em:
@@ -68,13 +70,57 @@ class SegModel(pl.LightningModule):
     def forward(self, x):
         return self.model(x)
 
+    def _build_loss(self, loss_fn, out_classes, label_smoothing):
+        """Build loss function based on config. Mode is auto-selected from out_classes."""
+        mode = "binary" if out_classes == 1 else "multiclass"
+
+        def _dice():
+            return smp.losses.DiceLoss(mode=mode)
+
+        def _ce():
+            if out_classes == 1:
+                return torch.nn.BCEWithLogitsLoss()
+            return torch.nn.CrossEntropyLoss(
+                label_smoothing=label_smoothing if label_smoothing > 0 else 0.0
+            )
+
+        def _focal():
+            return smp.losses.FocalLoss(mode=mode)
+
+        def _jaccard():
+            return smp.losses.JaccardLoss(mode=mode)
+
+        def _tversky():
+            return smp.losses.TverskyLoss(mode=mode, alpha=0.3, beta=0.7)
+
+        def _lovasz():
+            return smp.losses.LovaszLoss(mode=mode)
+
+        builders = {
+            "focal":      lambda: {"type": "single", "fn": _focal()},
+            "dice":       lambda: {"type": "single", "fn": _dice()},
+            "ce":         lambda: {"type": "single", "fn": _ce()},
+            "jaccard":    lambda: {"type": "single", "fn": _jaccard()},
+            "tversky":    lambda: {"type": "single", "fn": _tversky()},
+            "lovasz":     lambda: {"type": "single", "fn": _lovasz()},
+            "dice_ce":    lambda: {"type": "combo", "fn1": _dice(), "fn2": _ce()},
+            "focal_dice": lambda: {"type": "combo", "fn1": _focal(), "fn2": _dice()},
+            "jaccard_ce": lambda: {"type": "combo", "fn1": _jaccard(), "fn2": _ce()},
+            "tversky_ce": lambda: {"type": "combo", "fn1": _tversky(), "fn2": _ce()},
+        }
+
+        return builders.get(loss_fn, builders["focal"])()
+
     def _compute_loss(self, logits, masks):
         if self.hparams.out_classes == 1:
-            ce = self.ce_loss(logits, masks.float().unsqueeze(1))
+            target = masks.float().unsqueeze(1)
         else:
-            ce = self.ce_loss(logits, masks.long())
-        dice = self.dice_loss(logits, masks)
-        return 0.5 * dice + 0.5 * ce
+            target = masks.long()
+
+        if self._loss["type"] == "single":
+            return self._loss["fn"](logits, target)
+        else:
+            return 0.5 * self._loss["fn1"](logits, target) + 0.5 * self._loss["fn2"](logits, target)
 
     def _get_preds(self, logits):
         if self.hparams.out_classes == 1:
@@ -219,11 +265,66 @@ class SegModel(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.lr)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode="min", factor=0.5, patience=5
-        )
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {"scheduler": scheduler, "monitor": "val_loss"},
+        # ── Optimizer ──
+        opt    = self.hparams.optimizer_name
+        lr     = self.hparams.lr
+        wd     = self.hparams.weight_decay
+        mom    = self.hparams.momentum
+        params = self.parameters()
+
+        optimizers = {
+            "Adam":    lambda: torch.optim.Adam(params, lr=lr, weight_decay=wd),
+            "AdamW":   lambda: torch.optim.AdamW(params, lr=lr, weight_decay=wd),
+            "SGD":     lambda: torch.optim.SGD(params, lr=lr, weight_decay=wd, momentum=mom),
+            "RMSprop": lambda: torch.optim.RMSprop(params, lr=lr, weight_decay=wd, momentum=mom),
+            "NAdam":   lambda: torch.optim.NAdam(params, lr=lr, weight_decay=wd),
+            "RAdam":   lambda: torch.optim.RAdam(params, lr=lr, weight_decay=wd),
         }
+        optimizer = optimizers.get(opt, optimizers["Adam"])()
+
+        # ── LR Scheduler ──
+        sched = self.hparams.scheduler_name
+        T     = self.hparams.total_epochs
+
+        if sched == "cosine":
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, T_max=T, eta_min=1e-5
+            )
+            return {"optimizer": optimizer,
+                    "lr_scheduler": {"scheduler": scheduler, "interval": "epoch"}}
+
+        elif sched == "reduce_plateau":
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode="min", factor=0.5, patience=5
+            )
+            return {"optimizer": optimizer,
+                    "lr_scheduler": {"scheduler": scheduler, "monitor": "val_loss"}}
+
+        elif sched == "cosine_restarts":
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                optimizer, T_0=max(T // 4, 1), T_mult=2, eta_min=1e-5
+            )
+            return {"optimizer": optimizer,
+                    "lr_scheduler": {"scheduler": scheduler, "interval": "epoch"}}
+
+        elif sched == "step":
+            scheduler = torch.optim.lr_scheduler.StepLR(
+                optimizer, step_size=max(T // 3, 1), gamma=0.1
+            )
+            return {"optimizer": optimizer,
+                    "lr_scheduler": {"scheduler": scheduler, "interval": "epoch"}}
+
+        elif sched == "exponential":
+            scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.95)
+            return {"optimizer": optimizer,
+                    "lr_scheduler": {"scheduler": scheduler, "interval": "epoch"}}
+
+        elif sched == "one_cycle":
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(
+                optimizer, max_lr=lr, epochs=T, steps_per_epoch=1
+            )
+            return {"optimizer": optimizer,
+                    "lr_scheduler": {"scheduler": scheduler, "interval": "epoch"}}
+
+        else:  # "none"
+            return {"optimizer": optimizer}

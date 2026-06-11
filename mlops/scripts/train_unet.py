@@ -167,6 +167,14 @@ def main():
             out_classes     = hp["out_classes"],
             lr              = hp["learning_rate"],
             extra_metrics   = hp.get("extra_metrics", []),
+            # ── Configurable loss / optimizer / scheduler / regularization ──
+            loss_fn         = hp.get("loss_fn", "focal"),
+            optimizer_name  = hp.get("optimizer", "Adam"),
+            scheduler_name  = hp.get("scheduler", "cosine"),
+            weight_decay    = float(hp.get("weight_decay", 0.0)),
+            momentum        = float(hp.get("momentum", 0.9)),
+            label_smoothing = float(hp.get("label_smoothing", 0.0)),
+            total_epochs    = hp["epochs"],
         )
 
         # Fine-tune: load pre-trained weights if provided
@@ -206,6 +214,8 @@ def main():
         device      = hp.get("device", "cpu")
         accelerator = "gpu" if device.startswith("cuda") else "cpu"
 
+        grad_clip = float(hp.get("gradient_clip", 0.0))
+
         trainer = pl.Trainer(
             max_epochs          = hp["epochs"],
             callbacks           = [ckpt_cb, metric_cb, graceful_stop_cb, early_stop_cb],
@@ -214,6 +224,7 @@ def main():
             log_every_n_steps   = 1,
             enable_progress_bar = False,
             logger              = False,
+            gradient_clip_val   = grad_clip if grad_clip > 0 else None,
         )
 
         trainer.fit(model, datamodule=dm)

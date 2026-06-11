@@ -120,6 +120,32 @@ def build_training_config(form: dict) -> dict:
     _valid_metrics = {"precision", "recall", "f1"}
     extra_metrics  = [m for m in list(form.get("extra_metrics", [])) if m in _valid_metrics]
 
+    # --- UNet loss / optimizer / scheduler / regularization ---
+    _valid_unet_losses = {
+        "focal", "dice_ce", "focal_dice", "dice", "ce",
+        "jaccard", "jaccard_ce", "tversky", "tversky_ce", "lovasz",
+    }
+    unet_loss_fn = str(form.get("unet_loss_fn", "focal"))
+    if unet_loss_fn not in _valid_unet_losses:
+        unet_loss_fn = "focal"
+
+    _valid_unet_optimizers = {"Adam", "AdamW", "SGD", "RMSprop", "NAdam", "RAdam"}
+    unet_optimizer = str(form.get("unet_optimizer", "Adam"))
+    if unet_optimizer not in _valid_unet_optimizers:
+        unet_optimizer = "Adam"
+
+    _valid_unet_schedulers = {
+        "cosine", "reduce_plateau", "cosine_restarts", "step", "exponential", "one_cycle", "none",
+    }
+    unet_scheduler = str(form.get("unet_scheduler", "cosine"))
+    if unet_scheduler not in _valid_unet_schedulers:
+        unet_scheduler = "cosine"
+
+    unet_weight_decay    = float(form.get("unet_weight_decay", 0.0))
+    unet_momentum        = float(form.get("unet_momentum", 0.9))
+    unet_gradient_clip   = float(form.get("unet_gradient_clip", 0.0))
+    unet_label_smoothing = float(form.get("unet_label_smoothing", 0.0))
+
     # --- YOLO advanced params (ignored for UNet, passed through for YOLO) ---
     _valid_optimizers = {"AdamW", "Adam", "SGD", "auto"}
     yolo_optimizer    = str(form.get("yolo_optimizer", "AdamW"))
@@ -205,6 +231,14 @@ def build_training_config(form: dict) -> dict:
             "repeat_factor":            repeat_factor,
             "early_stopping_patience":  early_stopping_patience,
             "extra_metrics":            extra_metrics,
+            # UNet — loss / optimizer / scheduler / regularization
+            "loss_fn":         unet_loss_fn,
+            "optimizer":       unet_optimizer,
+            "scheduler":       unet_scheduler,
+            "weight_decay":    unet_weight_decay,
+            "momentum":        unet_momentum,
+            "gradient_clip":   unet_gradient_clip,
+            "label_smoothing": unet_label_smoothing,
             # YOLO advanced
             "yolo_optimizer":     yolo_optimizer,
             "yolo_lrf":           yolo_lrf,
