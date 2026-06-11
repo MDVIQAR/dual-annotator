@@ -2224,18 +2224,5 @@ class MainWindow(QMainWindow):
 
     def show_about(self):
         """Open the Help & Documentation page in the system browser."""
-        import webbrowser, sys, os
-
-        if getattr(sys, 'frozen', False):
-            base_dir = sys._MEIPASS  # bundled files live in _internal/, not next to exe
-        else:
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-        help_path = os.path.join(base_dir, 'docs', 'help.html')
-
-        if os.path.exists(help_path):
-            webbrowser.open(f'file:///{os.path.abspath(help_path).replace(os.sep, "/")}')
-        else:
-            from PyQt5.QtWidgets import QMessageBox
-            QMessageBox.warning(self, "Help Not Found",
-                                f"Could not locate help.html at:\n{help_path}")
+        import webbrowser
+        webbrowser.open("https://dualannotator-docs.netlify.app/")

@@ -46,3 +46,6 @@ torch_dlls/
 # Ultralytics auto-downloaded weights (re-downloaded on demand, not for source control)
 *.pt
 *.onnx
+
+# Help docs are hosted on Netlify, kept locally only
+docs/

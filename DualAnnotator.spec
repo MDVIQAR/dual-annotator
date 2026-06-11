@@ -55,8 +55,6 @@ a = Analysis(
     datas=[
         # Full mlops package (scripts import from mlops.registry, mlops.training etc.)
         ("mlops", "mlops"),
-        # Help page and all its assets
-        ("docs", "docs"),
         *all_datas,
     ],
     hiddenimports=[
