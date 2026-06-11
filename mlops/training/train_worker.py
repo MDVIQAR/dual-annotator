@@ -37,6 +37,131 @@ from mlops.utils import find_python
 _GRACEFUL_TIMEOUT = 300   # seconds to wait for graceful stop before force-kill
 
 
+class _TrainingDiagnostics:
+    """Tracks metric history and emits training health diagnostics."""
+
+    def __init__(self, total_epochs: int):
+        self._total_epochs = total_epochs
+        self._train_losses = []    # list of values
+        self._val_losses = []
+        self._train_ious = []
+        self._val_ious = []
+        self._best_val_loss = float("inf")
+        self._epochs_since_improvement = 0
+        self._val_rising_streak = 0
+        self._train_dropping_streak = 0
+        self._crossed_50_iou = False
+        self._last_healthy_msg_epoch = 0
+
+    def update(self, epoch, t_loss, v_loss, t_iou, v_iou):
+        """Record metrics for this epoch."""
+        self._train_losses.append(t_loss)
+        self._val_losses.append(v_loss)
+        self._train_ious.append(t_iou)
+        self._val_ious.append(v_iou)
+
+        # Track val loss improvement
+        if v_loss < self._best_val_loss:
+            self._best_val_loss = v_loss
+            self._epochs_since_improvement = 0
+        else:
+            self._epochs_since_improvement += 1
+
+        # Track val loss rising streak
+        if len(self._val_losses) >= 2:
+            if v_loss > self._val_losses[-2]:
+                self._val_rising_streak += 1
+            else:
+                self._val_rising_streak = 0
+
+        # Track train loss dropping streak
+        if len(self._train_losses) >= 2:
+            if t_loss < self._train_losses[-2]:
+                self._train_dropping_streak += 1
+            else:
+                self._train_dropping_streak = 0
+
+    def diagnose(self, epoch, t_loss, v_loss, t_iou, v_iou) -> list:
+        """Return a list of diagnostic message strings for this epoch.
+        Returns empty list if nothing noteworthy."""
+        msgs = []
+
+        # Skip first 3 epochs — metrics are noisy at the start
+        if epoch <= 3:
+            return msgs
+
+        # ── Overfitting: val rising while train dropping ──
+        if (self._val_rising_streak >= 3 and self._train_dropping_streak >= 3):
+            msgs.append(
+                "  ⚠ Possible overfitting — val_loss rising while train_loss "
+                f"dropping ({self._val_rising_streak} epochs)"
+            )
+            msgs.append(
+                "  💡 Try: increase augmentation, reduce model size, or add weight decay"
+            )
+
+        # ── Overfitting: large IoU gap ──
+        elif epoch >= 5 and t_iou > 0.1 and v_iou > 0.1:
+            gap = t_iou - v_iou
+            if gap > 0.15:
+                msgs.append(
+                    f"  ⚠ Train/val IoU gap is large ({gap:.2f}) — model may be overfitting"
+                )
+                msgs.append(
+                    "  💡 Try: more augmentation, dropout, or weight decay"
+                )
+
+        # ── Val loss spike ──
+        if len(self._val_losses) >= 2:
+            prev_val = self._val_losses[-2]
+            if prev_val > 0 and v_loss > prev_val * 1.5:
+                msgs.append(
+                    f"  ⚠ Val loss spiked ({prev_val:.4f} → {v_loss:.4f}) "
+                    "— possible data issue or learning rate too high"
+                )
+
+        # ── Underfitting: losses still high after 20% of training ──
+        pct_done = epoch / self._total_epochs
+        if pct_done >= 0.2 and t_loss > 0.7 and v_loss > 0.7 and not msgs:
+            msgs.append(
+                f"  ⚠ Possible underfitting — both losses still high at "
+                f"{int(pct_done * 100)}% through training"
+            )
+            msgs.append(
+                "  💡 Try: increase learning rate, train longer, or use a larger encoder"
+            )
+
+        # ── Stale training: no improvement for 5+ epochs ──
+        if self._epochs_since_improvement >= 5 and not msgs:
+            msgs.append(
+                f"  ⚠ No val_loss improvement in {self._epochs_since_improvement} epochs "
+                "— training may be stalling"
+            )
+            msgs.append(
+                "  💡 Early stopping will trigger soon if this continues"
+            )
+
+        # ── Milestone: first time val IoU crosses 0.5 ──
+        if not self._crossed_50_iou and v_iou >= 0.5:
+            self._crossed_50_iou = True
+            msgs.append("  ✅ Model is learning well — val IoU passed 0.50")
+
+        # ── Healthy: periodic reassurance every 10 epochs ──
+        if (not msgs
+                and epoch >= 5
+                and epoch - self._last_healthy_msg_epoch >= 10
+                and self._epochs_since_improvement <= 2
+                and v_loss < self._best_val_loss * 1.1):
+            iou_gap = abs(t_iou - v_iou)
+            if iou_gap < 0.1:
+                msgs.append(
+                    "  ✅ Training looks healthy — losses decreasing, train/val gap is small"
+                )
+                self._last_healthy_msg_epoch = epoch
+
+        return msgs
+
+
 class TrainWorker(QThread):
     """Background thread that manages the full training lifecycle."""
 
@@ -163,6 +288,7 @@ class TrainWorker(QThread):
         # file was already written by cancel().  We keep draining stdout so the
         # script can finish its current epoch and exit cleanly.
         total_epochs = self._config["hyperparams"]["epochs"]
+        diagnostics = _TrainingDiagnostics(total_epochs)
         for raw_line in self._proc.stdout:
             line = _ANSI_RE.sub("", raw_line).rstrip()
             if not line:
@@ -229,6 +355,11 @@ class TrainWorker(QThread):
                             f"  [LR] Learning rate reduced:  {self._prev_lr:.6f}  →  {current_lr:.6f}"
                         )
                     self._prev_lr = current_lr
+
+                # ── Training health diagnostics ──
+                diagnostics.update(epoch, t_loss, v_loss, t_iou, v_iou)
+                for diag_msg in diagnostics.diagnose(epoch, t_loss, v_loss, t_iou, v_iou):
+                    self.log.emit(diag_msg)
             elif line.startswith("PROGRESS "):
                 try:
                     self.progress.emit(int(line.split()[1]))
