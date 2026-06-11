@@ -11,10 +11,23 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QSize, pyqtSignal, QTimer
 from PyQt5.QtGui import QIcon, QKeySequence, QFont, QColor, QPalette, QPolygonF
 import os
+import sys
 
 from gui.canvas import AnnotationCanvas
 from gui.class_panel import ClassPanel
 from core.class_manager import ClassManager
+
+
+def _is_lite_mode() -> bool:
+    """Check if running as the Lite (annotation-only) build."""
+    if getattr(sys, "frozen", False):
+        marker = os.path.join(sys._MEIPASS, "_lite_mode")
+        return os.path.isfile(marker)
+    return False
+
+
+LITE_MODE = _is_lite_mode()
+
 
 class ToolButton(QPushButton):
     """Custom tool button with QPainter-drawn icons for consistency"""
@@ -299,7 +312,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         
         # Set window properties
-        self.setWindowTitle("Dual Annotator - New Project")
+        if LITE_MODE:
+            self.setWindowTitle("Dual Annotator Lite - New Project")
+        else:
+            self.setWindowTitle("Dual Annotator - New Project")
         self.setGeometry(100, 100, 1600, 1000)
         self.setMinimumSize(1200, 700)
         
@@ -1059,30 +1075,31 @@ class MainWindow(QMainWindow):
         self._build_annotate_tab(self.annotate_tab)
         self.tab_widget.addTab(self.annotate_tab, "✏️  Annotate")
 
-        # ── Tab 3: Data Preparation ──
-        from gui.tabs.data_prep_tab import DataPrepTab
-        self.data_prep_tab = DataPrepTab()
-        self.tab_widget.addTab(self.data_prep_tab, "📦  Data Prep")
+        # ── Tab 3-6: ML tabs (Full build only) ──
+        if not LITE_MODE:
+            from gui.tabs.data_prep_tab import DataPrepTab
+            self.data_prep_tab = DataPrepTab()
+            self.tab_widget.addTab(self.data_prep_tab, "📦  Data Prep")
 
-        from gui.tabs.training_tab import TrainingTab
-        self.training_tab = TrainingTab()
-        self.tab_widget.addTab(self.training_tab, "🚀  Train")
+            from gui.tabs.training_tab import TrainingTab
+            self.training_tab = TrainingTab()
+            self.tab_widget.addTab(self.training_tab, "🚀  Train")
 
-        from gui.tabs.export_test_tab import ExportTestTab
-        self.export_test_tab = ExportTestTab()
-        self.tab_widget.addTab(self.export_test_tab, "🔬  Export & Test")
+            from gui.tabs.export_test_tab import ExportTestTab
+            self.export_test_tab = ExportTestTab()
+            self.tab_widget.addTab(self.export_test_tab, "🔬  Export & Test")
 
-        from gui.tabs.registry_tab import RegistryTab
-        self.registry_tab = RegistryTab()
-        self.tab_widget.addTab(self.registry_tab, "🗂  Registry")
+            from gui.tabs.registry_tab import RegistryTab
+            self.registry_tab = RegistryTab()
+            self.tab_widget.addTab(self.registry_tab, "🗂  Registry")
+
+            from gui.tabs.settings_tab import SettingsTab
+            self.settings_tab = SettingsTab()
+            self.tab_widget.addTab(self.settings_tab, "⚙  Settings")
 
         from gui.tabs.coin_rotator_tab import CoinRotatorTab
         self.coin_rotator_tab = CoinRotatorTab()
         self.tab_widget.addTab(self.coin_rotator_tab, "🪙  Coin Rotator")
-
-        from gui.tabs.settings_tab import SettingsTab
-        self.settings_tab = SettingsTab()
-        self.tab_widget.addTab(self.settings_tab, "⚙  Settings")
 
         # ── COLLAB TAB (Simultaneous Annotation) ──
         from gui.tabs.collab_tab import CollabTab
@@ -1092,19 +1109,22 @@ class MainWindow(QMainWindow):
         self.collab_tab.session_joined.connect(self._on_session_joined)
         self.collab_tab.session_stopped.connect(self._on_session_stopped)
 
-        self.registry_tab.retrain_requested.connect(self._on_retrain_requested)
-        self.data_prep_tab.open_in_training.connect(self._on_open_in_training)
-        self.training_tab.training_completed.connect(self.registry_tab.refresh_csv)
-        self.training_tab.training_completed.connect(self.export_test_tab.prefill_from_version)
-        self.training_tab.onnx_exported.connect(self.export_test_tab.prefill_from_version)
+        if not LITE_MODE:
+            self.registry_tab.retrain_requested.connect(self._on_retrain_requested)
+            self.data_prep_tab.open_in_training.connect(self._on_open_in_training)
+            self.training_tab.training_completed.connect(self.registry_tab.refresh_csv)
+            self.training_tab.training_completed.connect(self.export_test_tab.prefill_from_version)
+            self.training_tab.onnx_exported.connect(self.export_test_tab.prefill_from_version)
 
     def _on_retrain_requested(self, payload: dict):
-        self.training_tab.load_from_manifest(payload)
-        self.tab_widget.setCurrentWidget(self.training_tab)
+        if hasattr(self, "training_tab"):
+            self.training_tab.load_from_manifest(payload)
+            self.tab_widget.setCurrentWidget(self.training_tab)
 
     def _on_open_in_training(self, staged_info: dict):
-        self.training_tab.prefill_from_staged(staged_info)
-        self.tab_widget.setCurrentWidget(self.training_tab)
+        if hasattr(self, "training_tab"):
+            self.training_tab.prefill_from_staged(staged_info)
+            self.tab_widget.setCurrentWidget(self.training_tab)
 
     def _build_annotate_tab(self, container):
         """Build the annotation workspace inside *container*."""

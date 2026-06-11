@@ -24,43 +24,40 @@ jobs:
       - name: Install dependencies
         run: |
           pip install pyinstaller==6.11.1
-          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-          pip install -r requirements.txt
+          pip install -r requirements-lite.txt
 
-      # No more manual VC++ DLL copying needed.
-      # collect_all("torch") in the spec grabs them from the torch wheel.
-      # The runtime hook + main.py preloader handle DLL search paths at runtime.
-
-      - name: Copy all torch DLLs to staging folder
+      # ── Lite build only ──
+      - name: Create Lite marker
         run: |
-          $torchLib = python -c "import torch, os; print(os.path.join(os.path.dirname(torch.__file__), 'lib'))"
-          Write-Host "Torch lib directory: $torchLib"
-          Write-Host "DLLs in torch/lib:"
-          Get-ChildItem "$torchLib\*.dll" | ForEach-Object { Write-Host "  $($_.Name) ($($_.Length) bytes)" }
-          New-Item -ItemType Directory -Force -Path "torch_dlls"
-          Copy-Item "$torchLib\*.dll" -Destination "torch_dlls\" -Force
+          New-Item -ItemType File -Path "_lite_mode" -Force
 
-      - name: Build with spec file
+      - name: Build Lite version
         run: |
-          pyinstaller DualAnnotator.spec
+          pyinstaller DualAnnotator_Lite.spec
 
-      - name: Zip folder version
+      - name: Zip Lite build
         run: |
-          Compress-Archive -Path dist\DualAnnotator -DestinationPath dist\DualAnnotator-folder.zip
+          Compress-Archive -Path dist\DualAnnotator_Lite -DestinationPath dist\DualAnnotator-Lite.zip
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/DualAnnotator-folder.zip
+            dist/DualAnnotator-Lite.zip
           body: |
-            ## DualAnnotator ${{ github.ref_name }}
+            ## DualAnnotator Lite ${{ github.ref_name }}
 
-            ### How to install
-            1. Download **DualAnnotator-folder.zip**
-            2. Extract the zip anywhere (e.g. Desktop)
-            3. Open the extracted folder and double-click **DualAnnotator.exe**
+            Standalone annotation toolkit — no Python or setup required. Extract and run.
 
-            ### Requirements
-            - Windows 10 or later
-            - **Google Drive Desktop** must be installed and the shared drive mounted
+            ### Included
+            - **Annotate** — Bounding box, polygon, bezier, circle, ellipse, ring annotations
+            - **RAW → PNG** — Batch convert raw images with colormap and ROI support
+            - **Coin Rotator** — Batch align coin images using SIFT feature matching
+            - **Collaborate** — Host/join simultaneous annotation sessions
+
+            ### How to use
+            1. Download **DualAnnotator-Lite.zip**
+            2. Extract anywhere
+            3. Double-click **DualAnnotator_Lite.exe**
+
+            > For the full version with ML training & inference, see the Full release.

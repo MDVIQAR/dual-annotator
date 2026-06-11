@@ -1,0 +1,16 @@
+# ── DualAnnotator Lite — annotation-only build ─────────────────────────────────
+# Subset of requirements.txt needed for RAW→PNG, Annotate, Coin Rotator,
+# and Collaborate. No ML packages (torch, ultralytics, onnx, etc.).
+
+# ── GUI ───────────────────────────────────────────────────────────────────────
+PyQt5==5.15.10
+Pillow==10.1.0
+
+# ── Image / Vision ────────────────────────────────────────────────────────────
+opencv-python==4.8.1.78
+numpy>=1.24.3,<2.0
+
+# ── Geometry / Data ───────────────────────────────────────────────────────────
+Shapely>=2.1.0
+pycocotools==2.0.7
+PyYAML>=6.0.1

@@ -3,6 +3,21 @@ import os
 import sys
 
 # ============================================================
+# Ensure stdout/stderr can handle non-ASCII output (emoji, etc.)
+# ============================================================
+# Frozen Windows builds get stdout/stderr streams encoded with the
+# system's ANSI codepage (e.g. cp1252) instead of UTF-8. The gui/
+# package has many print() calls containing emoji, which raise
+# UnicodeEncodeError on such streams and crash the app. Reconfigure
+# both streams to UTF-8 with replacement so those prints can't crash.
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None and hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+# ============================================================
 # FROZEN-EXE DLL FIX  (must run before ANY other import)
 # ============================================================
 # Problem: PyTorch's c10.dll depends on ~15 peer DLLs inside
