@@ -115,12 +115,7 @@ pip install -r requirements.txt
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 pip install pyinstaller==6.11.1
 
-# Stage torch DLLs
-$torchLib = python -c "import torch, os; print(os.path.join(os.path.dirname(torch.__file__), 'lib'))"
-New-Item -ItemType Directory -Force -Path "torch_dlls"
-Copy-Item "$torchLib\*.dll" -Destination "torch_dlls\" -Force
-
-# Build
+# Build (torch is not bundled into the exe — see "Setting up training" below)
 pyinstaller DualAnnotator.spec
 ```
 

@@ -24,40 +24,63 @@ jobs:
       - name: Install dependencies
         run: |
           pip install pyinstaller==6.11.1
-          pip install -r requirements-lite.txt
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
 
-      # ── Lite build only ──
-      - name: Create Lite marker
-        run: |
-          New-Item -ItemType File -Path "_lite_mode" -Force
+      # Note: torch is installed in CI ONLY so PyInstaller can trace imports
+      # from packages like segmentation_models_pytorch. It is NOT bundled in
+      # the exe (excluded in DualAnnotator.spec) — training runs via an
+      # external venv (see find_python() in mlops/utils.py).
 
-      - name: Build Lite version
+      - name: Build Full version
         run: |
-          pyinstaller DualAnnotator_Lite.spec
+          pyinstaller DualAnnotator.spec
 
-      - name: Zip Lite build
+      - name: Zip Full build
         run: |
-          Compress-Archive -Path dist\DualAnnotator_Lite -DestinationPath dist\DualAnnotator-Lite.zip
+          Compress-Archive -Path dist\DualAnnotator -DestinationPath dist\DualAnnotator-Full.zip
+
+      # ── Lite build (disabled — uncomment to release a new Lite build) ──
+      # - name: Install Lite dependencies
+      #   run: |
+      #     pip install -r requirements-lite.txt
+      #
+      # - name: Create Lite marker
+      #   run: |
+      #     New-Item -ItemType File -Path "_lite_mode" -Force
+      #
+      # - name: Build Lite version
+      #   run: |
+      #     pyinstaller DualAnnotator_Lite.spec
+      #
+      # - name: Zip Lite build
+      #   run: |
+      #     Compress-Archive -Path dist\DualAnnotator_Lite -DestinationPath dist\DualAnnotator-Lite.zip
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/DualAnnotator-Lite.zip
+            dist/DualAnnotator-Full.zip
+            # dist/DualAnnotator-Lite.zip
           body: |
-            ## DualAnnotator Lite ${{ github.ref_name }}
-
-            Standalone annotation toolkit — no Python or setup required. Extract and run.
-
-            ### Included
-            - **Annotate** — Bounding box, polygon, bezier, circle, ellipse, ring annotations
-            - **RAW → PNG** — Batch convert raw images with colormap and ROI support
-            - **Coin Rotator** — Batch align coin images using SIFT feature matching
-            - **Collaborate** — Host/join simultaneous annotation sessions
+            ## DualAnnotator ${{ github.ref_name }}
 
             ### How to use
-            1. Download **DualAnnotator-Lite.zip**
+            1. Download **DualAnnotator-Full.zip**
             2. Extract anywhere
-            3. Double-click **DualAnnotator_Lite.exe**
+            3. Double-click **DualAnnotator.exe** — GUI works immediately
 
-            > For the full version with ML training & inference, see the Full release.
+            ### Training setup (one-time)
+            Open a terminal in the extracted folder and run:
+            ```
+            python -m venv venv
+            venv\Scripts\activate
+            pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+            pip install pytorch-lightning segmentation-models-pytorch albumentations torchmetrics ultralytics onnxruntime
+            ```
+
+            ### Requirements
+            - Windows 10 or later
+            - [Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe) (install if app doesn't start)
+            - Python 3.11 (only needed for training venv setup)
