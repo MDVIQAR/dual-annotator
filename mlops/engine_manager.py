@@ -12,6 +12,8 @@ from PyQt5.QtCore import QThread, pyqtSignal
 
 from mlops.utils import find_python
 
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
 
 def needs_setup() -> bool:
     """Return True if we're in a frozen exe and no AI Engine venv exists yet."""
@@ -33,7 +35,8 @@ def _find_system_python() -> str | None:
         try:
             result = subprocess.run(
                 [py, "--version"],
-                capture_output=True, text=True, timeout=10
+                capture_output=True, text=True, timeout=10,
+                creationflags=_NO_WINDOW,
             )
             version = result.stdout.strip()
             if result.returncode == 0 and "3.1" in version:
@@ -47,7 +50,8 @@ def _find_system_python() -> str | None:
         try:
             result = subprocess.run(
                 [py_launcher, "-3", "--version"],
-                capture_output=True, text=True, timeout=10
+                capture_output=True, text=True, timeout=10,
+                creationflags=_NO_WINDOW,
             )
             if result.returncode == 0:
                 return f"{py_launcher} -3"
@@ -123,7 +127,10 @@ class EngineInstallWorker(QThread):
         else:
             cmd = [system_py, "-m", "venv", venv_dir]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True,
+            creationflags=_NO_WINDOW,
+        )
         if result.returncode != 0:
             self.log.emit(f"[ERROR] Failed to create venv: {result.stderr}")
             self.finished.emit(False)
@@ -191,7 +198,10 @@ class EngineInstallWorker(QThread):
             "import torch; import pytorch_lightning; import ultralytics; "
             "import segmentation_models_pytorch; print('ALL OK')"
         ]
-        result = subprocess.run(verify_cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(
+            verify_cmd, capture_output=True, text=True, timeout=30,
+            creationflags=_NO_WINDOW,
+        )
         if result.returncode == 0 and "ALL OK" in result.stdout:
             self.log.emit("  All packages verified successfully!")
             self.log.emit("")
@@ -202,7 +212,8 @@ class EngineInstallWorker(QThread):
             self.progress.emit(100)
             self.finished.emit(True)
         else:
-            self.log.emit(f"[ERROR] Verification failed: {result.stderr}")
+            error_detail = result.stderr.strip() or result.stdout.strip() or "Unknown error"
+            self.log.emit(f"[ERROR] Verification failed: {error_detail}")
             self.finished.emit(False)
 
     def _run_pip(self, venv_py: str, args: list, label: str) -> bool:
@@ -215,9 +226,8 @@ class EngineInstallWorker(QThread):
             encoding="utf-8",
             errors="replace",
             bufsize=1,
+            creationflags=_NO_WINDOW,
         )
-        if sys.platform == "win32":
-            popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 
         try:
             proc = subprocess.Popen(cmd, **popen_kwargs)
