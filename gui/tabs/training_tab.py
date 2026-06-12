@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QLabel, QLineEdit, QPushButton, QComboBox, QSpinBox, QDoubleSpinBox,
     QTextEdit, QProgressBar, QFrame, QFileDialog, QMessageBox, QScrollArea,
-    QRadioButton, QButtonGroup, QCheckBox, QStackedWidget,
+    QRadioButton, QButtonGroup, QCheckBox, QStackedWidget, QDialog,
     QListWidget, QListWidgetItem, QSizePolicy, QSlider, QApplication, QShortcut,
 )
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot, QSize, QTimer
@@ -42,6 +42,7 @@ except Exception:
 from mlops.registry import RegistrySettings, projects_config
 from mlops.training import TrainWorker, run_preflight
 from mlops.export import OnnxWorker
+from mlops.engine_manager import needs_setup, EngineInstallWorker
 
 
 # ---------------------------------------------------------------------------
@@ -552,6 +553,75 @@ def _make_collapsible(title: str, content: QWidget, collapsed: bool = False) -> 
     vlay.addWidget(btn)
     vlay.addWidget(content)
     return outer
+
+
+# ---------------------------------------------------------------------------
+# AI Engine setup dialog
+# ---------------------------------------------------------------------------
+
+class _EngineSetupDialog(QDialog):
+    """Modal dialog showing AI Engine installation progress."""
+
+    setup_complete = pyqtSignal(bool)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("AI Engine Setup")
+        self.setMinimumSize(600, 400)
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+
+        header = QLabel(
+            "First-time setup — Installing AI Engine\n\n"
+            "This downloads and installs PyTorch and ML packages (~2 GB).\n"
+            "It only happens once. Please don't close this window."
+        )
+        header.setWordWrap(True)
+        header.setStyleSheet("font-size: 13px; padding: 10px;")
+        layout.addWidget(header)
+
+        self._progress = QProgressBar()
+        self._progress.setRange(0, 100)
+        self._progress.setValue(0)
+        layout.addWidget(self._progress)
+
+        self._console = QTextEdit()
+        self._console.setReadOnly(True)
+        self._console.setStyleSheet(
+            "QTextEdit { background: #1a1a1a; color: #cccccc; "
+            "font-family: Consolas, monospace; font-size: 11px; }"
+        )
+        layout.addWidget(self._console)
+
+        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn.clicked.connect(self._on_cancel)
+        layout.addWidget(self._cancel_btn)
+
+        self._worker = EngineInstallWorker(parent=self)
+        self._worker.log.connect(self._append_log)
+        self._worker.progress.connect(self._progress.setValue)
+        self._worker.finished.connect(self._on_finished)
+
+    def start(self):
+        self._worker.start()
+
+    def _append_log(self, line):
+        self._console.append(line)
+        sb = self._console.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def _on_finished(self, success):
+        self._cancel_btn.setText("Close")
+        self._cancel_btn.clicked.disconnect()
+        self._cancel_btn.clicked.connect(self.accept)
+        if success:
+            self._progress.setValue(100)
+        self.setup_complete.emit(success)
+
+    def _on_cancel(self):
+        self._worker.cancel()
+        self.reject()
 
 
 # ---------------------------------------------------------------------------
@@ -2312,6 +2382,24 @@ class TrainingTab(QWidget):
         if not self._run_checks(show_dialog_on_failure=True):
             return
 
+        # ── Check if AI Engine needs setup ──
+        if needs_setup():
+            reply = QMessageBox.question(
+                self,
+                "AI Engine Not Found",
+                "Training requires the AI Engine (PyTorch + ML packages).\n\n"
+                "This is a one-time download (~2 GB) that takes 5-10 minutes.\n\n"
+                "Would you like to install it now?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if reply == QMessageBox.Yes:
+                dialog = _EngineSetupDialog(self)
+                dialog.setup_complete.connect(self._on_engine_setup_done)
+                dialog.start()
+                dialog.exec_()
+            return
+
         try:
             from mlops.training import build_training_config
             cfg = build_training_config(self._get_form_dict())
@@ -2353,6 +2441,23 @@ class TrainingTab(QWidget):
         self._worker.metric.connect(self._on_metric)
         self._worker.finished.connect(self._on_finished)
         self._worker.start()
+
+    def _on_engine_setup_done(self, success: bool):
+        if success:
+            QMessageBox.information(
+                self,
+                "Setup Complete",
+                "AI Engine installed successfully!\n\n"
+                "Click 'Start Training' again to begin.",
+            )
+        else:
+            QMessageBox.warning(
+                self,
+                "Setup Failed",
+                "AI Engine installation failed.\n\n"
+                "Check the log for details. You may need to install\n"
+                "Python 3.11 from python.org and try again.",
+            )
 
     @pyqtSlot(str)
     def _append_log(self, line: str):

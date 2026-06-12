@@ -24,6 +24,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, pyqtSlot
 from PyQt5.QtGui import QPixmap, QDragEnterEvent, QDropEvent
 
+from mlops.engine_manager import needs_setup
+
 
 class _NoScrollDoubleSpinBox(QDoubleSpinBox):
     """QDoubleSpinBox that ignores mouse-wheel to prevent accidental value changes."""
@@ -700,6 +702,15 @@ class ExportTestTab(QWidget):
         if not self._version_folder:
             return
 
+        if needs_setup():
+            QMessageBox.warning(
+                self,
+                "AI Engine Not Found",
+                "This feature requires the AI Engine.\n\n"
+                "Go to the Train tab and click 'Start Training' to install it.",
+            )
+            return
+
         from mlops.export.onnx_worker import OnnxWorker
         self._export_worker = OnnxWorker(self._version_folder, _SCRIPTS_DIR, parent=self)
         self._export_worker.log.connect(self._on_export_log)
@@ -753,6 +764,15 @@ class ExportTestTab(QWidget):
             return
         if not os.path.isdir(test_folder):
             QMessageBox.warning(self, "Missing Folder", f"Test folder not found:\n{test_folder}")
+            return
+
+        if needs_setup():
+            QMessageBox.warning(
+                self,
+                "AI Engine Not Found",
+                "This feature requires the AI Engine.\n\n"
+                "Go to the Train tab and click 'Start Training' to install it.",
+            )
             return
 
         os.makedirs(out_folder, exist_ok=True)
