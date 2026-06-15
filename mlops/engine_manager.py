@@ -180,6 +180,7 @@ class EngineInstallWorker(QThread):
             "torchmetrics",
             "ultralytics",
             "onnxruntime",
+            "onnx<=1.16.0",
             "numpy<2",
         ], "ML packages")
         if not ok:
