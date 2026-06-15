@@ -19,9 +19,16 @@ Dual Annotator covers the full ML pipeline from raw images to a tested model:
 
 ---
 
+## Documentation
+
+Full documentation with tutorials and GIF walkthroughs:
+[dualannotator-docs.netlify.app](https://dualannotator-docs.netlify.app)
+
+---
+
 ## Requirements
 
-- Python 3.9 or higher
+- Python 3.11.x (required — other versions are untested)
 - Windows 10/11 (primary), macOS, Linux
 - Git
 
@@ -98,20 +105,18 @@ python main.py
 ### Prerequisites
 
 - Python 3.11.x
-- Git with LFS (`git lfs install`)
 
 ### Steps
 
 ```powershell
-# Clone (with LFS for images)
 git clone https://github.com/MDVIQAR/dual-annotator.git
 cd dual-annotator
-git lfs pull
 
 # Create venv and install dependencies
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
+# Install torch for PyInstaller import tracing (NOT bundled into the exe)
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 pip install pyinstaller==6.11.1
 
@@ -121,19 +126,30 @@ pyinstaller DualAnnotator.spec
 
 The exe will be at `dist\DualAnnotator\DualAnnotator.exe`.
 
-### Setting up training (required once after building)
+### Setting up training
 
-Create a venv **next to the exe** so training and inference work:
+When you click **Start Training** for the first time, the app automatically
+creates a virtual environment and installs all ML packages (~2 GB download,
+takes 5-10 minutes). This only happens once.
 
-```powershell
-cd dist\DualAnnotator
-python -m venv venv
-venv\Scripts\activate
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-pip install pytorch-lightning segmentation-models-pytorch albumentations torchmetrics ultralytics onnxruntime
-```
+**Prerequisite:** Python 3.11 must be installed on the system with
+"Add Python to PATH" checked during installation.
 
-> **Note:** The GUI works immediately without this step. The venv is only needed when you click **Start Training** or run inference.
+Download: [python.org/downloads](https://www.python.org/downloads/)
+
+> The GUI works immediately without Python installed. Python is only
+> needed when you use training, inference, or ONNX export features.
+
+---
+
+## Lite Build (annotation only)
+
+A standalone annotation-only exe is also available — no Python or setup needed.
+Download **DualAnnotator-Lite.zip** from the
+[Releases](https://github.com/MDVIQAR/dual-annotator/releases) page.
+
+Includes: Annotate, RAW → PNG, Coin Rotator, Collaborate.
+Does not include: Train, Data Prep, Export & Test, Registry, Settings.
 
 ---
 
@@ -356,11 +372,25 @@ DualAnnotator/
 │       ├── collab_tab.py
 │       ├── coin_rotator_tab.py
 │       └── settings_tab.py
-└── mlops/
-    └── scripts/
-        ├── train_unet.py
-        ├── export_onnx.py
-        └── infer_unet.py
+├── mlops/
+│   ├── utils.py                   ← find_python() for venv delegation
+│   ├── engine_manager.py          ← auto venv setup
+│   ├── training/
+│   │   ├── train_worker.py        ← training subprocess manager
+│   │   └── config_builder.py      ← hyperparameter validation
+│   ├── export/
+│   │   ├── onnx_worker.py
+│   │   └── infer_worker.py
+│   └── scripts/
+│       ├── train_unet.py
+│       ├── train_yolo.py
+│       ├── seg_model.py
+│       ├── dataloader_unet.py
+│       ├── export_onnx.py
+│       ├── infer_unet.py
+│       └── infer_yolo.py
+├── DualAnnotator.spec             ← Full build spec
+└── DualAnnotator_Lite.spec        ← Lite build spec
 ```
 
 ---
