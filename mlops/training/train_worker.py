@@ -264,10 +264,17 @@ class TrainWorker(QThread):
         self.log.emit(f"[INFO] Python: {python_exe}")
         cmd = [python_exe, script_path, "--config", config_json_path, "--out", self._version_folder]
 
-        import pathlib
-        project_root = str(pathlib.Path(__file__).resolve().parents[2])
         env = os.environ.copy()
-        env["PYTHONPATH"] = project_root + os.pathsep + env.get("PYTHONPATH", "")
+
+        # When using external venv Python, only add the scripts directory
+        # to PYTHONPATH — NOT the entire _internal/ folder, which would
+        # cause the venv to pick up bundled packages with incompatible DLLs.
+        if python_exe != sys.executable:
+            env["PYTHONPATH"] = self._scripts_dir + os.pathsep + env.get("PYTHONPATH", "")
+        else:
+            import pathlib
+            project_root = str(pathlib.Path(__file__).resolve().parents[2])
+            env["PYTHONPATH"] = project_root + os.pathsep + env.get("PYTHONPATH", "")
 
         popen_kwargs = dict(
             stdout=subprocess.PIPE,

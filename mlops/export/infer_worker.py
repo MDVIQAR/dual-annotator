@@ -51,8 +51,9 @@ class InferWorker(QThread):
         if not os.path.isfile(script):
             raise FileNotFoundError(f"Inference script not found: {script}")
 
+        python_exe = find_python()
         cmd = [
-            find_python(), script,
+            python_exe, script,
             "--onnx",        self._onnx_path,
             "--config",      self._config_path,
             "--test-folder", self._test_folder,
@@ -62,9 +63,16 @@ class InferWorker(QThread):
         if self._model_type == "yolo":
             cmd += ["--conf", str(self._conf)]
 
-        project_root = str(pathlib.Path(__file__).resolve().parents[2])
         env = os.environ.copy()
-        env["PYTHONPATH"] = project_root + os.pathsep + env.get("PYTHONPATH", "")
+
+        # When using external venv Python, only add the scripts directory
+        # to PYTHONPATH — NOT the entire _internal/ folder, which would
+        # cause the venv to pick up bundled packages with incompatible DLLs.
+        if python_exe != sys.executable:
+            env["PYTHONPATH"] = self._scripts_dir + os.pathsep + env.get("PYTHONPATH", "")
+        else:
+            project_root = str(pathlib.Path(__file__).resolve().parents[2])
+            env["PYTHONPATH"] = project_root + os.pathsep + env.get("PYTHONPATH", "")
 
         popen_kwargs = dict(
             stdout   = subprocess.PIPE,

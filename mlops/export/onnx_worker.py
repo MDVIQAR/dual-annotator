@@ -37,11 +37,19 @@ class OnnxWorker(QThread):
 
     def _execute(self):
         script = os.path.join(self._scripts_dir, "export_onnx.py")
-        cmd = [find_python(), script, "--version-folder", self._version_folder]
+        python_exe = find_python()
+        cmd = [python_exe, script, "--version-folder", self._version_folder]
 
-        project_root = str(pathlib.Path(__file__).resolve().parents[2])
         env = os.environ.copy()
-        env["PYTHONPATH"] = project_root + os.pathsep + env.get("PYTHONPATH", "")
+
+        # When using external venv Python, only add the scripts directory
+        # to PYTHONPATH — NOT the entire _internal/ folder, which would
+        # cause the venv to pick up bundled packages with incompatible DLLs.
+        if python_exe != sys.executable:
+            env["PYTHONPATH"] = self._scripts_dir + os.pathsep + env.get("PYTHONPATH", "")
+        else:
+            project_root = str(pathlib.Path(__file__).resolve().parents[2])
+            env["PYTHONPATH"] = project_root + os.pathsep + env.get("PYTHONPATH", "")
 
         popen_kwargs = dict(
             stdout   = subprocess.PIPE,
