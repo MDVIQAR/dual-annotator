@@ -28,7 +28,21 @@ def _get_venv_dir() -> str:
 
 
 def _find_system_python() -> str | None:
-    """Find a system Python 3.11+ that can create venvs."""
+    """Find system Python 3.11 for creating venvs."""
+    # Try py -3.11 first (Python Launcher, most reliable on Windows)
+    py_launcher = shutil.which("py")
+    if py_launcher:
+        try:
+            result = subprocess.run(
+                [py_launcher, "-3.11", "--version"],
+                capture_output=True, text=True, timeout=10,
+                creationflags=_NO_WINDOW,
+            )
+            if result.returncode == 0 and "3.11" in result.stdout:
+                return py_launcher
+        except Exception:
+            pass
+
     # Try 'python' on PATH
     py = shutil.which("python")
     if py and os.path.normcase(py) != os.path.normcase(sys.executable):
@@ -38,23 +52,8 @@ def _find_system_python() -> str | None:
                 capture_output=True, text=True, timeout=10,
                 creationflags=_NO_WINDOW,
             )
-            version = result.stdout.strip()
-            if result.returncode == 0 and "3.1" in version:
+            if result.returncode == 0 and "3.11" in result.stdout:
                 return py
-        except Exception:
-            pass
-
-    # Try 'py -3' (Python Launcher for Windows)
-    py_launcher = shutil.which("py")
-    if py_launcher:
-        try:
-            result = subprocess.run(
-                [py_launcher, "-3", "--version"],
-                capture_output=True, text=True, timeout=10,
-                creationflags=_NO_WINDOW,
-            )
-            if result.returncode == 0:
-                return f"{py_launcher} -3"
         except Exception:
             pass
 
@@ -121,9 +120,8 @@ class EngineInstallWorker(QThread):
             self.log.emit("  Removing old venv...")
             shutil.rmtree(venv_dir, ignore_errors=True)
 
-        if " " in system_py:
-            parts = system_py.split()
-            cmd = parts + ["-m", "venv", venv_dir]
+        if system_py.endswith("py.exe") or system_py.endswith("py"):
+            cmd = [system_py, "-3.11", "-m", "venv", venv_dir]
         else:
             cmd = [system_py, "-m", "venv", venv_dir]
 
@@ -200,7 +198,7 @@ class EngineInstallWorker(QThread):
             "import segmentation_models_pytorch; print('ALL OK')"
         ]
         result = subprocess.run(
-            verify_cmd, capture_output=True, text=True, timeout=30,
+            verify_cmd, capture_output=True, text=True, timeout=120,
             creationflags=_NO_WINDOW,
         )
         if result.returncode == 0 and "ALL OK" in result.stdout:
