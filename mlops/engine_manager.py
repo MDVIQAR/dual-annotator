@@ -123,6 +123,8 @@ class EngineInstallWorker(QThread):
                     self.log.emit("")
                     self.log.emit("  After installing, close and reopen this app,")
                     self.log.emit("  then click Start Training again.")
+                    self.log.emit("")
+                    self.log.emit("  For more help: docs → Train → Troubleshooting")
                     self.finished.emit(False)
                     return
                 except Exception:
@@ -145,6 +147,8 @@ class EngineInstallWorker(QThread):
             self.log.emit("")
             self.log.emit("  4. After installing, CLOSE and REOPEN this app,")
             self.log.emit("     then click Start Training again.")
+            self.log.emit("")
+            self.log.emit("  For more help: docs → Train → Troubleshooting")
             self.finished.emit(False)
             return
 

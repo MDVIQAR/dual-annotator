@@ -2455,8 +2455,9 @@ class TrainingTab(QWidget):
                 self,
                 "Setup Failed",
                 "AI Engine installation failed.\n\n"
-                "Check the log for details. You may need to install\n"
-                "Python 3.11 from python.org and try again.",
+                "Check the log above for details.\n\n"
+                "For step-by-step help, open the docs and go to:\n"
+                "Train → Troubleshooting",
             )
 
     @pyqtSlot(str)
