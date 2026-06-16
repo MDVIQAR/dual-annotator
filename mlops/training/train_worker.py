@@ -266,15 +266,18 @@ class TrainWorker(QThread):
 
         env = os.environ.copy()
 
-        # When using external venv Python, only add the scripts directory
-        # to PYTHONPATH — NOT the entire _internal/ folder, which would
-        # cause the venv to pick up bundled packages with incompatible DLLs.
+        # When using external venv Python, set PYTHONPATH to scripts dir ONLY —
+        # do NOT append the existing value, which would pull in _internal/ from
+        # the frozen app's environment and cause DLL/SSL conflicts.
         if python_exe != sys.executable:
-            env["PYTHONPATH"] = self._scripts_dir + os.pathsep + env.get("PYTHONPATH", "")
+            env["PYTHONPATH"] = self._scripts_dir
         else:
             import pathlib
             project_root = str(pathlib.Path(__file__).resolve().parents[2])
             env["PYTHONPATH"] = project_root + os.pathsep + env.get("PYTHONPATH", "")
+
+        self.log.emit(f"[DEBUG] PYTHONPATH: {env.get('PYTHONPATH')}")
+        self.log.emit(f"[DEBUG] PATH (first 200 chars): {env.get('PATH', '')[:200]}")
 
         popen_kwargs = dict(
             stdout=subprocess.PIPE,

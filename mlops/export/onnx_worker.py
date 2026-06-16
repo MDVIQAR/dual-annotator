@@ -46,7 +46,7 @@ class OnnxWorker(QThread):
         # to PYTHONPATH — NOT the entire _internal/ folder, which would
         # cause the venv to pick up bundled packages with incompatible DLLs.
         if python_exe != sys.executable:
-            env["PYTHONPATH"] = self._scripts_dir + os.pathsep + env.get("PYTHONPATH", "")
+            env["PYTHONPATH"] = self._scripts_dir
         else:
             project_root = str(pathlib.Path(__file__).resolve().parents[2])
             env["PYTHONPATH"] = project_root + os.pathsep + env.get("PYTHONPATH", "")
