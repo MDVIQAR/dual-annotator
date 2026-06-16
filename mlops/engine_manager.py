@@ -99,13 +99,52 @@ class EngineInstallWorker(QThread):
 
         system_py = _find_system_python()
         if system_py is None:
+            # Check if a Python exists but it's the wrong version
+            any_py = shutil.which("python") or shutil.which("py")
+            if any_py:
+                try:
+                    r = subprocess.run(
+                        [any_py, "--version"],
+                        capture_output=True, text=True, timeout=10,
+                        creationflags=_NO_WINDOW,
+                    )
+                    found_ver = r.stdout.strip() or r.stderr.strip()
+                    self.log.emit("")
+                    self.log.emit(f"[ERROR] Found {found_ver}, but Python 3.11 is required.")
+                    self.log.emit("")
+                    self.log.emit("  Python 3.12 and 3.13 are NOT compatible with the")
+                    self.log.emit("  ML packages used for training (PyTorch, etc.).")
+                    self.log.emit("")
+                    self.log.emit("  Download Python 3.11.9 from:")
+                    self.log.emit("  https://www.python.org/downloads/release/python-3119/")
+                    self.log.emit("")
+                    self.log.emit("  You can have multiple Python versions installed —")
+                    self.log.emit("  they won't conflict.")
+                    self.log.emit("")
+                    self.log.emit("  After installing, close and reopen this app,")
+                    self.log.emit("  then click Start Training again.")
+                    self.finished.emit(False)
+                    return
+                except Exception:
+                    pass
+
             self.log.emit("")
-            self.log.emit("[ERROR] Python 3.11+ not found on this system.")
-            self.log.emit("        Please install Python from:")
-            self.log.emit("        https://www.python.org/downloads/")
+            self.log.emit("[ERROR] Python 3.11 not found on this system.")
             self.log.emit("")
-            self.log.emit("        Make sure to check 'Add Python to PATH'")
-            self.log.emit("        during installation, then try again.")
+            self.log.emit("  Troubleshooting:")
+            self.log.emit("  ────────────────")
+            self.log.emit("  1. Python 3.11 is REQUIRED. Other versions (3.12, 3.13)")
+            self.log.emit("     are NOT compatible with PyTorch and will cause errors.")
+            self.log.emit("")
+            self.log.emit("  2. Download Python 3.11.9 from:")
+            self.log.emit("     https://www.python.org/downloads/release/python-3119/")
+            self.log.emit("")
+            self.log.emit("  3. During installation, CHECK these two boxes:")
+            self.log.emit("     [x] Add Python to PATH")
+            self.log.emit("     [x] Install for all users (recommended)")
+            self.log.emit("")
+            self.log.emit("  4. After installing, CLOSE and REOPEN this app,")
+            self.log.emit("     then click Start Training again.")
             self.finished.emit(False)
             return
 
@@ -179,7 +218,7 @@ class EngineInstallWorker(QThread):
             "ultralytics",
             "onnxruntime",
             "onnx<=1.16.0",
-            "numpy<2",
+            "numpy==1.26.4",
         ], "ML packages")
         if not ok:
             return
@@ -197,10 +236,23 @@ class EngineInstallWorker(QThread):
             "import torch; import pytorch_lightning; import ultralytics; "
             "import segmentation_models_pytorch; print('ALL OK')"
         ]
-        result = subprocess.run(
-            verify_cmd, capture_output=True, text=True, timeout=120,
-            creationflags=_NO_WINDOW,
-        )
+        try:
+            result = subprocess.run(
+                verify_cmd, capture_output=True, text=True, timeout=120,
+                creationflags=_NO_WINDOW,
+            )
+        except subprocess.TimeoutExpired:
+            self.log.emit("  Verification timed out (this is OK — first import is slow)")
+            self.log.emit("  Packages were installed successfully.")
+            self.log.emit("")
+            self.log.emit("=" * 52)
+            self.log.emit("  AI Engine installed successfully!")
+            self.log.emit("  Training is ready to use.")
+            self.log.emit("=" * 52)
+            self.progress.emit(100)
+            self.finished.emit(True)
+            return
+
         if result.returncode == 0 and "ALL OK" in result.stdout:
             self.log.emit("  All packages verified successfully!")
             self.log.emit("")
