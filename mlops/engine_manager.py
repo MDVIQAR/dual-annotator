@@ -28,22 +28,8 @@ def _get_venv_dir() -> str:
 
 
 def _find_system_python() -> str | None:
-    """Find system Python 3.11 for creating venvs."""
-    # Try py -3.11 first (Python Launcher, most reliable on Windows)
-    py_launcher = shutil.which("py")
-    if py_launcher:
-        try:
-            result = subprocess.run(
-                [py_launcher, "-3.11", "--version"],
-                capture_output=True, text=True, timeout=10,
-                creationflags=_NO_WINDOW,
-            )
-            if result.returncode == 0 and "3.11" in result.stdout:
-                return py_launcher
-        except Exception:
-            pass
-
-    # Try 'python' on PATH
+    """Find Python 3.11 specifically."""
+    # Try 'python' on PATH first
     py = shutil.which("python")
     if py and os.path.normcase(py) != os.path.normcase(sys.executable):
         try:
@@ -54,6 +40,20 @@ def _find_system_python() -> str | None:
             )
             if result.returncode == 0 and "3.11" in result.stdout:
                 return py
+        except Exception:
+            pass
+
+    # Then try py -3.11 (Python Launcher)
+    py_launcher = shutil.which("py")
+    if py_launcher:
+        try:
+            result = subprocess.run(
+                [py_launcher, "-3.11", "--version"],
+                capture_output=True, text=True, timeout=10,
+                creationflags=_NO_WINDOW,
+            )
+            if result.returncode == 0 and "3.11" in result.stdout:
+                return f"{py_launcher} -3.11"
         except Exception:
             pass
 
@@ -120,8 +120,8 @@ class EngineInstallWorker(QThread):
             self.log.emit("  Removing old venv...")
             shutil.rmtree(venv_dir, ignore_errors=True)
 
-        if system_py.endswith("py.exe") or system_py.endswith("py"):
-            cmd = [system_py, "-3.11", "-m", "venv", venv_dir]
+        if " " in system_py:
+            cmd = system_py.split() + ["-m", "venv", venv_dir]
         else:
             cmd = [system_py, "-m", "venv", venv_dir]
 
