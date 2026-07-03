@@ -241,7 +241,7 @@ class ConcentricExporter:
         inner zones always appear on top of outer zones in the final image.
         This matches the inner-wins visual rule without needing cutout logic.
         """
-        brightened = ImageEnhance.Brightness(img).enhance(1.8)
+        brightened = ImageEnhance.Brightness(img).enhance(1.2)
         overlay    = brightened.convert("RGBA")
         draw_layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
         draw       = ImageDraw.Draw(draw_layer)
@@ -255,7 +255,7 @@ class ConcentricExporter:
             g = int(hex_c[3:5], 16)
             b = int(hex_c[5:7], 16)
             self._draw_ann_rgba(draw, ann, img.width, img.height,
-                                (r, g, b, 160), (255, 255, 255, 255))
+                                (r, g, b, 110), (255, 255, 255, 255))
 
         result = Image.alpha_composite(overlay, draw_layer).convert("RGB")
         result.save(os.path.join(overlay_dir, stem + ".png"))
@@ -265,7 +265,7 @@ class ConcentricExporter:
         t   = ann.get("shape_type")
         np_ = ann.get("native_params", {})
         pts = ann.get("points", [])
-        ow  = 3
+        ow  = 1
 
         if t == "box":
             cx = np_.get("cx_norm",0)*iw; cy = np_.get("cy_norm",0)*ih

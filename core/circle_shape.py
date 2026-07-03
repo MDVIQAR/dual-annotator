@@ -34,23 +34,36 @@ class CircleShape(Shape):
     
     def move(self, dx, dy):
         """Move the circle by delta (normalized)"""
+        old_cx = self.center_x
+        old_cy = self.center_y
+
         self.center_x += dx
         self.center_y += dy
+
+        # Keep circle within image bounds
+        r_px = self.radius * max(self.image_width, self.image_height)
+        margin_x = r_px / self.image_width
+        margin_y = r_px / self.image_height
+        self.center_x = max(margin_x, min(1.0 - margin_x, self.center_x))
+        self.center_y = max(margin_y, min(1.0 - margin_y, self.center_y))
+
+        actual_dx = self.center_x - old_cx
+        actual_dy = self.center_y - old_cy
+
         if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'move'):
-            self.inner_shape.move(dx, dy)
+            self.inner_shape.move(actual_dx, actual_dy)
         
     def get_resize_handles(self):
-        """Get resize handles - only corner handles for simplicity"""
+        """Get resize handles - fixed-center cardinal handles"""
         cx, cy, r = self.to_pixels()
-        
-        # Just use 4 corner handles like a box
+
         handles = {
-            'top_left': (cx - r, cy - r),
-            'top_right': (cx + r, cy - r),
-            'bottom_left': (cx - r, cy + r),
-            'bottom_right': (cx + r, cy + r)
+            'top':    (cx,     cy - r),
+            'bottom': (cx,     cy + r),
+            'left':   (cx - r, cy    ),
+            'right':  (cx + r, cy    ),
         }
-        
+
         if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'get_resize_handles'):
             inner_handles = self.inner_shape.get_resize_handles()
             for k, (hx, hy) in inner_handles.items():
@@ -127,47 +140,33 @@ class CircleShape(Shape):
                     return self.inner_shape.resize_from_handle(inner_handle, dx, dy)
             return False
 
-        # ── Outer handle drag ──────────────────────────────────────────
+        # ── Outer handle drag — fixed center, radius-only resize ───────
         if self._resize_origin is None:
             return False
 
         orig_cx, orig_cy, orig_r = self._resize_origin
 
-        left   = orig_cx - orig_r
-        right  = orig_cx + orig_r
-        top    = orig_cy - orig_r
-        bottom = orig_cy + orig_r
-
-        if handle_name == 'top_left':
-            left += dx;  top    += dy
-        elif handle_name == 'top_right':
-            right += dx; top    += dy
-        elif handle_name == 'bottom_left':
-            left += dx;  bottom += dy
-        elif handle_name == 'bottom_right':
-            right += dx; bottom += dy
+        if handle_name == 'right':
+            new_r = orig_r + dx
+        elif handle_name == 'left':
+            new_r = orig_r - dx
+        elif handle_name == 'bottom':
+            new_r = orig_r + dy
+        elif handle_name == 'top':
+            new_r = orig_r - dy
         else:
             return False
-
-        if right <= left:
-            right = left + 1
-        if bottom <= top:
-            bottom = top + 1
-
-        new_cx = (left + right) / 2
-        new_cy = (top + bottom) / 2
-        new_r  = min((right - left), (bottom - top)) / 2
 
         min_radius = 5
         max_radius = min(self.image_width, self.image_height) // 2
         new_r = max(min_radius, min(new_r, max_radius))
 
-        # Clamp: outer radius must always be larger than inner radius + gap
+        # Inner shape constraint
         if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'to_pixels'):
             res = self.inner_shape.to_pixels()
             if len(res) == 3: # Circle inside
                 cx_i, cy_i, r_i = res
-                dist = math.hypot(cx_i - new_cx, cy_i - new_cy)
+                dist = math.hypot(cx_i - orig_cx, cy_i - orig_cy)
                 if dist + r_i > new_r - MIN_GAP:
                     return False
             elif len(res) == 4: # Ellipse or Box inside
@@ -175,11 +174,12 @@ class CircleShape(Shape):
                 bcx = (ix1 + ix2) / 2
                 bcy = (iy1 + iy2) / 2
                 br = math.hypot(ix1 - bcx, iy1 - bcy)
-                if math.hypot(bcx - new_cx, bcy - new_cy) + br > new_r - MIN_GAP:
+                if math.hypot(bcx - orig_cx, bcy - orig_cy) + br > new_r - MIN_GAP:
                     return False
 
-        self.center_x = new_cx / self.image_width
-        self.center_y = new_cy / self.image_height
+        # Center stays fixed, only radius changes
+        self.center_x = orig_cx / self.image_width
+        self.center_y = orig_cy / self.image_height
         self.radius   = new_r / max(self.image_width, self.image_height)
 
         return True

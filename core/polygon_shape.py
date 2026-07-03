@@ -72,17 +72,26 @@ class PolygonShape(Shape):
     
     def move(self, dx, dy):
         """Move the polygon by delta (normalized)"""
-        new_points = []
-        for nx, ny in self.points:
-            new_points.append((nx + dx, ny + dy))
-        self.points = new_points
+        if not self.points:
+            return
+
+        all_x = [nx + dx for nx, ny in self.points]
+        all_y = [ny + dy for nx, ny in self.points]
+
+        min_x, max_x = min(all_x), max(all_x)
+        min_y, max_y = min(all_y), max(all_y)
+
+        if min_x < 0: dx -= min_x
+        if max_x > 1: dx -= (max_x - 1)
+        if min_y < 0: dy -= min_y
+        if max_y > 1: dy -= (max_y - 1)
+
+        self.points = [(nx + dx, ny + dy) for nx, ny in self.points]
+
         # Also move inner cutout
         if self.inner_points:
-            new_inner = []
-            for nx, ny in self.inner_points:
-                new_inner.append((nx + dx, ny + dy))
-            self.inner_points = new_inner
-            
+            self.inner_points = [(nx + dx, ny + dy) for nx, ny in self.inner_points]
+
         if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'move'):
             self.inner_shape.move(dx, dy)
         

@@ -255,6 +255,7 @@ class DataPrepTab(QWidget):
         self._settings = _load_settings()
         self._worker = None
         self._last_staged_info = {}
+        self._total_pairs = 0
         self._setup_ui()
         self._restore_settings()
 
@@ -749,7 +750,7 @@ class DataPrepTab(QWidget):
         self._test_edit.setText(s.get("test_folder", ""))
         self._class_edit.setText(s.get("class_names", ""))
         self._slider.setValue(int(s.get("train_pct", 80)))
-        self._on_slider_changed(self._slider.value())
+        self._refresh_split_preview()
 
     def _autosave(self):
         self._settings["task_type"]     = "yolo" if self._radio_yolo.isChecked() else "unet"
@@ -763,6 +764,7 @@ class DataPrepTab(QWidget):
         self._settings["class_names"]   = self._class_edit.text()
         self._settings["train_pct"]     = self._slider.value()
         _save_settings(self._settings)
+        self._refresh_split_preview()
 
     # ------------------------------------------------------------------
     # Signal handlers
@@ -790,7 +792,31 @@ class DataPrepTab(QWidget):
         self._autosave()
 
     def _on_slider_changed(self, value: int):
-        self._split_label.setText(f"Train: {value}%   Val: {100 - value}%")
+        if self._total_pairs > 0:
+            n = self._total_pairs
+            train_n = max(1, int(round(n * value / 100)))
+            if train_n >= n:
+                train_n = n - 1
+            val_n = n - train_n
+            self._split_label.setText(
+                f"Train: {train_n} imgs ({value}%)   Val: {val_n} imgs ({100 - value}%)"
+            )
+        else:
+            self._split_label.setText(f"Train: {value}%   Val: {100 - value}%")
+
+    def _refresh_split_preview(self):
+        """Rescan the matched image/label pairs so the slider label shows exact counts."""
+        images = self._images_edit.text().strip()
+        labels = self._labels_edit.text().strip()
+        task = "yolo" if self._radio_yolo.isChecked() else "unet"
+        total = 0
+        if images and labels and os.path.isdir(images) and os.path.isdir(labels):
+            try:
+                total = DataPreparator.scan_pairs(images, labels, task)["total"]
+            except Exception:
+                total = 0
+        self._total_pairs = total
+        self._on_slider_changed(self._slider.value())
 
     def _browse(self, edit: QLineEdit, key: str):
         folder = QFileDialog.getExistingDirectory(self, "Select Folder", edit.text() or "")

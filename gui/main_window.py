@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (
     QComboBox, QFrame, QPushButton, QShortcut, QTextEdit, QLineEdit, QScrollArea,
     QTabWidget
 )
-from PyQt5.QtCore import Qt, QSize, pyqtSignal, QTimer
+from PyQt5.QtCore import Qt, QSize, pyqtSignal, QTimer, QEvent
 from PyQt5.QtGui import QIcon, QKeySequence, QFont, QColor, QPalette, QPolygonF
 import os
 import sys
@@ -361,6 +361,8 @@ class MainWindow(QMainWindow):
         self.collab_mode   = "offline"  # "offline" | "host" | "client"
         self.collab_client = None       # CollabClient instance when joined
         self._collab_locks = {}         # {filename: username} latest sync
+        self._annotator_label = None    # overlay showing who annotated current image
+        self.canvas.installEventFilter(self)
 
         # Keyboard shortcuts (Tab handled by menu action to avoid ambiguity)
 
@@ -378,12 +380,14 @@ class MainWindow(QMainWindow):
             # In client mode: serialize and POST to server instead of local disk
             self._save_annotations_to_server(filename, shapes_copy)
         else:
+            annotated_by = "Admin (Host)" if self.collab_mode == "host" else None
             self.project_manager.schedule_autosave(
                 filename,
                 shapes_copy,
                 self.canvas.mode,
                 self.canvas.image_width,
-                self.canvas.image_height
+                self.canvas.image_height,
+                annotated_by=annotated_by,
             )
         # Update live shape count in status bar
         count = len([s for s in self.canvas.shapes if getattr(s, 'hollow_role', None) != 'inner'])
@@ -426,6 +430,39 @@ class MainWindow(QMainWindow):
         if class_counts:
             text += f"\n\ud83c\udfaf {class_counts}"
         self.stats_label.setText(text)
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # ANNOTATOR OVERLAY — shows who annotated the current image on the canvas
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _show_annotator_overlay(self, username: str):
+        """Show or hide a pinned label on the canvas indicating who annotated this image."""
+        if username:
+            if self._annotator_label is None:
+                self._annotator_label = QLabel(self.canvas)
+                self._annotator_label.setStyleSheet(
+                    "background: rgba(15,23,42,210); color:#cbd5e1;"
+                    "border:1px solid #334155; border-radius:6px;"
+                    "padding:4px 10px; font-size:11px;"
+                )
+                self._annotator_label.setAttribute(Qt.WA_TransparentForMouseEvents)
+            self._annotator_label.setText(f"✏️  Annotated by  {username}")
+            self._annotator_label.adjustSize()
+            self._reposition_annotator_label()
+            self._annotator_label.show()
+            self._annotator_label.raise_()
+        elif self._annotator_label is not None:
+            self._annotator_label.hide()
+
+    def _reposition_annotator_label(self):
+        if self._annotator_label and self._annotator_label.isVisible():
+            lbl = self._annotator_label
+            lbl.move(10, self.canvas.height() - lbl.height() - 10)
+
+    def eventFilter(self, obj, event):
+        if obj is self.canvas and event.type() == QEvent.Resize:
+            self._reposition_annotator_label()
+        return super().eventFilter(obj, event)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # COLLAB INTEGRATION — helper methods
@@ -541,6 +578,7 @@ class MainWindow(QMainWindow):
             "image_height":   h,
             "status":         status_to_send,
             "active_mode":    mode,
+            "annotated_by":   self.collab_client.username,
             "last_modified":  datetime.now().isoformat(),
             "layers": {
                 "yolo":       {"visible": mode == "yolo",       "annotations": layer_data if mode == "yolo"       else []},
@@ -1108,6 +1146,13 @@ class MainWindow(QMainWindow):
         self.collab_tab.session_hosted.connect(self._on_session_hosted)
         self.collab_tab.session_joined.connect(self._on_session_joined)
         self.collab_tab.session_stopped.connect(self._on_session_stopped)
+
+        # Status bar only makes sense while on the Annotate tab
+        self.tab_widget.currentChanged.connect(self._on_tab_changed)
+        self._on_tab_changed(self.tab_widget.currentIndex())
+
+    def _on_tab_changed(self, index):
+        self.status_bar.setVisible(self.tab_widget.widget(index) is self.annotate_tab)
 
         if not LITE_MODE:
             self.registry_tab.retrain_requested.connect(self._on_retrain_requested)
@@ -1896,6 +1941,7 @@ class MainWindow(QMainWindow):
                         locked_by = self.collab_tab._server.state.locks.get(filename, "Unknown")
                         self.status_bar.showMessage(f"🔒 {filename} is locked by {locked_by} — view only", 0)
 
+            self._show_annotator_overlay(None)   # clear previous image's label
             self.canvas.load_image(image_path)  # clears canvas.shapes
 
             # AUTOSAVE INTEGRATION - restore annotations after image loads
@@ -1950,6 +1996,7 @@ class MainWindow(QMainWindow):
                         
         self.canvas.shapes = shapes
         self.canvas.update()
+        self._show_annotator_overlay(data.get("annotated_by"))
 
     def _show_hash_warning(self):
         """Show a temporary hash mismatch warning label or banner"""

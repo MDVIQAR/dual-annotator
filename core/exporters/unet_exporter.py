@@ -84,7 +84,7 @@ class UNetExporter:
 
         # Step 6 — Generate overlay
         # Brighten the base image so annotations are visible on dark/thermal images
-        brightened = ImageEnhance.Brightness(img).enhance(1.8)
+        brightened = ImageEnhance.Brightness(img).enhance(1.2)
         overlay_base = brightened.convert("RGBA")
         draw_layer = Image.new("RGBA", (iw, ih), (0, 0, 0, 0))
         overlay_draw = ImageDraw.Draw(draw_layer)
@@ -100,8 +100,8 @@ class UNetExporter:
             r = int(color_hex[1:3], 16)
             g = int(color_hex[3:5], 16)
             b = int(color_hex[5:7], 16)
-            # High-opacity fill for clear visibility on dark backgrounds
-            fill_rgba = (r, g, b, 200)
+            # Fill for clear visibility on dark backgrounds, without hiding detail underneath
+            fill_rgba = (r, g, b, 110)
             # Fully opaque bright outline for sharp boundary
             outline_rgba = (255, 255, 255, 255)
             self._draw_ann_on_overlay(overlay_draw, ann, iw, ih, fill_rgba, outline_rgba)
@@ -298,7 +298,7 @@ class UNetExporter:
         t   = ann.get("shape_type")
         np_ = ann.get("native_params", {})
         pts = ann.get("points", [])
-        ow  = 3  # outline width in pixels
+        ow  = 1  # outline width in pixels
 
         if t == "box":
             cx = np_.get("cx_norm", 0) * iw

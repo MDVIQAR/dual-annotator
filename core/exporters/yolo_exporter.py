@@ -1,11 +1,13 @@
 import os
 import shutil
+from PIL import Image, ImageDraw, ImageEnhance
 
 class YoloExporter:
-    def __init__(self, output_dir, split_enabled, ordered_classes):
+    def __init__(self, output_dir, split_enabled, ordered_classes, class_manager=None):
         self.output_dir = output_dir
         self.split_enabled = split_enabled
         self.ordered_classes = ordered_classes  # List[ClassCategory]
+        self.class_manager = class_manager
         self._clamped_count = 0   # track warnings
 
     def export_image(self, filename, json_data, class_index,
@@ -20,6 +22,7 @@ class YoloExporter:
         ih = json_data.get("image_height", 1)
 
         lines = []
+        boxes = []  # (class_id, cx, cy, w, h) normalized — for the overlay
         for ann in annotations:
             if ann.get("hollow_role") == "inner":
                 continue
@@ -32,6 +35,7 @@ class YoloExporter:
                 continue
             cx, cy, w, h = yolo_values
             lines.append(f"{class_idx} {cx} {cy} {w} {h}\n")
+            boxes.append((cid, cx, cy, w, h))
 
         # Determine output paths
         stem = os.path.splitext(filename)[0]
@@ -41,9 +45,11 @@ class YoloExporter:
         else:
             label_dir = os.path.join(output_dir, "labels")
             image_dir = os.path.join(output_dir, "images")
+        overlay_dir = os.path.join(output_dir, "overlays")  # always at root, never split
 
         os.makedirs(label_dir, exist_ok=True)
         os.makedirs(image_dir, exist_ok=True)
+        os.makedirs(overlay_dir, exist_ok=True)
 
         # Write label file (always, even if empty - YOLO expects empty .txt
         # for images with no annotations in that split)
@@ -56,7 +62,37 @@ class YoloExporter:
         if not os.path.exists(dest_image):
             shutil.copy2(image_path, dest_image)
 
+        # Write overlay PNG for visual QA (matches unet/concentric styling)
+        self._write_overlay(image_path, boxes, overlay_dir, stem, iw, ih)
+
         return len(lines)   # number of annotations written
+
+    def _write_overlay(self, image_path, boxes, overlay_dir, stem, iw, ih):
+        """Write a coloured overlay PNG for visual QA, drawing the exact
+        boxes written to the .txt label (post box-conversion), matching
+        the brightness/fill/outline styling used by the other exporters."""
+        if not boxes:
+            return
+        img = Image.open(image_path).convert("RGB")
+        brightened = ImageEnhance.Brightness(img).enhance(1.2)
+        overlay = brightened.convert("RGBA")
+        draw_layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(draw_layer)
+
+        for cid, cx, cy, w, h in boxes:
+            cls_obj = self.class_manager.get_class(cid) if self.class_manager else None
+            hex_c = cls_obj.color if cls_obj else "#00FF00"
+            r = int(hex_c[1:3], 16)
+            g = int(hex_c[3:5], 16)
+            b = int(hex_c[5:7], 16)
+            px, py = cx * iw, cy * ih
+            pw, ph = w * iw, h * ih
+            bbox = [px - pw / 2, py - ph / 2, px + pw / 2, py + ph / 2]
+            draw.rectangle(bbox, fill=(r, g, b, 110))
+            draw.rectangle(bbox, outline=(255, 255, 255, 255), width=1)
+
+        result = Image.alpha_composite(overlay, draw_layer).convert("RGB")
+        result.save(os.path.join(overlay_dir, stem + ".png"))
 
     def _ann_to_yolo(self, ann, iw, ih):
         """Convert annotation dict to (cx_norm, cy_norm, w_norm, h_norm).

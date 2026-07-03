@@ -89,10 +89,24 @@ class BoundingBox:
         
     def move(self, dx, dy):
         """Move the bounding box by delta (normalized)"""
+        old_x = self.x
+        old_y = self.y
+
         self.x += dx
         self.y += dy
+
+        # Keep bounding box within image bounds (x/y are the box's center)
+        half_w = self.width / 2
+        half_h = self.height / 2
+        self.x = max(half_w, min(1.0 - half_w, self.x))
+        self.y = max(half_h, min(1.0 - half_h, self.y))
+
+        # Use actual movement after clamping for inner shape
+        actual_dx = self.x - old_x
+        actual_dy = self.y - old_y
+
         if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'move'):
-            self.inner_shape.move(dx, dy)
+            self.inner_shape.move(actual_dx, actual_dy)
     
     def get_resize_handles(self):
         """Get the positions of resize handles (corners)"""

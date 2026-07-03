@@ -100,6 +100,20 @@ class BezierPolygonShape(Shape):
     # ------------------------------------------------------------------
 
     def move(self, dx, dy):
+        if not self.points:
+            return
+
+        all_x = [nx + dx for nx, ny in self.points]
+        all_y = [ny + dy for nx, ny in self.points]
+
+        min_x, max_x = min(all_x), max(all_x)
+        min_y, max_y = min(all_y), max(all_y)
+
+        if min_x < 0: dx -= min_x
+        if max_x > 1: dx -= (max_x - 1)
+        if min_y < 0: dy -= min_y
+        if max_y > 1: dy -= (max_y - 1)
+
         self.points = [(nx + dx, ny + dy) for nx, ny in self.points]
         new_ctrl = []
         for c in self.ctrl:
@@ -110,7 +124,7 @@ class BezierPolygonShape(Shape):
         self.ctrl = new_ctrl
         if self.inner_points:
             self.inner_points = [(nx + dx, ny + dy) for nx, ny in self.inner_points]
-            
+
         if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'move'):
             self.inner_shape.move(dx, dy)
 

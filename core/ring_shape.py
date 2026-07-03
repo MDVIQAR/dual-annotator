@@ -247,11 +247,14 @@ class DonutShape(Shape):
         """Move the donut by delta (normalized)"""
         self.cx += dx
         self.cy += dy
-        # Keep within bounds
-        d = min(self.image_width, self.image_height)
-        max_r = self.outer_r * d / min(self.image_width, self.image_height)
-        self.cx = max(max_r, min(1 - max_r, self.cx))
-        self.cy = max(max_r, min(1 - max_r, self.cy))
+        # Keep within bounds — outer_r is normalized to min(image_width, image_height),
+        # but cx/cy are normalized to image_width/image_height respectively, so convert
+        # outer_r to pixels first, then to per-axis margins before clamping each axis.
+        r_px = self.outer_r * min(self.image_width, self.image_height)
+        margin_x = r_px / self.image_width
+        margin_y = r_px / self.image_height
+        self.cx = max(margin_x, min(1.0 - margin_x, self.cx))
+        self.cy = max(margin_y, min(1.0 - margin_y, self.cy))
     
     def get_outer_handles(self):
         """4 cardinal handles on outer circle - returns list of tuples"""

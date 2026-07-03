@@ -1,5 +1,5 @@
 # gui/canvas.py
-from PyQt5.QtWidgets import QWidget, QApplication, QMenu, QAction
+from PyQt5.QtWidgets import QWidget, QApplication, QMenu, QAction, QMessageBox
 from PyQt5.QtCore import Qt, QPoint, pyqtSignal, QRect, QRectF, QPointF, QTimer
 from PyQt5.QtGui import QPainter, QPixmap, QColor, QPen, QBrush, QFont, QPolygonF, QCursor, QPainterPath
 import os
@@ -269,11 +269,19 @@ class AnnotationCanvas(QWidget):
         """Zoom out by 20% at cursor position"""
         self._zoom_at_cursor(0.8)
         
+    def _warn_no_class_selected(self):
+        """Alert the user (popup + beep) that a class must be added/selected before annotating."""
+        QApplication.beep()
+        QMessageBox.warning(
+            self, "No Class Selected",
+            "Please add and select a class before drawing an annotation."
+        )
+
     def start_drawing(self, pos):
         """Start drawing a new shape"""
         # Force reset all states before starting to draw
         self.force_reset_for_drawing()
-        
+
         if self.class_manager and self.class_manager.get_current_class():
             if self.current_shape_type == 'box':
                 self.drawing = True
@@ -286,6 +294,7 @@ class AnnotationCanvas(QWidget):
                 print(f"⚠️ Cannot draw - invalid shape type")
         else:
             print("⚠️ Cannot draw - no class selected")
+            self._warn_no_class_selected()
         
     def update_drawing(self, pos):
         """Update the current shape while drawing"""
@@ -476,6 +485,18 @@ class AnnotationCanvas(QWidget):
             inner = getattr(shape, 'inner_shape', None)
             if inner and id(inner) not in ids_to_remove:
                 extras.append(inner)
+        # If an inner is being deleted without its outer, un-hollow the surviving outer
+        removed_gids = {
+            getattr(s, 'group_id', None) for s in self.selected_shapes
+            if getattr(s, 'hollow_role', None) == 'inner'
+        }
+        removed_gids.discard(None)
+        if removed_gids:
+            for s in self.shapes:
+                if (id(s) not in ids_to_remove
+                        and getattr(s, 'hollow_role', None) == 'outer'
+                        and getattr(s, 'group_id', None) in removed_gids):
+                    s.detach_inner()
         self.shapes = [s for s in self.shapes if id(s) not in ids_to_remove and s not in extras]
         n = len(self.selected_shapes)
         self._clear_multi_selection()
@@ -985,10 +1006,27 @@ class AnnotationCanvas(QWidget):
         self.update()
         
     def delete_selected(self):
-        """Delete the selected shape"""
+        """Delete the selected shape, keeping any hollow inner/outer pairing consistent."""
         if self.selected_shape:
             self.save_state()  # Save state before deleting
-            self.shapes.remove(self.selected_shape)
+            shape = self.selected_shape
+            to_remove = {id(shape)}
+
+            role = getattr(shape, 'hollow_role', None)
+            if role == 'outer':
+                # Also remove the paired inner's own top-level list entry, if it has one
+                inner = getattr(shape, 'inner_shape', None)
+                if inner is not None:
+                    to_remove.add(id(inner))
+            elif role == 'inner':
+                # Un-hollow the owning outer shape instead of leaving a dangling reference
+                gid = getattr(shape, 'group_id', None)
+                for s in self.shapes:
+                    if getattr(s, 'hollow_role', None) == 'outer' and getattr(s, 'group_id', None) == gid:
+                        s.detach_inner()
+                        break
+
+            self.shapes = [s for s in self.shapes if id(s) not in to_remove]
             self.selected_shape = None
             self.shape_selected.emit("none")
             self.annotation_changed.emit()  # AUTOSAVE INTEGRATION
@@ -1130,13 +1168,7 @@ class AnnotationCanvas(QWidget):
             painter.setPen(QPen(QColor(100, 200, 255), 1))
             painter.drawText(10, 60, "Pan Mode: ON (Space to toggle)")
         
-        # Draw current class indicator
-        if self.class_manager:
-            current_class = self.class_manager.get_current_class()
-            if current_class:
-                painter.setPen(QPen(QColor(current_class.color), 2))
-                painter.setFont(QFont("Arial", 10))
-                painter.drawText(10, 90, f"Class: {current_class.name}")
+
 
     def _draw_hollow_preview(self, painter):
         shape = self._hollow_preview_shape
@@ -1727,39 +1759,41 @@ class AnnotationCanvas(QWidget):
                 painter.drawEllipse(whx - half//2, why - half//2, half, half)
     
     def draw_donut(self, painter, donut, color):
-        """Draw a donut (hollow circle)"""
+        """Draw a donut (hollow circle) using a real even-odd cutout, not an opaque overpaint."""
         cx, cy, outer_r, inner_r = donut.to_pixels()
-        
+
         # Convert to widget coordinates
         wcx = int(cx * self.scale + self.offset_x)
         wcy = int(cy * self.scale + self.offset_y)
         wor = int(outer_r * self.scale)
         wir = int(inner_r * self.scale)
-        
-        # Set pen based on selection
+
+        # Set pen/fill alpha based on selection
         if donut.selected:
             pen = QPen(QColor(255, 255, 0), 3)
-            painter.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 80)))
+            alpha = 80
         else:
             pen = QPen(color, 2)
-            painter.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 50)))
-        
-        painter.setPen(pen)
-        
-        # Draw outer circle
-        painter.drawEllipse(wcx - wor, wcy - wor, wor * 2, wor * 2)
-        
-        # Draw inner circle (hole) with background color
+            alpha = 50
+
+        # Real hole: outer ellipse minus inner ellipse via even-odd fill rule
+        path = QPainterPath()
+        path.addEllipse(wcx - wor, wcy - wor, wor * 2, wor * 2)
         if wir > 0:
-            painter.setBrush(QBrush(QColor(30, 30, 30)))  # Background color
-            painter.setPen(Qt.NoPen)
+            path.addEllipse(wcx - wir, wcy - wir, wir * 2, wir * 2)
+        path.setFillRule(Qt.OddEvenFill)
+
+        fill_color = QColor(color.red(), color.green(), color.blue(), alpha)
+        painter.setPen(Qt.NoPen)
+        painter.fillPath(path, QBrush(fill_color))
+
+        # Borders (outer + inner, no overpaint needed since the fill already has a real hole)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawEllipse(wcx - wor, wcy - wor, wor * 2, wor * 2)
+        if wir > 0:
             painter.drawEllipse(wcx - wir, wcy - wir, wir * 2, wir * 2)
-            
-            # Redraw outer border
-            painter.setPen(pen)
-            painter.setBrush(Qt.NoBrush)
-            painter.drawEllipse(wcx - wor, wcy - wor, wor * 2, wor * 2)
-        
+
         # Draw handles if selected
         if donut.selected:
             painter.setBrush(QBrush(QColor(255, 255, 255)))
@@ -1779,9 +1813,9 @@ class AnnotationCanvas(QWidget):
                 painter.drawRect(whx - half//2, why - half//2, half, half)
     
     def draw_hollow_ellipse(self, painter, shape, color):
-        """Draw a hollow ellipse"""
+        """Draw a hollow ellipse using a real even-odd cutout, not an opaque overpaint."""
         cx, cy, orx, ory, irx, iry = shape.to_pixels()
-        
+
         # Convert to widget coordinates
         wcx = int(cx * self.scale + self.offset_x)
         wcy = int(cy * self.scale + self.offset_y)
@@ -1789,31 +1823,33 @@ class AnnotationCanvas(QWidget):
         wory = int(ory * self.scale)
         wirx = int(irx * self.scale)
         wiry = int(iry * self.scale)
-        
-        # Set pen based on selection
+
+        # Set pen/fill alpha based on selection
         if shape.selected:
             pen = QPen(QColor(255, 255, 0), 3)
-            painter.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 80)))
+            alpha = 80
         else:
             pen = QPen(color, 2)
-            painter.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 50)))
-        
-        painter.setPen(pen)
-        
-        # Draw outer ellipse
-        painter.drawEllipse(wcx - worx, wcy - wory, worx * 2, wory * 2)
-        
-        # Draw inner ellipse (hole) with background color
+            alpha = 50
+
+        # Real hole: outer ellipse minus inner ellipse via even-odd fill rule
+        path = QPainterPath()
+        path.addEllipse(wcx - worx, wcy - wory, worx * 2, wory * 2)
         if wirx > 0 and wiry > 0:
-            painter.setBrush(QBrush(QColor(30, 30, 30)))
-            painter.setPen(Qt.NoPen)
+            path.addEllipse(wcx - wirx, wcy - wiry, wirx * 2, wiry * 2)
+        path.setFillRule(Qt.OddEvenFill)
+
+        fill_color = QColor(color.red(), color.green(), color.blue(), alpha)
+        painter.setPen(Qt.NoPen)
+        painter.fillPath(path, QBrush(fill_color))
+
+        # Borders (outer + inner, no overpaint needed since the fill already has a real hole)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawEllipse(wcx - worx, wcy - wory, worx * 2, wory * 2)
+        if wirx > 0 and wiry > 0:
             painter.drawEllipse(wcx - wirx, wcy - wiry, wirx * 2, wiry * 2)
-            
-            # Redraw outer border
-            painter.setPen(pen)
-            painter.setBrush(Qt.NoBrush)
-            painter.drawEllipse(wcx - worx, wcy - wory, worx * 2, wory * 2)
-        
+
         # Draw handles if selected
         if shape.selected:
             painter.setBrush(QBrush(QColor(255, 255, 255)))
@@ -2183,7 +2219,7 @@ class AnnotationCanvas(QWidget):
                         # Start resizing
                         self.resizing = True
                         self.resizing_handle = handle
-                        self.resize_start_pos = self.widget_to_image(event.pos())
+                        self.resize_start_pos = self.widget_to_image_unclamped(event.pos())
                         
                         # Call begin_resize on the shape
                         if hasattr(self.selected_shape, 'begin_resize'):
@@ -2332,7 +2368,7 @@ class AnnotationCanvas(QWidget):
         
         # Handle resizing - with reduced sensitivity
         elif self.resizing and self.resizing_handle and self.selected_shape:
-            current_pos = self.widget_to_image(event.pos())
+            current_pos = self.widget_to_image_unclamped(event.pos())
             dx = current_pos[0] - self.resize_start_pos[0]
             dy = current_pos[1] - self.resize_start_pos[1]
             
@@ -2805,17 +2841,33 @@ class AnnotationCanvas(QWidget):
         """Convert widget coordinates to image coordinates"""
         if not self.pixmap or self.pixmap.isNull():
             return 0, 0
-            
+
         # Calculate image position
         image_x = (pos.x() - self.offset_x) / self.scale
         image_y = (pos.y() - self.offset_y) / self.scale
-        
+
         # Clamp to image boundaries
         image_x = max(0, min(self.image_width - 1, int(round(image_x))))
         image_y = max(0, min(self.image_height - 1, int(round(image_y))))
-        
+
         return image_x, image_y
-        
+
+    def widget_to_image_unclamped(self, pos):
+        """Same conversion as widget_to_image(), without clamping to image bounds.
+
+        Used only for resize-drag delta math: clamping the mouse position to the
+        image's native pixel bounds caps how far a shape can grow once the cursor's
+        mapped position hits the image edge, well before the user stops dragging
+        on screen. Deltas computed from this method aren't subject to that cap.
+        """
+        if not self.pixmap or self.pixmap.isNull():
+            return 0, 0
+
+        image_x = (pos.x() - self.offset_x) / self.scale
+        image_y = (pos.y() - self.offset_y) / self.scale
+
+        return int(round(image_x)), int(round(image_y))
+
     def resizeEvent(self, event):
         """Handle resize events"""
         if self.pixmap and not self.pixmap.isNull():
@@ -3129,9 +3181,11 @@ class AnnotationCanvas(QWidget):
                 else:
                     self.polygon_points.append((image_x, image_y))
                     print(f"🔷 Added polygon point ({image_x}, {image_y})")
-            
+
             self.update()
-            
+        else:
+            self._warn_no_class_selected()
+
     def finish_polygon(self):
         """Finish drawing polygon"""
         if len(self.polygon_points) >= 3:
@@ -3435,6 +3489,7 @@ class AnnotationCanvas(QWidget):
         """Add a point to the bezier polygon being drawn"""
         if not self.class_manager or not self.class_manager.get_current_class():
             print("⚠️ Cannot draw - no class selected")
+            self._warn_no_class_selected()
             return
             
         img_pos = self.widget_to_image(pos)
@@ -3531,7 +3586,9 @@ class AnnotationCanvas(QWidget):
             self.circle_center = self.widget_to_image(pos)
             self.circle_radius = 0
             print(f"⭕ Started circle at center ({self.circle_center[0]}, {self.circle_center[1]})")
-            
+        else:
+            self._warn_no_class_selected()
+
     def update_circle_drawing(self, pos):
         """Update circle while drawing"""
         if self.circle_center:
@@ -3578,7 +3635,9 @@ class AnnotationCanvas(QWidget):
             self.ellipse_radius_x = 0
             self.ellipse_radius_y = 0
             print(f"🟢 Started ellipse at center ({self.ellipse_center[0]}, {self.ellipse_center[1]})")
-            
+        else:
+            self._warn_no_class_selected()
+
     def update_ellipse_drawing(self, pos):
         """Update ellipse while drawing"""
         if hasattr(self, 'ellipse_center') and self.ellipse_center:
@@ -3632,7 +3691,9 @@ class AnnotationCanvas(QWidget):
                 image_size=(self.image_width, self.image_height)
             )
             print("🔷 Started drawing frame")
-    
+        else:
+            self._warn_no_class_selected()
+
     def start_donut_drawing(self, pos):
         """Start drawing a donut (hollow circle)"""
         if self.class_manager and self.class_manager.get_current_class():
@@ -3646,7 +3707,9 @@ class AnnotationCanvas(QWidget):
             # route to generic update_drawing()/finish_drawing() instead of donut-specific handlers.
             self.current_shape = None
             print("🔷 Started drawing donut - drag to set size")
-    
+        else:
+            self._warn_no_class_selected()
+
     def update_donut_drawing(self, pos):
         """Update donut while drawing - only preview, no shape created yet"""
         if hasattr(self, 'donut_center') and self.donut_center:
@@ -3695,7 +3758,9 @@ class AnnotationCanvas(QWidget):
             self.hollow_ellipse_ry = 0
             self.current_shape = None
             print("🔷 Started drawing hollow ellipse - drag to set size")
-    
+        else:
+            self._warn_no_class_selected()
+
     def update_hollow_ellipse_drawing(self, pos):
         """Update hollow ellipse while drawing"""
         if hasattr(self, 'hollow_ellipse_center') and self.hollow_ellipse_center:

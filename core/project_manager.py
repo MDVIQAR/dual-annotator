@@ -41,6 +41,7 @@ class ProjectManager(QObject):
         self._pending_mode = None
         self._pending_width = None
         self._pending_height = None
+        self._pending_annotated_by = None
         
         self.image_folder = None
         self.project_dir = None
@@ -358,7 +359,7 @@ class ProjectManager(QObject):
             print(f"Error loading {json_path}: {e}")
             return {"hash_mismatch": False, "layers": {"yolo": {"visible": False, "annotations": []}, "unet": {"visible": True, "annotations": []}, "concentric": {"visible": False, "annotations": []}}}  # CONCENTRIC INTEGRATION
 
-    def save_image_annotations(self, image_filename, canvas_shapes, mode, width, height):
+    def save_image_annotations(self, image_filename, canvas_shapes, mode, width, height, annotated_by=None):
         if not self.annotations_dir: return
         json_path = os.path.join(self.annotations_dir, f"{image_filename}.json")
         img_path = os.path.join(self.image_folder, image_filename)
@@ -385,6 +386,8 @@ class ProjectManager(QObject):
         
         data["last_modified"] = datetime.now().isoformat()
         data["active_mode"] = mode
+        if annotated_by:
+            data["annotated_by"] = annotated_by
         
         layer_data = []
         for sh in canvas_shapes:
@@ -409,12 +412,13 @@ class ProjectManager(QObject):
         self._write_json_atomic(json_path, data)
         self.update_project_stats()
 
-    def schedule_autosave(self, image_filename, canvas_shapes, mode, width, height):
+    def schedule_autosave(self, image_filename, canvas_shapes, mode, width, height, annotated_by=None):
         self._pending_image = image_filename
         self._pending_shapes = list(canvas_shapes)
         self._pending_mode = mode
         self._pending_width = width
         self._pending_height = height
+        self._pending_annotated_by = annotated_by
         self._autosave_timer.start()
 
     def flush_autosave(self):
@@ -426,7 +430,8 @@ class ProjectManager(QObject):
         if self._pending_image and self._pending_shapes is not None:
             self.save_image_annotations(
                 self._pending_image, self._pending_shapes,
-                self._pending_mode, self._pending_width, self._pending_height
+                self._pending_mode, self._pending_width, self._pending_height,
+                annotated_by=self._pending_annotated_by,
             )
 
     def set_layer_visibility(self, image_filename, mode, visible):

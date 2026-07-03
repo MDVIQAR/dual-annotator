@@ -40,23 +40,33 @@ class EllipseShape(Shape):
     
     def move(self, dx, dy):
         """Move the ellipse by delta (normalized)"""
+        old_cx = self.center_x
+        old_cy = self.center_y
+
         self.center_x += dx
         self.center_y += dy
+
+        # Keep ellipse within image bounds
+        self.center_x = max(self.radius_x, min(1.0 - self.radius_x, self.center_x))
+        self.center_y = max(self.radius_y, min(1.0 - self.radius_y, self.center_y))
+
+        actual_dx = self.center_x - old_cx
+        actual_dy = self.center_y - old_cy
+
         if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'move'):
-            self.inner_shape.move(dx, dy)
+            self.inner_shape.move(actual_dx, actual_dy)
         
     def get_resize_handles(self):
-        """Get resize handles - simple corner handles"""
+        """Get resize handles - fixed-center cardinal handles"""
         cx, cy, rx, ry = self.to_pixels()
-        
-        # Use 4 corner handles like a box
+
         handles = {
-            'top_left': (cx - rx, cy - ry),
-            'top_right': (cx + rx, cy - ry),
-            'bottom_left': (cx - rx, cy + ry),
-            'bottom_right': (cx + rx, cy + ry)
+            'top':    (cx,      cy - ry),
+            'bottom': (cx,      cy + ry),
+            'left':   (cx - rx, cy     ),
+            'right':  (cx + rx, cy     ),
         }
-        
+
         if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'get_resize_handles'):
             inner_handles = self.inner_shape.get_resize_handles()
             for k, (hx, hy) in inner_handles.items():
@@ -151,70 +161,54 @@ class EllipseShape(Shape):
                     return self.inner_shape.resize_from_handle(inner_handle, dx, dy)
             return False
 
-        # ── Outer handle drag ──────────────────────────────────────────
+        # ── Outer handle drag — fixed center, axis-only resize ─────────
         if self._resize_origin is None:
             return False
 
         orig_cx, orig_cy, orig_rx, orig_ry = self._resize_origin
 
-        left   = orig_cx - orig_rx
-        right  = orig_cx + orig_rx
-        top    = orig_cy - orig_ry
-        bottom = orig_cy + orig_ry
+        new_rx = orig_rx
+        new_ry = orig_ry
 
-        if handle_name == 'top_left':
-            left += dx;  top    += dy
-        elif handle_name == 'top_right':
-            right += dx; top    += dy
-        elif handle_name == 'bottom_left':
-            left += dx;  bottom += dy
-        elif handle_name == 'bottom_right':
-            right += dx; bottom += dy
+        if handle_name == 'right':
+            new_rx = orig_rx + dx
+        elif handle_name == 'left':
+            new_rx = orig_rx - dx
+        elif handle_name == 'bottom':
+            new_ry = orig_ry + dy
+        elif handle_name == 'top':
+            new_ry = orig_ry - dy
         else:
             return False
 
-        if right <= left:
-            right = left + 1
-        if bottom <= top:
-            bottom = top + 1
-
-        new_cx = (left + right) / 2
-        new_cy = (top + bottom) / 2
-        new_rx = (right - left) / 2
-        new_ry = (bottom - top) / 2
-
         min_size = 5
-        max_rx = self.image_width  // 2
-        max_ry = self.image_height // 2
+        new_rx = max(min_size, min(new_rx, self.image_width  // 2))
+        new_ry = max(min_size, min(new_ry, self.image_height // 2))
 
-        new_rx = max(min_size, min(new_rx, max_rx))
-        new_ry = max(min_size, min(new_ry, max_ry))
-
-        # Clamp: outer radii must always be larger than inner radii + gap
+        # Inner shape constraint
         if getattr(self, 'inner_shape', None) and hasattr(self.inner_shape, 'to_pixels'):
             res = self.inner_shape.to_pixels()
             if len(res) == 3: # Circle inside
                 cx_i, cy_i, r_i = res
-                if abs(cx_i - new_cx) + r_i > new_rx - MIN_GAP or abs(cy_i - new_cy) + r_i > new_ry - MIN_GAP:
+                if abs(cx_i - orig_cx) + r_i > new_rx - MIN_GAP or abs(cy_i - orig_cy) + r_i > new_ry - MIN_GAP:
                     return False
             elif len(res) == 4:
                 if getattr(self.inner_shape, 'type', None) == 'ellipse':
-                    # (cx, cy, rx, ry) — convert to bounding box half-extents
                     cx_i, cy_i, rx_i, ry_i = res
-                    if abs(cx_i - new_cx) + rx_i > new_rx - MIN_GAP or abs(cy_i - new_cy) + ry_i > new_ry - MIN_GAP:
+                    if abs(cx_i - orig_cx) + rx_i > new_rx - MIN_GAP or abs(cy_i - orig_cy) + ry_i > new_ry - MIN_GAP:
                         return False
                 else:
-                    # BoundingBox returns (x1, y1, x2, y2)
                     ix1, iy1, ix2, iy2 = res
                     bcx = (ix1 + ix2) / 2
                     bcy = (iy1 + iy2) / 2
                     brx = abs(ix2 - ix1) / 2
                     bry = abs(iy2 - iy1) / 2
-                    if abs(bcx - new_cx) + brx > new_rx - MIN_GAP or abs(bcy - new_cy) + bry > new_ry - MIN_GAP:
+                    if abs(bcx - orig_cx) + brx > new_rx - MIN_GAP or abs(bcy - orig_cy) + bry > new_ry - MIN_GAP:
                         return False
 
-        self.center_x = new_cx / self.image_width
-        self.center_y = new_cy / self.image_height
+        # Center stays fixed, only radii change
+        self.center_x = orig_cx / self.image_width
+        self.center_y = orig_cy / self.image_height
         self.radius_x = new_rx / self.image_width
         self.radius_y = new_ry / self.image_height
 

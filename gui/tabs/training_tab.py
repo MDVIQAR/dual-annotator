@@ -2422,11 +2422,15 @@ class TrainingTab(QWidget):
         self._val_ious     = []
 
         if HAS_MATPLOTLIB:
-            for ax in (self._ax_loss, self._ax_iou):
+            for ax, ylabel in [(self._ax_loss, "Loss"), (self._ax_iou, "IoU / mAP50")]:
                 ax.cla()
                 ax.set_facecolor("#1a1a1a")
-            self._ax_loss.set_xlabel("Epoch"); self._ax_loss.set_ylabel("Loss")
-            self._ax_iou.set_xlabel("Epoch");  self._ax_iou.set_ylabel("IoU / mAP50")
+                ax.set_xlabel("Epoch"); ax.set_ylabel(ylabel)
+                ax.tick_params(colors="#aaaaaa")
+                ax.xaxis.label.set_color("#aaaaaa")
+                ax.yaxis.label.set_color("#aaaaaa")
+                for spine in ax.spines.values():
+                    spine.set_edgecolor("#3a3a3a")
             self._canvas.draw_idle()
 
         # Switch to metrics view
@@ -2490,6 +2494,8 @@ class TrainingTab(QWidget):
             self._ax_loss.legend(**_style)
             self._ax_loss.set_xlabel("Epoch"); self._ax_loss.set_ylabel("Loss")
             self._ax_loss.tick_params(colors="#aaaaaa")
+            self._ax_loss.xaxis.label.set_color("#aaaaaa")
+            self._ax_loss.yaxis.label.set_color("#aaaaaa")
             for sp in self._ax_loss.spines.values():
                 sp.set_edgecolor("#3a3a3a")
 
@@ -2502,6 +2508,8 @@ class TrainingTab(QWidget):
             self._ax_iou.legend(**_style)
             self._ax_iou.set_xlabel("Epoch"); self._ax_iou.set_ylabel("IoU / mAP50")
             self._ax_iou.tick_params(colors="#aaaaaa")
+            self._ax_iou.xaxis.label.set_color("#aaaaaa")
+            self._ax_iou.yaxis.label.set_color("#aaaaaa")
             for sp in self._ax_iou.spines.values():
                 sp.set_edgecolor("#3a3a3a")
 

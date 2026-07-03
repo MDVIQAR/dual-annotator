@@ -109,7 +109,8 @@ class ExportManager:
         exporter = None
         if fmt == "yolo":
             from core.exporters.yolo_exporter import YoloExporter
-            exporter = YoloExporter(output_dir, split, ordered_classes)
+            exporter = YoloExporter(output_dir, split, ordered_classes,
+                                    class_manager=self.cm)
         elif fmt == "coco":
             from core.exporters.coco_exporter import CocoExporter
             exporter = CocoExporter(output_dir, split, ordered_classes)

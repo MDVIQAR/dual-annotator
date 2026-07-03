@@ -428,6 +428,7 @@ class ExportTestTab(QWidget):
         self._onnx_edit = QLineEdit()
         self._onnx_edit.setPlaceholderText("best.pt or best.onnx")
         self._onnx_edit.setStyleSheet(_INPUT)
+        self._onnx_edit.textChanged.connect(self._update_infer_btn)
         onnx_row.addWidget(self._onnx_edit)
         onnx_browse = QPushButton("Browse")
         onnx_browse.setStyleSheet(_BROWSE)
@@ -442,6 +443,7 @@ class ExportTestTab(QWidget):
         self._test_edit = QLineEdit()
         self._test_edit.setPlaceholderText("Folder containing test images...")
         self._test_edit.setStyleSheet(_INPUT)
+        self._test_edit.textChanged.connect(self._update_infer_btn)
         test_row.addWidget(self._test_edit)
         test_browse = QPushButton("Browse")
         test_browse.setStyleSheet(_BROWSE)
@@ -639,7 +641,91 @@ class ExportTestTab(QWidget):
                 self._conf_widget.setVisible(mt == "yolo")
             except Exception:
                 pass
+        elif path.lower().endswith('.onnx'):
+            # No sidecar config.json — try to read the shape directly from the
+            # ONNX graph and write a synthetic config.json so infer_unet.py
+            # (which requires --config and reads cfg["hyperparams"]) still works
+            # unmodified. Only populate the fields it actually consumes:
+            # in_channels, image_width, image_height, out_classes.
+            synthetic_config = self._build_synthetic_unet_config(path)
+            if synthetic_config:
+                self._folder_info = {
+                    "model_type":  "unet",
+                    "arch":        "?",
+                    "in_ch":       synthetic_config["hyperparams"]["in_channels"],
+                    "w":           synthetic_config["hyperparams"]["image_width"],
+                    "h":           synthetic_config["hyperparams"]["image_height"],
+                    "has_onnx":    True,
+                    "config_path": synthetic_config["_path"],
+                    "onnx_path":   path,
+                }
+                self._conf_widget.setVisible(False)
+            else:
+                self._folder_info = None
+                QMessageBox.warning(
+                    self,
+                    "Config Not Found",
+                    "No config.json found next to this model, and its input/output "
+                    "shape could not be read directly from the ONNX file (the model "
+                    "may use dynamic dimensions, or the 'onnx' package may not be "
+                    "installed).\n\n"
+                    "Inference cannot proceed without knowing the model's expected "
+                    "image size and channel count."
+                )
+        else:
+            # .pt without config — architecture can't be reconstructed
+            self._folder_info = None
+            QMessageBox.warning(
+                self,
+                "Config Not Found",
+                "No config.json found next to this model.\n\n"
+                "For .pt models, a config.json is required to reconstruct "
+                "the model architecture.\n\n"
+                "If you have an .onnx file instead, browse to that — its shape "
+                "can often be read directly from the file."
+            )
         self._update_infer_btn()
+
+    def _build_synthetic_unet_config(self, onnx_path: str) -> dict | None:
+        """Read input/output tensor shape from an ONNX file and build a minimal
+        config dict + write it to a temp config.json. Returns None if the shape
+        can't be determined (missing 'onnx' package, dynamic dims, bad model)."""
+        try:
+            import onnx
+        except ImportError:
+            return None
+
+        try:
+            model = onnx.load(onnx_path)
+            inp_dims = model.graph.input[0].type.tensor_type.shape.dim
+            out_dims = model.graph.output[0].type.tensor_type.shape.dim
+
+            # Expect NCHW input; dim_value == 0 means a dynamic/symbolic dimension
+            channels = inp_dims[1].dim_value
+            height   = inp_dims[2].dim_value
+            width    = inp_dims[3].dim_value
+            out_classes = out_dims[1].dim_value
+
+            if not (channels and height and width and out_classes):
+                return None  # dynamic dimension — can't determine statically
+
+            hyperparams = {
+                "in_channels":  channels,
+                "image_width":  width,
+                "image_height": height,
+                "out_classes":  out_classes,
+            }
+            cfg = {"model_type": "unet", "hyperparams": hyperparams}
+
+            import tempfile
+            fd, tmp_path = tempfile.mkstemp(suffix="_synthetic_config.json", text=True)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(cfg, fh)
+
+            cfg["_path"] = tmp_path
+            return cfg
+        except Exception:
+            return None
 
     def _browse_test(self):
         path = QFileDialog.getExistingDirectory(self, "Select Test Images Folder", "")

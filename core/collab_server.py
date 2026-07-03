@@ -10,6 +10,7 @@ import json
 import time
 import socket
 import base64
+import uuid
 import threading
 import http.server
 import socketserver
@@ -33,8 +34,9 @@ def get_local_ip() -> str:
 
 
 def encode_project_id(ip: str, port: int) -> str:
-    """Encode IP:port into a short human-readable Project ID."""
-    raw = f"{ip}:{port}".encode()
+    """Encode IP:port + random session token into a Project ID."""
+    token = uuid.uuid4().hex[:8]
+    raw = f"{ip}:{port}:{token}".encode()
     encoded = base64.b32encode(raw).decode().rstrip("=")
     return f"DA-{encoded}"
 
@@ -47,7 +49,8 @@ def decode_project_id(project_id: str):
     pad = (8 - len(encoded) % 8) % 8
     encoded += "=" * pad
     raw = base64.b32decode(encoded.upper()).decode()
-    ip, port_str = raw.rsplit(":", 1)
+    parts = raw.rsplit(":", 2)   # ip, port, token  (token is ignored on decode)
+    ip, port_str = parts[0], parts[1]
     return ip, int(port_str)
 
 

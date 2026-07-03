@@ -3,10 +3,11 @@ import glob
 import cv2
 import numpy as np
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-    QLineEdit, QFileDialog, QProgressBar, QTextEdit, QComboBox, 
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QLineEdit, QFileDialog, QProgressBar, QTextEdit, QComboBox,
     QGroupBox, QCheckBox, QSplitter, QSizePolicy, QMessageBox,
-    QListWidget, QListWidgetItem, QAbstractItemView, QFrame
+    QListWidget, QListWidgetItem, QAbstractItemView, QFrame,
+    QMenu, QAction, QDoubleSpinBox
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QFont, QPainter, QPen, QColor, QImage, QPixmap, QIcon
@@ -21,6 +22,43 @@ CAMERA_MODELS = {
     "CALIBIR 640 (640x480)": (640, 480),
     "FLIR A50 (464x348)": (464, 348)
 }
+
+class ExtensionSelector(QPushButton):
+    """Checkable multi-select dropdown for file extensions."""
+    selectionChanged = pyqtSignal()
+
+    def __init__(self, extensions, default_checked=None, parent=None):
+        super().__init__(parent)
+        self.extensions = extensions
+        default_checked = set(default_checked) if default_checked is not None else set(extensions)
+        self.menu = QMenu(self)
+        self.actions = {}
+        for ext in extensions:
+            action = QAction(ext, self.menu)
+            action.setCheckable(True)
+            action.setChecked(ext in default_checked)
+            action.toggled.connect(self._on_toggled)
+            self.menu.addAction(action)
+            self.actions[ext] = action
+        self.setMenu(self.menu)
+        self._update_label()
+
+    def _on_toggled(self, _checked):
+        self._update_label()
+        self.selectionChanged.emit()
+
+    def _update_label(self):
+        checked = self.checked_extensions()
+        if not checked:
+            self.setText("Select extensions...")
+        elif len(checked) == len(self.extensions):
+            self.setText("All extensions")
+        else:
+            self.setText(", ".join(checked))
+
+    def checked_extensions(self):
+        return [ext for ext in self.extensions if self.actions[ext].isChecked()]
+
 
 class PreviewCanvas(QLabel):
     roi_changed = pyqtSignal(tuple) # (x, y, w, h)
@@ -512,7 +550,7 @@ class ConverterWorker(QThread):
 
         # Apply ROI Crop
         if self.roi is not None:
-            rx, ry, rw, rh = self.roi
+            rx, ry, rw, rh = (int(round(v)) for v in self.roi)
             rx = max(0, min(img.shape[1]-1, rx))
             ry = max(0, min(img.shape[0]-1, ry))
             rw = min(img.shape[1]-rx, rw)
@@ -685,9 +723,9 @@ class RawToPngTab(QWidget):
         
         ext_layout = QHBoxLayout()
         ext_layout.addWidget(QLabel("Extensions:"))
-        self.ext_input = QLineEdit("raw, tif, tiff, png, dcm")
-        self.ext_input.setStyleSheet(self._input_style())
-        ext_layout.addWidget(self.ext_input)
+        self.ext_selector = ExtensionSelector(["raw", "tif", "tiff", "png", "dcm"], default_checked=["raw"])
+        self.ext_selector.setStyleSheet(self._btn_style())
+        ext_layout.addWidget(self.ext_selector)
         settings_layout.addLayout(ext_layout)
 
         cam_layout = QHBoxLayout()
@@ -889,8 +927,45 @@ class RawToPngTab(QWidget):
         self.btn_fit.setToolTip("Reset Zoom and Pan (Double-Click image also works)")
         self.btn_fit.clicked.connect(self.preview_canvas.fit_to_screen)
         roi_layout.addWidget(self.btn_fit)
-        
+
         preview_layout.addLayout(roi_layout)
+
+        # ROI coordinate entry (typed alternative to dragging)
+        self._updating_roi_spins = False
+        roi_coords_layout = QHBoxLayout()
+        roi_coords_layout.setContentsMargins(0, 0, 0, 0)
+        roi_coords_layout.setSpacing(4)
+
+        def _make_roi_spin():
+            spin = QDoubleSpinBox()
+            spin.setRange(0, 100000)
+            spin.setDecimals(3)
+            spin.setSingleStep(1.0)
+            spin.setFixedWidth(90)
+            spin.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            spin.setStyleSheet(self._input_style())
+            spin.valueChanged.connect(self._on_roi_spin_changed)
+            return spin
+
+        roi_coords_layout.addWidget(QLabel("X:"))
+        self.roi_x_spin = _make_roi_spin()
+        roi_coords_layout.addWidget(self.roi_x_spin)
+
+        roi_coords_layout.addWidget(QLabel("Y:"))
+        self.roi_y_spin = _make_roi_spin()
+        roi_coords_layout.addWidget(self.roi_y_spin)
+
+        roi_coords_layout.addWidget(QLabel("W:"))
+        self.roi_w_spin = _make_roi_spin()
+        roi_coords_layout.addWidget(self.roi_w_spin)
+
+        roi_coords_layout.addWidget(QLabel("H:"))
+        self.roi_h_spin = _make_roi_spin()
+        roi_coords_layout.addWidget(self.roi_h_spin)
+
+        roi_coords_layout.addStretch()
+
+        preview_layout.addLayout(roi_coords_layout)
         right_panel.addWidget(preview_group)
 
         # Progress / Console 
@@ -1025,7 +1100,7 @@ class RawToPngTab(QWidget):
             self.out_dir_input.setText(folder)
 
     def _load_first_image_preview(self, folder):
-        exts = [x.strip() for x in self.ext_input.text().split(',')]
+        exts = self.ext_selector.checked_extensions()
         files = []
         for ext in exts:
             files.extend(glob.glob(os.path.join(folder, f"*.{ext}")))
@@ -1067,6 +1142,31 @@ class RawToPngTab(QWidget):
         else:
             self.roi_status.setText("Region of Interest: Full Image (Right-click to reset)")
 
+        self._updating_roi_spins = True
+        try:
+            x, y, w, h = roi if roi else (0, 0, 0, 0)
+            self.roi_x_spin.setValue(x)
+            self.roi_y_spin.setValue(y)
+            self.roi_w_spin.setValue(w)
+            self.roi_h_spin.setValue(h)
+        finally:
+            self._updating_roi_spins = False
+
+    def _on_roi_spin_changed(self):
+        if self._updating_roi_spins or not self.preview_canvas.image_pixmap:
+            return
+        x = self.roi_x_spin.value()
+        y = self.roi_y_spin.value()
+        w = self.roi_w_spin.value()
+        h = self.roi_h_spin.value()
+        if w <= 0 or h <= 0:
+            return
+        roi = (x, y, w, h)
+        self.preview_canvas.roi = roi
+        self.preview_canvas.update()
+        self.current_roi = roi
+        self.roi_status.setText(f"Region of Interest: x={x}, y={y}, w={w}, h={h} (Right-click to reset)")
+
     def _start_conversion(self):
         in_dir = self.in_dir_input.text().strip()
         out_dir = self.out_dir_input.text().strip()
@@ -1075,7 +1175,10 @@ class RawToPngTab(QWidget):
             self.log_message("⚠️ Please select input and output directories.")
             return
             
-        exts = [x.strip() for x in self.ext_input.text().split(',')]
+        exts = self.ext_selector.checked_extensions()
+        if not exts:
+            self.log_message("⚠️ Please select at least one file extension.")
+            return
         cmap = self.cmap_combo.currentText()
         norm = self.norm_combo.currentText()
         downscale = self.chk_downscale.isChecked()
@@ -1160,6 +1263,14 @@ class RawToPngTab(QWidget):
         self.console.append("System ready. Select a directory containing .raw or .tif files.")
         self.progress_bar.setValue(0)
         self.roi_status.setText("Region of Interest: Full Image (Right-click to reset)")
+        self._updating_roi_spins = True
+        try:
+            self.roi_x_spin.setValue(0)
+            self.roi_y_spin.setValue(0)
+            self.roi_w_spin.setValue(0)
+            self.roi_h_spin.setValue(0)
+        finally:
+            self._updating_roi_spins = False
         self.btn_run.setEnabled(True)
         self.btn_cancel.setEnabled(False)
 
