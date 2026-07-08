@@ -27,6 +27,21 @@ def _get_venv_dir() -> str:
     return os.path.join(os.path.dirname(sys.executable), "venv")
 
 
+def _get_torch_index_url() -> str:
+    """Return the right PyTorch wheel index URL for this machine."""
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=10,
+            creationflags=_NO_WINDOW,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return "https://download.pytorch.org/whl/cu118"
+    except Exception:
+        pass
+    return "https://download.pytorch.org/whl/cpu"
+
+
 def _find_system_python() -> str | None:
     """Find Python 3.11 specifically."""
     # Try 'python' on PATH first
@@ -196,12 +211,14 @@ class EngineInstallWorker(QThread):
         if self._cancelled:
             return
 
-        # Install torch CPU
-        self.log.emit("  Installing PyTorch (CPU)...")
+        # Install torch (CUDA build if an NVIDIA GPU is detected, else CPU)
+        index_url = _get_torch_index_url()
+        build_label = "GPU/CUDA" if "cpu" not in index_url else "CPU"
+        self.log.emit(f"  Installing PyTorch ({build_label})...")
         self.progress.emit(20)
         ok = self._run_pip(venv_py, [
             "install", "torch", "torchvision",
-            "--index-url", "https://download.pytorch.org/whl/cpu"
+            "--index-url", index_url
         ], "PyTorch")
         if not ok:
             return
