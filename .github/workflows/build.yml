@@ -72,11 +72,18 @@ jobs:
             3. Double-click **DualAnnotator.exe** — GUI works immediately
 
             ### Training setup (one-time)
-            Open a terminal in the extracted folder and run:
+            The app sets this up for you automatically — click **Start Training** and
+            choose "Yes" when prompted to install the AI Engine. It detects whether
+            your machine has an NVIDIA GPU and installs the matching PyTorch build
+            (CUDA or CPU) along with the other ML packages.
+
+            If you'd rather set it up manually, open a terminal in the extracted folder and run:
             ```
             python -m venv venv
             venv\Scripts\activate
-            pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+            pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+            REM Or, for CPU only:
+            REM pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
             pip install pytorch-lightning segmentation-models-pytorch albumentations torchmetrics ultralytics onnxruntime
             ```
 
