@@ -43,6 +43,8 @@ from mlops.registry import RegistrySettings, projects_config
 from mlops.training import TrainWorker, run_preflight
 from mlops.export import OnnxWorker
 from mlops.engine_manager import needs_setup, EngineInstallWorker
+import logging
+import traceback
 
 
 # ---------------------------------------------------------------------------
@@ -620,8 +622,17 @@ class _EngineSetupDialog(QDialog):
         self.setup_complete.emit(success)
 
     def _on_cancel(self):
-        self._worker.cancel()
-        self.reject()
+        try:
+            self._worker.cancel()
+            self.reject()
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
 
 
 # ---------------------------------------------------------------------------
@@ -1601,11 +1612,20 @@ class TrainingTab(QWidget):
         return config
 
     def _on_aug_changed(self):
-        if self._aug_widgets:
-            s = self._settings
-            s["augmentations"] = self._get_aug_config()
-            _save_settings(s)
+        try:
+            if self._aug_widgets:
+                s = self._settings
+                s["augmentations"] = self._get_aug_config()
+                _save_settings(s)
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _restore_aug_settings(self):
         saved = self._settings.get("augmentations", {})
         for key, vals in saved.items():
@@ -1680,126 +1700,153 @@ class TrainingTab(QWidget):
             self._aug_lbl.setStyleSheet("color: #444; font-size: 11px; background: #111; border: none;")
 
     def _run_batch_preview(self):
-        if not HAS_CV2:
-            return
-        aug_cfg = self._get_aug_config()
-        any_enabled = any(v.get("enabled") for v in aug_cfg.values())
+        try:
+            if not HAS_CV2:
+                return
+            aug_cfg = self._get_aug_config()
+            any_enabled = any(v.get("enabled") for v in aug_cfg.values())
 
-        if not any_enabled:
+            if not any_enabled:
+                self._aug_lbl.setPixmap(QPixmap())
+                self._aug_lbl.setText("No augmentations selected.\nEnable at least one above.")
+                return
+
+            # Collect original paths from list (skip augmented sub-rows from prior run)
+            original_paths = []
+            for i in range(self._img_list.count()):
+                item = self._img_list.item(i)
+                if item and item.data(Qt.UserRole + 2) == "original":
+                    original_paths.append(item.data(Qt.UserRole))
+
+            if not original_paths:
+                self._aug_lbl.setPixmap(QPixmap())
+                self._aug_lbl.setText("No dataset images loaded.\nBrowse a dataset first.")
+                return
+
             self._aug_lbl.setPixmap(QPixmap())
-            self._aug_lbl.setText("No augmentations selected.\nEnable at least one above.")
-            return
+            self._aug_lbl.setText("Processing…")
+            QApplication.processEvents()
 
-        # Collect original paths from list (skip augmented sub-rows from prior run)
-        original_paths = []
-        for i in range(self._img_list.count()):
-            item = self._img_list.item(i)
-            if item and item.data(Qt.UserRole + 2) == "original":
-                original_paths.append(item.data(Qt.UserRole))
+            if not HAS_ALBUMENTATIONS:
+                self._aug_lbl.setText("albumentations not available\n(check torch/DLL installation).")
+                return
 
-        if not original_paths:
-            self._aug_lbl.setPixmap(QPixmap())
-            self._aug_lbl.setText("No dataset images loaded.\nBrowse a dataset first.")
-            return
+            A = _A
+            n = self._batch_preview_sp.value()
+            to_process = set(original_paths[:n])
+            aug_results = {}  # path → aug numpy array
 
-        self._aug_lbl.setPixmap(QPixmap())
-        self._aug_lbl.setText("Processing…")
-        QApplication.processEvents()
-
-        if not HAS_ALBUMENTATIONS:
-            self._aug_lbl.setText("albumentations not available\n(check torch/DLL installation).")
-            return
-
-        A = _A
-        n = self._batch_preview_sp.value()
-        to_process = set(original_paths[:n])
-        aug_results = {}  # path → aug numpy array
-
-        for path in original_paths[:n]:
-            img = cv2.imread(path, cv2.IMREAD_COLOR)
-            if img is None:
-                continue
-            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            img_transforms = []
-            for key, vals in aug_cfg.items():
-                if not vals.get("enabled"):
+            for path in original_paths[:n]:
+                img = cv2.imread(path, cv2.IMREAD_COLOR)
+                if img is None:
                     continue
-                t = _preview_transform(key, vals, img_rgb.shape[1], img_rgb.shape[0])
-                if t is not None:
-                    img_transforms.append(t)
-            aug_img = img_rgb
-            if img_transforms:
-                try:
-                    result = A.Compose(img_transforms)(image=img_rgb)
-                    aug_img = result["image"]
-                    if aug_img.ndim == 2:
-                        aug_img = np.stack([aug_img] * 3, axis=2)
-                    if aug_img.shape[:2] != img_rgb.shape[:2]:
-                        aug_img = cv2.resize(aug_img, (img_rgb.shape[1], img_rgb.shape[0]),
-                                             interpolation=cv2.INTER_AREA)
-                except Exception:
-                    aug_img = img_rgb
-            aug_results[path] = aug_img.copy()
-
-        # Rebuild list: original row + augmented sub-row for each processed image
-        self._img_list.clear()
-        for path in original_paths:
-            fname = os.path.basename(path)
-            img = cv2.imread(path, cv2.IMREAD_COLOR)
-            aug_img = aug_results.get(path)  # None if not in batch
-
-            # — Original row —
-            orig_item = QListWidgetItem(fname)
-            if img is not None:
                 img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                h, w = img_rgb.shape[:2]
-                sc = 56 / max(h, w)
-                tw, th = max(1, int(w * sc)), max(1, int(h * sc))
-                thumb = np.ascontiguousarray(cv2.resize(img_rgb, (tw, th), interpolation=cv2.INTER_AREA))
-                qimg = QImage(thumb.data, tw, th, tw * 3, QImage.Format_RGB888)
-                orig_item.setIcon(QIcon(QPixmap.fromImage(qimg)))
-            orig_item.setData(Qt.UserRole, path)
-            orig_item.setData(Qt.UserRole + 1, aug_img)
-            orig_item.setData(Qt.UserRole + 2, "original")
-            orig_item.setSizeHint(QSize(-1, 66))
-            self._img_list.addItem(orig_item)
+                img_transforms = []
+                for key, vals in aug_cfg.items():
+                    if not vals.get("enabled"):
+                        continue
+                    t = _preview_transform(key, vals, img_rgb.shape[1], img_rgb.shape[0])
+                    if t is not None:
+                        img_transforms.append(t)
+                aug_img = img_rgb
+                if img_transforms:
+                    try:
+                        result = A.Compose(img_transforms)(image=img_rgb)
+                        aug_img = result["image"]
+                        if aug_img.ndim == 2:
+                            aug_img = np.stack([aug_img] * 3, axis=2)
+                        if aug_img.shape[:2] != img_rgb.shape[:2]:
+                            aug_img = cv2.resize(aug_img, (img_rgb.shape[1], img_rgb.shape[0]),
+                                                 interpolation=cv2.INTER_AREA)
+                    except Exception:
+                        aug_img = img_rgb
+                aug_results[path] = aug_img.copy()
 
-            # — Augmented sub-row (only if in processed batch) —
-            if aug_img is not None:
-                aug_item = QListWidgetItem(f"  ↳ augmented")
-                h, w = aug_img.shape[:2]
-                sc = 56 / max(h, w)
-                tw, th = max(1, int(w * sc)), max(1, int(h * sc))
-                thumb = np.ascontiguousarray(cv2.resize(aug_img, (tw, th), interpolation=cv2.INTER_AREA))
-                qimg = QImage(thumb.data, tw, th, tw * 3, QImage.Format_RGB888)
-                aug_item.setIcon(QIcon(QPixmap.fromImage(qimg)))
-                aug_item.setData(Qt.UserRole, path)
-                aug_item.setData(Qt.UserRole + 1, aug_img)
-                aug_item.setData(Qt.UserRole + 2, "augmented")
-                aug_item.setBackground(QColor("#222222"))
-                aug_item.setForeground(QColor("#888888"))
-                aug_item.setSizeHint(QSize(-1, 66))
-                self._img_list.addItem(aug_item)
+            # Rebuild list: original row + augmented sub-row for each processed image
+            self._img_list.clear()
+            for path in original_paths:
+                fname = os.path.basename(path)
+                img = cv2.imread(path, cv2.IMREAD_COLOR)
+                aug_img = aug_results.get(path)  # None if not in batch
 
-        self._update_img_count_lbl()
-        # Select first item and show its augmented result
-        if self._img_list.count() > 0:
-            self._img_list.setCurrentRow(0)
+                # — Original row —
+                orig_item = QListWidgetItem(fname)
+                if img is not None:
+                    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                    h, w = img_rgb.shape[:2]
+                    sc = 56 / max(h, w)
+                    tw, th = max(1, int(w * sc)), max(1, int(h * sc))
+                    thumb = np.ascontiguousarray(cv2.resize(img_rgb, (tw, th), interpolation=cv2.INTER_AREA))
+                    qimg = QImage(thumb.data, tw, th, tw * 3, QImage.Format_RGB888)
+                    orig_item.setIcon(QIcon(QPixmap.fromImage(qimg)))
+                orig_item.setData(Qt.UserRole, path)
+                orig_item.setData(Qt.UserRole + 1, aug_img)
+                orig_item.setData(Qt.UserRole + 2, "original")
+                orig_item.setSizeHint(QSize(-1, 66))
+                self._img_list.addItem(orig_item)
 
+                # — Augmented sub-row (only if in processed batch) —
+                if aug_img is not None:
+                    aug_item = QListWidgetItem(f"  ↳ augmented")
+                    h, w = aug_img.shape[:2]
+                    sc = 56 / max(h, w)
+                    tw, th = max(1, int(w * sc)), max(1, int(h * sc))
+                    thumb = np.ascontiguousarray(cv2.resize(aug_img, (tw, th), interpolation=cv2.INTER_AREA))
+                    qimg = QImage(thumb.data, tw, th, tw * 3, QImage.Format_RGB888)
+                    aug_item.setIcon(QIcon(QPixmap.fromImage(qimg)))
+                    aug_item.setData(Qt.UserRole, path)
+                    aug_item.setData(Qt.UserRole + 1, aug_img)
+                    aug_item.setData(Qt.UserRole + 2, "augmented")
+                    aug_item.setBackground(QColor("#222222"))
+                    aug_item.setForeground(QColor("#888888"))
+                    aug_item.setSizeHint(QSize(-1, 66))
+                    self._img_list.addItem(aug_item)
+
+            self._update_img_count_lbl()
+            # Select first item and show its augmented result
+            if self._img_list.count() > 0:
+                self._img_list.setCurrentRow(0)
+
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _nav_prev(self):
-        n = self._img_list.count()
-        if n == 0:
-            return
-        cur = self._img_list.currentRow()
-        self._img_list.setCurrentRow(max(0, cur - 1) if cur > 0 else n - 1)
+        try:
+            n = self._img_list.count()
+            if n == 0:
+                return
+            cur = self._img_list.currentRow()
+            self._img_list.setCurrentRow(max(0, cur - 1) if cur > 0 else n - 1)
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _nav_next(self):
-        n = self._img_list.count()
-        if n == 0:
-            return
-        cur = self._img_list.currentRow()
-        self._img_list.setCurrentRow((cur + 1) % n)
+        try:
+            n = self._img_list.count()
+            if n == 0:
+                return
+            cur = self._img_list.currentRow()
+            self._img_list.setCurrentRow((cur + 1) % n)
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _update_img_count_lbl(self):
         total = 0
         aug_count = 0
@@ -1817,14 +1864,23 @@ class TrainingTab(QWidget):
             self._img_count_lbl.setText(f"Images: {total}")
 
     def _toggle_left_panel(self):
-        self._left_collapsed = not self._left_collapsed
-        if self._left_collapsed:
-            self._main_splitter.setSizes([0, 10000])
-            self._toggle_btn.setText("»  Show Settings")
-        else:
-            self._main_splitter.setSizes([380, 10000])
-            self._toggle_btn.setText("«  Hide Settings")
+        try:
+            self._left_collapsed = not self._left_collapsed
+            if self._left_collapsed:
+                self._main_splitter.setSizes([0, 10000])
+                self._toggle_btn.setText("»  Show Settings")
+            else:
+                self._main_splitter.setSizes([380, 10000])
+                self._toggle_btn.setText("«  Hide Settings")
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _display_image(self, label: QLabel, img):
         if img is None or not HAS_CV2:
             return
@@ -1964,62 +2020,89 @@ class TrainingTab(QWidget):
     # ------------------------------------------------------------------
 
     def _on_task_changed(self):
-        is_yolo = self._radio_yolo.isChecked()
-        self._unet_block.setVisible(not is_yolo)
-        self._yolo_block.setVisible(is_yolo)
-        if hasattr(self, "_yolo_adv_widget"):
-            self._yolo_adv_widget.setVisible(is_yolo)
-        if hasattr(self, "_aug_collapsible"):
-            self._aug_collapsible.setVisible(not is_yolo)
-        if hasattr(self, "_unet_only_hp"):
-            self._unet_only_hp.setVisible(not is_yolo)
-        if hasattr(self, "_width_row_widget"):
-            self._width_row_widget.setVisible(not is_yolo)
-        if hasattr(self, "_aug_yolo_note"):
-            self._aug_yolo_note.setVisible(is_yolo)
-            self._aug_controls_widget.setVisible(not is_yolo)
-        if hasattr(self, "_project_name_cb"):
-            self._refresh_train_project_names()
-        if getattr(self, '_initialized', False):
-            if is_yolo:
-                self._epochs_sp.setValue(100)
-                self._batch_sp.setValue(4)
-                self._lr_sp.setValue(0.002)
-                self._height_sp.setValue(640)
-                self._patience_sp.setValue(40)
-            else:
-                self._epochs_sp.setValue(100)
-                self._batch_sp.setValue(4)
-                self._lr_sp.setValue(0.001)
-                self._width_sp.setValue(320)
-                self._height_sp.setValue(240)
-                self._patience_sp.setValue(10)
-        self._autosave()
+        try:
+            is_yolo = self._radio_yolo.isChecked()
+            self._unet_block.setVisible(not is_yolo)
+            self._yolo_block.setVisible(is_yolo)
+            if hasattr(self, "_yolo_adv_widget"):
+                self._yolo_adv_widget.setVisible(is_yolo)
+            if hasattr(self, "_aug_collapsible"):
+                self._aug_collapsible.setVisible(not is_yolo)
+            if hasattr(self, "_unet_only_hp"):
+                self._unet_only_hp.setVisible(not is_yolo)
+            if hasattr(self, "_width_row_widget"):
+                self._width_row_widget.setVisible(not is_yolo)
+            if hasattr(self, "_aug_yolo_note"):
+                self._aug_yolo_note.setVisible(is_yolo)
+                self._aug_controls_widget.setVisible(not is_yolo)
+            if hasattr(self, "_project_name_cb"):
+                self._refresh_train_project_names()
+            if getattr(self, '_initialized', False):
+                if is_yolo:
+                    self._epochs_sp.setValue(100)
+                    self._batch_sp.setValue(4)
+                    self._lr_sp.setValue(0.002)
+                    self._height_sp.setValue(640)
+                    self._patience_sp.setValue(40)
+                else:
+                    self._epochs_sp.setValue(100)
+                    self._batch_sp.setValue(4)
+                    self._lr_sp.setValue(0.001)
+                    self._width_sp.setValue(320)
+                    self._height_sp.setValue(240)
+                    self._patience_sp.setValue(10)
+            self._autosave()
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _on_yolo_task_changed(self):
-        is_det = self._yolo_detect_rb.isChecked()
-        current = self._yolo_model_cb.currentText()
-        self._yolo_model_cb.blockSignals(True)
-        self._yolo_model_cb.clear()
-        if is_det:
-            models = ["yolov8n", "yolov8s", "yolov8m", "yolov8l", "yolov8x"]
-        else:
-            models = ["yolov8n-seg", "yolov8s-seg", "yolov8m-seg", "yolov8l-seg", "yolov8x-seg"]
-        self._yolo_model_cb.addItems(models)
-        base = current.replace("-seg", "")
-        target = base if is_det else base + "-seg"
-        idx = self._yolo_model_cb.findText(target)
-        if idx >= 0:
-            self._yolo_model_cb.setCurrentIndex(idx)
-        self._yolo_model_cb.blockSignals(False)
-        if hasattr(self, "_yolo_seg_options_col"):
-            self._yolo_seg_options_col.setVisible(not is_det)
-        self._autosave()
+        try:
+            is_det = self._yolo_detect_rb.isChecked()
+            current = self._yolo_model_cb.currentText()
+            self._yolo_model_cb.blockSignals(True)
+            self._yolo_model_cb.clear()
+            if is_det:
+                models = ["yolov8n", "yolov8s", "yolov8m", "yolov8l", "yolov8x"]
+            else:
+                models = ["yolov8n-seg", "yolov8s-seg", "yolov8m-seg", "yolov8l-seg", "yolov8x-seg"]
+            self._yolo_model_cb.addItems(models)
+            base = current.replace("-seg", "")
+            target = base if is_det else base + "-seg"
+            idx = self._yolo_model_cb.findText(target)
+            if idx >= 0:
+                self._yolo_model_cb.setCurrentIndex(idx)
+            self._yolo_model_cb.blockSignals(False)
+            if hasattr(self, "_yolo_seg_options_col"):
+                self._yolo_seg_options_col.setVisible(not is_det)
+            self._autosave()
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _on_unet_optimizer_changed(self, text):
-        """Show momentum row only for SGD and RMSprop."""
-        self._unet_momentum_row.setVisible(text in ("SGD", "RMSprop"))
+        try:
+            """Show momentum row only for SGD and RMSprop."""
+            self._unet_momentum_row.setVisible(text in ("SGD", "RMSprop"))
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _current_train_model_type(self) -> str:
         return "yolo" if self._radio_yolo.isChecked() else "unet"
 
@@ -2086,20 +2169,47 @@ class TrainingTab(QWidget):
         self._camera_cb.blockSignals(False)
 
     def _on_train_project_name_changed(self):
-        self._refresh_train_project_ids()
-        self._refresh_train_variants()
-        self._refresh_train_cameras()
-        self._autosave()
+        try:
+            self._refresh_train_project_ids()
+            self._refresh_train_variants()
+            self._refresh_train_cameras()
+            self._autosave()
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _on_train_project_id_changed(self):
-        self._refresh_train_variants()
-        self._refresh_train_cameras()
-        self._autosave()
+        try:
+            self._refresh_train_variants()
+            self._refresh_train_cameras()
+            self._autosave()
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _on_train_variant_changed(self):
-        self._refresh_train_cameras()
-        self._autosave()
+        try:
+            self._refresh_train_cameras()
+            self._autosave()
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def prefill_from_staged(self, staged_info: dict):
         """Called from Data Prep tab — pre-fills hierarchy and dataset path."""
         model_type = staged_info.get("model_type", "unet").lower()
@@ -2124,95 +2234,131 @@ class TrainingTab(QWidget):
         self._autosave()
 
     def _autosave(self):
-        if not getattr(self, '_initialized', False):
+        try:
+            if not getattr(self, '_initialized', False):
+                return
+            s = self._settings
+            s["task_type"] = "yolo" if self._radio_yolo.isChecked() else "unet"
+            ann_data = self._annotator_cb.currentData()
+            if ann_data:
+                s["annotator_initials"] = ann_data.get("initials", "")
+            s["project_name"] = self._project_name_cb.currentText().strip()
+            s["project_id"]   = self._project_id_cb.currentText().strip()
+            s["variant"]      = self._variant_cb.currentText().strip()
+            s["camera"]       = self._camera_cb.currentText().strip()
+            s["dataset_folder"]     = self._ds_edit.text()
+            s["pretrained_weights"] = self._weights_edit.text()
+            s["architecture"]       = self._unet_arch_cb.currentText()
+            s["encoder"]            = self._encoder_cb.currentText()
+            s["encoder_weights"]    = self._weights_cb.currentText()
+            s["yolo_model"]         = self._yolo_model_cb.currentText()
+            s["yolo_task"]          = "segmentation" if self._yolo_seg_rb.isChecked() else "detection"
+            s["epochs"]             = self._epochs_sp.value()
+            s["batch_size"]         = self._batch_sp.value()
+            s["learning_rate"]      = self._lr_sp.value()
+            s["image_width"]        = self._width_sp.value()
+            s["image_height"]       = self._height_sp.value()
+            s["in_channels"]               = self._in_channels_sp.value()
+            s["out_classes"]               = self._out_classes_sp.value()
+            s["early_stopping_patience"]   = self._patience_sp.value()
+            s["extra_metrics"]             = [k for k, cb in self._metric_checkboxes.items() if cb.isChecked()]
+            s["device"]                    = self._device_cb.currentText()
+            s["num_workers"]               = self._num_workers_sp.value()
+            s["repeat_factor"]             = self._repeat_factor_sp.value()
+            s["unet_loss_fn"]         = self._unet_loss_cb.currentText()
+            s["unet_optimizer"]       = self._unet_optimizer_cb.currentText()
+            s["unet_scheduler"]       = self._unet_scheduler_cb.currentText()
+            s["unet_weight_decay"]    = self._unet_weight_decay_sp.value()
+            s["unet_momentum"]        = self._unet_momentum_sp.value()
+            s["unet_gradient_clip"]   = self._unet_grad_clip_sp.value()
+            s["unet_label_smoothing"] = self._unet_label_smoothing_sp.value()
+            if self._aug_widgets:
+                s["augmentations"]  = self._get_aug_config()
+            # YOLO advanced
+            s["yolo_optimizer"]      = self._yolo_optimizer_cb.currentText()
+            s["yolo_lrf"]            = self._yolo_lrf_sp.value()
+            s["yolo_momentum"]       = self._yolo_momentum_sp.value()
+            s["yolo_weight_decay"]   = self._yolo_weight_decay_sp.value()
+            s["yolo_warmup_epochs"]  = self._yolo_warmup_sp.value()
+            s["yolo_cos_lr"]         = self._yolo_cos_lr_cb.isChecked()
+            s["yolo_box"]            = self._yolo_box_sp.value()
+            s["yolo_cls"]            = self._yolo_cls_sp.value()
+            s["yolo_dfl"]            = self._yolo_dfl_sp.value()
+            s["yolo_dropout"]        = self._yolo_dropout_sp.value()
+            s["yolo_overlap_mask"]   = self._yolo_overlap_mask_cb.isChecked()
+            s["yolo_mask_ratio"]     = self._yolo_mask_ratio_sp.value()
+            s["yolo_hsv_h"]          = self._yolo_hsv_h_sp.value()
+            s["yolo_hsv_s"]          = self._yolo_hsv_s_sp.value()
+            s["yolo_hsv_v"]          = self._yolo_hsv_v_sp.value()
+            s["yolo_fliplr"]         = self._yolo_fliplr_sp.value()
+            s["yolo_flipud"]         = self._yolo_flipud_sp.value()
+            s["yolo_degrees"]        = self._yolo_degrees_sp.value()
+            s["yolo_translate"]      = self._yolo_translate_sp.value()
+            s["yolo_scale"]          = self._yolo_scale_sp.value()
+            s["yolo_mosaic"]         = self._yolo_mosaic_sp.value()
+            s["yolo_mixup"]          = self._yolo_mixup_sp.value()
+            s["yolo_copy_paste"]     = self._yolo_copy_paste_sp.value()
+            s["yolo_close_mosaic"]   = self._yolo_close_mosaic_sp.value()
+            s["yolo_amp"]            = self._yolo_amp_cb.isChecked()
+            s["yolo_cache"]          = self._yolo_cache_cb.isChecked()
+            s["yolo_save_period"]    = self._yolo_save_period_sp.value()
+            s["yolo_plots"]          = self._yolo_plots_cb.isChecked()
+            _save_settings(s)
+
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
             return
-        s = self._settings
-        s["task_type"] = "yolo" if self._radio_yolo.isChecked() else "unet"
-        ann_data = self._annotator_cb.currentData()
-        if ann_data:
-            s["annotator_initials"] = ann_data.get("initials", "")
-        s["project_name"] = self._project_name_cb.currentText().strip()
-        s["project_id"]   = self._project_id_cb.currentText().strip()
-        s["variant"]      = self._variant_cb.currentText().strip()
-        s["camera"]       = self._camera_cb.currentText().strip()
-        s["dataset_folder"]     = self._ds_edit.text()
-        s["pretrained_weights"] = self._weights_edit.text()
-        s["architecture"]       = self._unet_arch_cb.currentText()
-        s["encoder"]            = self._encoder_cb.currentText()
-        s["encoder_weights"]    = self._weights_cb.currentText()
-        s["yolo_model"]         = self._yolo_model_cb.currentText()
-        s["yolo_task"]          = "segmentation" if self._yolo_seg_rb.isChecked() else "detection"
-        s["epochs"]             = self._epochs_sp.value()
-        s["batch_size"]         = self._batch_sp.value()
-        s["learning_rate"]      = self._lr_sp.value()
-        s["image_width"]        = self._width_sp.value()
-        s["image_height"]       = self._height_sp.value()
-        s["in_channels"]               = self._in_channels_sp.value()
-        s["out_classes"]               = self._out_classes_sp.value()
-        s["early_stopping_patience"]   = self._patience_sp.value()
-        s["extra_metrics"]             = [k for k, cb in self._metric_checkboxes.items() if cb.isChecked()]
-        s["device"]                    = self._device_cb.currentText()
-        s["num_workers"]               = self._num_workers_sp.value()
-        s["repeat_factor"]             = self._repeat_factor_sp.value()
-        s["unet_loss_fn"]         = self._unet_loss_cb.currentText()
-        s["unet_optimizer"]       = self._unet_optimizer_cb.currentText()
-        s["unet_scheduler"]       = self._unet_scheduler_cb.currentText()
-        s["unet_weight_decay"]    = self._unet_weight_decay_sp.value()
-        s["unet_momentum"]        = self._unet_momentum_sp.value()
-        s["unet_gradient_clip"]   = self._unet_grad_clip_sp.value()
-        s["unet_label_smoothing"] = self._unet_label_smoothing_sp.value()
-        if self._aug_widgets:
-            s["augmentations"]  = self._get_aug_config()
-        # YOLO advanced
-        s["yolo_optimizer"]      = self._yolo_optimizer_cb.currentText()
-        s["yolo_lrf"]            = self._yolo_lrf_sp.value()
-        s["yolo_momentum"]       = self._yolo_momentum_sp.value()
-        s["yolo_weight_decay"]   = self._yolo_weight_decay_sp.value()
-        s["yolo_warmup_epochs"]  = self._yolo_warmup_sp.value()
-        s["yolo_cos_lr"]         = self._yolo_cos_lr_cb.isChecked()
-        s["yolo_box"]            = self._yolo_box_sp.value()
-        s["yolo_cls"]            = self._yolo_cls_sp.value()
-        s["yolo_dfl"]            = self._yolo_dfl_sp.value()
-        s["yolo_dropout"]        = self._yolo_dropout_sp.value()
-        s["yolo_overlap_mask"]   = self._yolo_overlap_mask_cb.isChecked()
-        s["yolo_mask_ratio"]     = self._yolo_mask_ratio_sp.value()
-        s["yolo_hsv_h"]          = self._yolo_hsv_h_sp.value()
-        s["yolo_hsv_s"]          = self._yolo_hsv_s_sp.value()
-        s["yolo_hsv_v"]          = self._yolo_hsv_v_sp.value()
-        s["yolo_fliplr"]         = self._yolo_fliplr_sp.value()
-        s["yolo_flipud"]         = self._yolo_flipud_sp.value()
-        s["yolo_degrees"]        = self._yolo_degrees_sp.value()
-        s["yolo_translate"]      = self._yolo_translate_sp.value()
-        s["yolo_scale"]          = self._yolo_scale_sp.value()
-        s["yolo_mosaic"]         = self._yolo_mosaic_sp.value()
-        s["yolo_mixup"]          = self._yolo_mixup_sp.value()
-        s["yolo_copy_paste"]     = self._yolo_copy_paste_sp.value()
-        s["yolo_close_mosaic"]   = self._yolo_close_mosaic_sp.value()
-        s["yolo_amp"]            = self._yolo_amp_cb.isChecked()
-        s["yolo_cache"]          = self._yolo_cache_cb.isChecked()
-        s["yolo_save_period"]    = self._yolo_save_period_sp.value()
-        s["yolo_plots"]          = self._yolo_plots_cb.isChecked()
-        _save_settings(s)
-
     def _browse_dataset(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Dataset Folder",
-                                                   self._ds_edit.text() or "")
-        if folder:
-            self._load_dataset_info(folder)
-            self._autosave()
+        try:
+            folder = QFileDialog.getExistingDirectory(self, "Select Dataset Folder",
+                                                       self._ds_edit.text() or "")
+            if folder:
+                self._load_dataset_info(folder)
+                self._autosave()
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _browse_weights(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select Weights File", "",
-            "Weights (*.pt *.ckpt *.pth);;All Files (*)")
-        if path:
-            self._weights_edit.setText(path)
+        try:
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Select Weights File", "",
+                "Weights (*.pt *.ckpt *.pth);;All Files (*)")
+            if path:
+                self._weights_edit.setText(path)
+                self._autosave()
+
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
+    def _clear_weights(self):
+        try:
+            self._weights_edit.clear()
             self._autosave()
 
-    def _clear_weights(self):
-        self._weights_edit.clear()
-        self._autosave()
-
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _load_dataset_info(self, folder: str):
         self._ds_edit.setText(folder)
         info_path = os.path.join(folder, "dataset_info.json")
@@ -2314,138 +2460,165 @@ class TrainingTab(QWidget):
         }
 
     def _run_checks(self, show_dialog_on_failure: bool = False) -> bool:
-        while self._checks_list_layout.count():
-            item = self._checks_list_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
         try:
-            from mlops.training import build_training_config
-            cfg = build_training_config(self._get_form_dict())
-            results = run_preflight(cfg, self._registry_root, _SCRIPTS_DIR)
+            while self._checks_list_layout.count():
+                item = self._checks_list_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+            try:
+                from mlops.training import build_training_config
+                cfg = build_training_config(self._get_form_dict())
+                results = run_preflight(cfg, self._registry_root, _SCRIPTS_DIR)
+            except Exception as e:
+                lbl = QLabel(f"✗ Configuration error: {e}")
+                lbl.setStyleSheet("color: #f87171; font-size: 11px;")
+                lbl.setWordWrap(True)
+                self._checks_list_layout.addWidget(lbl)
+                return False
+            self._last_preflight_results = results
+            all_ok = True
+            failed_msgs = []
+            for r in results:
+                if r["ok"]:
+                    icon, color = "✓", "#4caf50"
+                elif r["warn"]:
+                    icon, color = "⚠", "#ffc107"
+                else:
+                    icon, color = "✗", "#f87171"
+                    all_ok = False
+                    failed_msgs.append(r["name"])
+                lbl = QLabel(f"{icon} {r['name']}: {r['msg']}")
+                lbl.setStyleSheet(f"color: {color}; font-size: 11px;")
+                lbl.setWordWrap(True)
+                self._checks_list_layout.addWidget(lbl)
+            self._copy_diag_btn.show()
+            if not all_ok and show_dialog_on_failure:
+                QMessageBox.warning(self, "Pre-flight Checks Failed",
+                                    "Fix the following issues:\n" + "\n".join(failed_msgs))
+            return all_ok
+
         except Exception as e:
-            lbl = QLabel(f"✗ Configuration error: {e}")
-            lbl.setStyleSheet("color: #f87171; font-size: 11px;")
-            lbl.setWordWrap(True)
-            self._checks_list_layout.addWidget(lbl)
-            return False
-        self._last_preflight_results = results
-        all_ok = True
-        failed_msgs = []
-        for r in results:
-            if r["ok"]:
-                icon, color = "✓", "#4caf50"
-            elif r["warn"]:
-                icon, color = "⚠", "#ffc107"
-            else:
-                icon, color = "✗", "#f87171"
-                all_ok = False
-                failed_msgs.append(r["name"])
-            lbl = QLabel(f"{icon} {r['name']}: {r['msg']}")
-            lbl.setStyleSheet(f"color: {color}; font-size: 11px;")
-            lbl.setWordWrap(True)
-            self._checks_list_layout.addWidget(lbl)
-        self._copy_diag_btn.show()
-        if not all_ok and show_dialog_on_failure:
-            QMessageBox.warning(self, "Pre-flight Checks Failed",
-                                "Fix the following issues:\n" + "\n".join(failed_msgs))
-        return all_ok
-
-    def _copy_diagnostic(self):
-        import sys, platform
-        lines = [
-            "=== DualAnnotator Diagnostic Info ===",
-            f"OS         : {platform.platform()}",
-            f"Python     : {sys.version}",
-            f"Scripts dir: {_SCRIPTS_DIR}",
-            f"Registry   : {self._registry_root}",
-            "",
-            "--- Pre-flight Results ---",
-        ]
-        for r in self._last_preflight_results:
-            if r["ok"]:
-                status = "OK  "
-            elif r["warn"]:
-                status = "WARN"
-            else:
-                status = "FAIL"
-            lines.append(f"[{status}] {r['name']}: {r['msg']}")
-        QApplication.clipboard().setText("\n".join(lines))
-        self._copy_diag_btn.setText("Copied!")
-        QTimer.singleShot(2000, lambda: self._copy_diag_btn.setText("Copy Diagnostic Info"))
-
-    def _on_start_stop(self):
-        if self._worker is not None:
-            self._worker.cancel()
-            self._start_btn.setEnabled(False)
-            return
-
-        if not self._run_checks(show_dialog_on_failure=True):
-            return
-
-        # ── Check if AI Engine needs setup ──
-        if needs_setup():
-            reply = QMessageBox.question(
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
                 self,
-                "AI Engine Not Found",
-                "Training requires the AI Engine (PyTorch + ML packages).\n\n"
-                "This is a one-time download (~2 GB) that takes 5-10 minutes.\n\n"
-                "Would you like to install it now?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.Yes,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
             )
-            if reply == QMessageBox.Yes:
-                dialog = _EngineSetupDialog(self)
-                dialog.setup_complete.connect(self._on_engine_setup_done)
-                dialog.start()
-                dialog.exec_()
             return
-
+    def _copy_diagnostic(self):
         try:
-            from mlops.training import build_training_config
-            cfg = build_training_config(self._get_form_dict())
+            import sys, platform
+            lines = [
+                "=== DualAnnotator Diagnostic Info ===",
+                f"OS         : {platform.platform()}",
+                f"Python     : {sys.version}",
+                f"Scripts dir: {_SCRIPTS_DIR}",
+                f"Registry   : {self._registry_root}",
+                "",
+                "--- Pre-flight Results ---",
+            ]
+            for r in self._last_preflight_results:
+                if r["ok"]:
+                    status = "OK  "
+                elif r["warn"]:
+                    status = "WARN"
+                else:
+                    status = "FAIL"
+                lines.append(f"[{status}] {r['name']}: {r['msg']}")
+            QApplication.clipboard().setText("\n".join(lines))
+            self._copy_diag_btn.setText("Copied!")
+            QTimer.singleShot(2000, lambda: self._copy_diag_btn.setText("Copy Diagnostic Info"))
+
         except Exception as e:
-            QMessageBox.warning(self, "Error", str(e))
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
             return
+    def _on_start_stop(self):
+        try:
+            if self._worker is not None:
+                self._worker.cancel()
+                self._start_btn.setEnabled(False)
+                return
 
-        self._result_card.hide()
-        self._rc_onnx_btn.hide()
-        self._rc_onnx_status.hide()
-        self._last_version_folder = ""
-        self._prog_frame.show()
-        self._progress_bar.setValue(0)
-        self._console.clear()
+            if not self._run_checks(show_dialog_on_failure=True):
+                return
 
-        self._epochs_seen  = []
-        self._train_losses = []
-        self._val_losses   = []
-        self._train_ious   = []
-        self._val_ious     = []
+            # ── Check if AI Engine needs setup ──
+            if needs_setup():
+                reply = QMessageBox.question(
+                    self,
+                    "AI Engine Not Found",
+                    "Training requires the AI Engine (PyTorch + ML packages).\n\n"
+                    "This is a one-time download (~2 GB) that takes 5-10 minutes.\n\n"
+                    "Would you like to install it now?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.Yes,
+                )
+                if reply == QMessageBox.Yes:
+                    dialog = _EngineSetupDialog(self)
+                    dialog.setup_complete.connect(self._on_engine_setup_done)
+                    dialog.start()
+                    dialog.exec_()
+                return
 
-        if HAS_MATPLOTLIB:
-            for ax, ylabel in [(self._ax_loss, "Loss"), (self._ax_iou, "IoU / mAP50")]:
-                ax.cla()
-                ax.set_facecolor("#1a1a1a")
-                ax.set_xlabel("Epoch"); ax.set_ylabel(ylabel)
-                ax.tick_params(colors="#aaaaaa")
-                ax.xaxis.label.set_color("#aaaaaa")
-                ax.yaxis.label.set_color("#aaaaaa")
-                for spine in ax.spines.values():
-                    spine.set_edgecolor("#3a3a3a")
-            self._canvas.draw_idle()
+            try:
+                from mlops.training import build_training_config
+                cfg = build_training_config(self._get_form_dict())
+            except Exception as e:
+                QMessageBox.warning(self, "Error", str(e))
+                return
 
-        # Switch to metrics view
-        self._right_stack.setCurrentIndex(1)
+            self._result_card.hide()
+            self._rc_onnx_btn.hide()
+            self._rc_onnx_status.hide()
+            self._last_version_folder = ""
+            self._prog_frame.show()
+            self._progress_bar.setValue(0)
+            self._console.clear()
 
-        self._start_btn.setText("■  Stop Training")
-        self._start_btn.setStyleSheet(_STOP_STYLE)
+            self._epochs_seen  = []
+            self._train_losses = []
+            self._val_losses   = []
+            self._train_ious   = []
+            self._val_ious     = []
 
-        self._worker = TrainWorker(cfg, self._registry_root, _SCRIPTS_DIR, parent=self)
-        self._worker.log.connect(self._append_log)
-        self._worker.progress.connect(self._progress_bar.setValue)
-        self._worker.metric.connect(self._on_metric)
-        self._worker.finished.connect(self._on_finished)
-        self._worker.start()
+            if HAS_MATPLOTLIB:
+                for ax, ylabel in [(self._ax_loss, "Loss"), (self._ax_iou, "IoU / mAP50")]:
+                    ax.cla()
+                    ax.set_facecolor("#1a1a1a")
+                    ax.set_xlabel("Epoch"); ax.set_ylabel(ylabel)
+                    ax.tick_params(colors="#aaaaaa")
+                    ax.xaxis.label.set_color("#aaaaaa")
+                    ax.yaxis.label.set_color("#aaaaaa")
+                    for spine in ax.spines.values():
+                        spine.set_edgecolor("#3a3a3a")
+                self._canvas.draw_idle()
 
+            # Switch to metrics view
+            self._right_stack.setCurrentIndex(1)
+
+            self._start_btn.setText("■  Stop Training")
+            self._start_btn.setStyleSheet(_STOP_STYLE)
+
+            self._worker = TrainWorker(cfg, self._registry_root, _SCRIPTS_DIR, parent=self)
+            self._worker.log.connect(self._append_log)
+            self._worker.progress.connect(self._progress_bar.setValue)
+            self._worker.metric.connect(self._on_metric)
+            self._worker.finished.connect(self._on_finished)
+            self._worker.start()
+
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _on_engine_setup_done(self, success: bool):
         if success:
             QMessageBox.information(
@@ -2564,29 +2737,39 @@ class TrainingTab(QWidget):
             self._append_log("<span style='color:#f87171'>[FAILED] Training failed or was cancelled.</span>")
 
     def _on_export_onnx_clicked(self):
-        if not self._last_version_folder or not os.path.isdir(self._last_version_folder):
-            self._rc_onnx_status.setText("✗ Version folder not found.")
-            self._rc_onnx_status.setStyleSheet("color: #f87171; font-size: 11px;")
+        try:
+            if not self._last_version_folder or not os.path.isdir(self._last_version_folder):
+                self._rc_onnx_status.setText("✗ Version folder not found.")
+                self._rc_onnx_status.setStyleSheet("color: #f87171; font-size: 11px;")
+                self._rc_onnx_status.show()
+                return
+            weights = os.path.join(self._last_version_folder, "best.pt")
+            if not os.path.isfile(weights):
+                self._rc_onnx_status.setText("✗ best.pt not found in version folder.")
+                self._rc_onnx_status.setStyleSheet("color: #f87171; font-size: 11px;")
+                self._rc_onnx_status.show()
+                return
+            self._rc_onnx_btn.setEnabled(False)
+            self._rc_onnx_btn.setText("Exporting...")
+            self._rc_onnx_status.setText("Converting best.pt → ONNX...")
+            self._rc_onnx_status.setStyleSheet("color: #4fc3f7; font-size: 11px;")
             self._rc_onnx_status.show()
+            self._prog_frame.show()
+            self._progress_bar.setValue(0)
+            self._onnx_worker = OnnxWorker(self._last_version_folder, _SCRIPTS_DIR, parent=self)
+            self._onnx_worker.log.connect(self._append_log)
+            self._onnx_worker.progress.connect(self._progress_bar.setValue)
+            self._onnx_worker.finished.connect(self._on_onnx_finished)
+            self._onnx_worker.start()
+
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
             return
-        weights = os.path.join(self._last_version_folder, "best.pt")
-        if not os.path.isfile(weights):
-            self._rc_onnx_status.setText("✗ best.pt not found in version folder.")
-            self._rc_onnx_status.setStyleSheet("color: #f87171; font-size: 11px;")
-            self._rc_onnx_status.show()
-            return
-        self._rc_onnx_btn.setEnabled(False)
-        self._rc_onnx_btn.setText("Exporting...")
-        self._rc_onnx_status.setText("Converting best.pt → ONNX...")
-        self._rc_onnx_status.setStyleSheet("color: #4fc3f7; font-size: 11px;")
-        self._rc_onnx_status.show()
-        self._prog_frame.show()
-        self._progress_bar.setValue(0)
-        self._onnx_worker = OnnxWorker(self._last_version_folder, _SCRIPTS_DIR, parent=self)
-        self._onnx_worker.log.connect(self._append_log)
-        self._onnx_worker.progress.connect(self._progress_bar.setValue)
-        self._onnx_worker.finished.connect(self._on_onnx_finished)
-        self._onnx_worker.start()
 
     @pyqtSlot(bool)
     def _on_onnx_finished(self, success: bool):

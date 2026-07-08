@@ -4,6 +4,8 @@ from PyQt5.QtCore import Qt, QPoint, pyqtSignal, QRect, QRectF, QPointF, QTimer
 from PyQt5.QtGui import QPainter, QPixmap, QColor, QPen, QBrush, QFont, QPolygonF, QCursor, QPainterPath
 import os
 import math
+import logging
+import traceback
 
 from core.annotation import BoundingBox
 from core.polygon_shape import PolygonShape
@@ -793,8 +795,12 @@ class AnnotationCanvas(QWidget):
             inner.closed = getattr(shape, 'closed', False)
 
             
-        if inner:
-            inner.class_id = shape.class_id
+        if inner is None:
+            QMessageBox.warning(self, "Invalid Operation",
+                                "This shape type doesn't support inner shapes.")
+            return
+
+        inner.class_id = shape.class_id
         if mode == 'outer':
             if shape in self.shapes:
                 self.shapes.remove(shape)
@@ -1045,131 +1051,134 @@ class AnnotationCanvas(QWidget):
             print("🗑️ Deleted all shapes")
         
     def paintEvent(self, event):
-        """Handle painting events"""
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        try:
+            """Handle painting events"""
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.Antialiasing)
         
-        # Fill background
-        painter.fillRect(self.rect(), QColor(30, 30, 30))
+            # Fill background
+            painter.fillRect(self.rect(), QColor(30, 30, 30))
         
-        # Draw image if loaded
-        if self.pixmap and not self.pixmap.isNull():
-            # Calculate scaled dimensions
-            scaled_width = int(self.image_width * self.scale)
-            scaled_height = int(self.image_height * self.scale)
+            # Draw image if loaded
+            if self.pixmap and not self.pixmap.isNull():
+                # Calculate scaled dimensions
+                scaled_width = int(self.image_width * self.scale)
+                scaled_height = int(self.image_height * self.scale)
             
-            # Scale the pixmap
-            self.scaled_pixmap = self.pixmap.scaled(
-                scaled_width, scaled_height,
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
-            )
-            
-            # Draw the image
-            painter.drawPixmap(
-                int(self.offset_x), int(self.offset_y),
-                self.scaled_pixmap
-            )
-            
-            # Draw all shapes  # CONCENTRIC INTEGRATION
-            if self.mode == 'concentric':
-                from gui.concentric_renderer import ConcentricRenderer
-                ConcentricRenderer.draw(
-                    painter, self.shapes, self.class_manager,
-                    self.scale, self.offset_x, self.offset_y,
-                    self.handle_size
+                # Scale the pixmap
+                self.scaled_pixmap = self.pixmap.scaled(
+                    scaled_width, scaled_height,
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation
                 )
-            else:
-                self.draw_shapes(painter)
             
-            # Draw current shape if drawing
-            if self.drawing and self.current_shape:
-                if isinstance(self.current_shape, BoundingBox):
-                    self.draw_single_box(painter, self.current_shape, QColor(255, 255, 0))
-                elif isinstance(self.current_shape, FrameShape):
-                    self.draw_frame(painter, self.current_shape, QColor(255, 255, 0))
+                # Draw the image
+                painter.drawPixmap(
+                    int(self.offset_x), int(self.offset_y),
+                    self.scaled_pixmap
+                )
             
-            # Draw polygon preview if drawing polygon
-            if self.polygon_points and len(self.polygon_points) > 0:
-                self.draw_polygon_preview(painter)
+                # Draw all shapes  # CONCENTRIC INTEGRATION
+                if self.mode == 'concentric':
+                    from gui.concentric_renderer import ConcentricRenderer
+                    ConcentricRenderer.draw(
+                        painter, self.shapes, self.class_manager,
+                        self.scale, self.offset_x, self.offset_y,
+                        self.handle_size
+                    )
+                else:
+                    self.draw_shapes(painter)
+            
+                # Draw current shape if drawing
+                if self.drawing and self.current_shape:
+                    if isinstance(self.current_shape, BoundingBox):
+                        self.draw_single_box(painter, self.current_shape, QColor(255, 255, 0))
+                    elif isinstance(self.current_shape, FrameShape):
+                        self.draw_frame(painter, self.current_shape, QColor(255, 255, 0))
+            
+                # Draw polygon preview if drawing polygon
+                if self.polygon_points and len(self.polygon_points) > 0:
+                    self.draw_polygon_preview(painter)
 
-            # Draw bezier preview if drawing bezier
-            if self.bezier_points and len(self.bezier_points) > 0:
-                self.draw_bezier_preview(painter)
+                # Draw bezier preview if drawing bezier
+                if self.bezier_points and len(self.bezier_points) > 0:
+                    self.draw_bezier_preview(painter)
                 
-            # Draw circle preview if drawing circle
-            if self.circle_center and self.circle_radius > 0:
-                self.draw_circle_preview(painter)
+                # Draw circle preview if drawing circle
+                if self.circle_center and self.circle_radius > 0:
+                    self.draw_circle_preview(painter)
                 
-            # Draw ellipse preview if drawing ellipse
-            if hasattr(self, 'ellipse_center') and self.ellipse_center and self.ellipse_radius_x > 0:
-                self.draw_ellipse_preview(painter)
+                # Draw ellipse preview if drawing ellipse
+                if hasattr(self, 'ellipse_center') and self.ellipse_center and self.ellipse_radius_x > 0:
+                    self.draw_ellipse_preview(painter)
                 
-            # Draw donut preview if drawing donut
-            if hasattr(self, 'donut_center') and self.donut_center and self.donut_radius > 0:
-                self.draw_donut_preview(painter)
+                # Draw donut preview if drawing donut
+                if hasattr(self, 'donut_center') and self.donut_center and self.donut_radius > 0:
+                    self.draw_donut_preview(painter)
                 
-            # Draw hollow ellipse preview if drawing
-            if hasattr(self, 'hollow_ellipse_center') and self.hollow_ellipse_center and self.hollow_ellipse_rx > 0:
-                self.draw_hollow_ellipse_preview(painter)
+                # Draw hollow ellipse preview if drawing
+                if hasattr(self, 'hollow_ellipse_center') and self.hollow_ellipse_center and self.hollow_ellipse_rx > 0:
+                    self.draw_hollow_ellipse_preview(painter)
             
-            # Draw hollow offset preview
-            if getattr(self, '_hollow_preview_mode', None) and getattr(self, '_hollow_preview_shape', None):
-                self._draw_hollow_preview(painter)
+                # Draw hollow offset preview
+                if getattr(self, '_hollow_preview_mode', None) and getattr(self, '_hollow_preview_shape', None):
+                    self._draw_hollow_preview(painter)
             
-            # Draw stamp preview if stamping
-            if hasattr(self, 'stamping') and self.stamping and self.stamp_center and self.stamp_current_pos:
-                self.draw_stamp_preview(painter)
+                # Draw stamp preview if stamping
+                if hasattr(self, 'stamping') and self.stamping and self.stamp_center and self.stamp_current_pos:
+                    self.draw_stamp_preview(painter)
             
-            # Draw group bounding box when 2+ shapes are selected
-            if len(self.selected_shapes) > 1:
-                bbox = self._get_group_bounding_box()
-                if bbox:
-                    x1, y1, x2, y2 = bbox
+                # Draw group bounding box when 2+ shapes are selected
+                if len(self.selected_shapes) > 1:
+                    bbox = self._get_group_bounding_box()
+                    if bbox:
+                        x1, y1, x2, y2 = bbox
+                        painter.setPen(QPen(QColor(100, 180, 255), 1, Qt.DashLine))
+                        painter.setBrush(Qt.NoBrush)
+                        painter.drawRect(x1, y1, x2 - x1, y2 - y1)
+                        h = 6
+                        painter.setBrush(QBrush(QColor(100, 180, 255)))
+                        painter.setPen(Qt.NoPen)
+                        for hx, hy in [(x1, y1), (x2, y1), (x1, y2), (x2, y2)]:
+                            painter.drawRect(hx - h//2, hy - h//2, h, h)
+                        painter.setPen(QPen(QColor(100, 180, 255)))
+                        f = QFont()
+                        f.setPointSize(9)
+                        painter.setFont(f)
+                        painter.drawText(x1 + 4, y1 - 6, f"{len(self.selected_shapes)} selected")
+
+                # Draw rubber band selection rectangle
+                if self.rubber_band_active and self.rubber_band_start and self.rubber_band_end:
+                    rx = min(self.rubber_band_start.x(), self.rubber_band_end.x())
+                    ry = min(self.rubber_band_start.y(), self.rubber_band_end.y())
+                    rw = abs(self.rubber_band_end.x() - self.rubber_band_start.x())
+                    rh = abs(self.rubber_band_end.y() - self.rubber_band_start.y())
                     painter.setPen(QPen(QColor(100, 180, 255), 1, Qt.DashLine))
-                    painter.setBrush(Qt.NoBrush)
-                    painter.drawRect(x1, y1, x2 - x1, y2 - y1)
-                    h = 6
-                    painter.setBrush(QBrush(QColor(100, 180, 255)))
-                    painter.setPen(Qt.NoPen)
-                    for hx, hy in [(x1, y1), (x2, y1), (x1, y2), (x2, y2)]:
-                        painter.drawRect(hx - h//2, hy - h//2, h, h)
-                    painter.setPen(QPen(QColor(100, 180, 255)))
-                    f = QFont()
-                    f.setPointSize(9)
-                    painter.setFont(f)
-                    painter.drawText(x1 + 4, y1 - 6, f"{len(self.selected_shapes)} selected")
-
-            # Draw rubber band selection rectangle
-            if self.rubber_band_active and self.rubber_band_start and self.rubber_band_end:
-                rx = min(self.rubber_band_start.x(), self.rubber_band_end.x())
-                ry = min(self.rubber_band_start.y(), self.rubber_band_end.y())
-                rw = abs(self.rubber_band_end.x() - self.rubber_band_start.x())
-                rh = abs(self.rubber_band_end.y() - self.rubber_band_start.y())
-                painter.setPen(QPen(QColor(100, 180, 255), 1, Qt.DashLine))
-                painter.setBrush(QBrush(QColor(100, 180, 255, 30)))
-                painter.drawRect(rx, ry, rw, rh)
+                    painter.setBrush(QBrush(QColor(100, 180, 255, 30)))
+                    painter.drawRect(rx, ry, rw, rh)
                 
-        # Draw mode indicator
-        painter.setPen(QPen(QColor(200, 200, 200), 1))
-        mode_text = f"Mode: {self.mode.upper()}"
-        painter.drawText(10, 20, mode_text)
+            # Draw mode indicator
+            painter.setPen(QPen(QColor(200, 200, 200), 1))
+            mode_text = f"Mode: {self.mode.upper()}"
+            painter.drawText(10, 20, mode_text)
         
-        # Draw shape type indicator
-        if self.current_shape_type:
-            shape_text = f"Shape: {self.current_shape_type.upper()}"
-        else:
-            shape_text = "Shape: NONE"
-            painter.setPen(QPen(QColor(255, 100, 100), 1))
-        painter.drawText(10, 40, shape_text)
+            # Draw shape type indicator
+            if self.current_shape_type:
+                shape_text = f"Shape: {self.current_shape_type.upper()}"
+            else:
+                shape_text = "Shape: NONE"
+                painter.setPen(QPen(QColor(255, 100, 100), 1))
+            painter.drawText(10, 40, shape_text)
         
-        # Draw pan mode indicator
-        if self.pan_mode:
-            painter.setPen(QPen(QColor(100, 200, 255), 1))
-            painter.drawText(10, 60, "Pan Mode: ON (Space to toggle)")
+            # Draw pan mode indicator
+            if self.pan_mode:
+                painter.setPen(QPen(QColor(100, 200, 255), 1))
+                painter.drawText(10, 60, "Pan Mode: ON (Space to toggle)")
         
 
 
+        except Exception:
+            logging.error(traceback.format_exc())
     def _draw_hollow_preview(self, painter):
         shape = self._hollow_preview_shape
         offset = self._hollow_preview_offset
@@ -2123,316 +2132,343 @@ class AnnotationCanvas(QWidget):
         painter.drawRect(wx - half, wy - half, self.handle_size, self.handle_size)
         
     def mousePressEvent(self, event):
-        """Handle mouse press events"""
-        # Ensure canvas has keyboard focus for shortcuts
-        self.setFocus()
-        if event.button() == Qt.MiddleButton or (event.button() == Qt.LeftButton and self.pan_mode):
-            # Pan mode
-            self.dragging = True
-            self.last_mouse_pos = event.pos()
-            self.setCursor(Qt.ClosedHandCursor)
+        try:
+            """Handle mouse press events"""
+            # Ensure canvas has keyboard focus for shortcuts
+            self.setFocus()
+            if event.button() == Qt.MiddleButton or (event.button() == Qt.LeftButton and self.pan_mode):
+                # Pan mode
+                self.dragging = True
+                self.last_mouse_pos = event.pos()
+                self.setCursor(Qt.ClosedHandCursor)
             
-        elif event.button() == Qt.RightButton:
-            # Get shape at position
-            shape = self.find_shape_at(event.pos())
+            elif event.button() == Qt.RightButton:
+                # Get shape at position
+                shape = self.find_shape_at(event.pos())
             
-            # Handle right click vertex insertion for bezier polygons
-            if shape and getattr(shape, 'type', '') == 'bezier_polygon':
-                image_x, image_y = self.widget_to_image(event.pos())
-                if hasattr(shape, 'get_closest_edge'):
-                    # Check if hovering near boundary (10 pixels threshold scaled)
-                    edge_info = shape.get_closest_edge(image_x, image_y, 10.0 / self.scale)
-                    if edge_info:
-                        idx, pt, is_inner = edge_info
-                        menu = QMenu(self)
-                        add_action = menu.addAction("Add Curve Point Here")
-                        action = menu.exec_(self.mapToGlobal(event.pos()))
-                        if action == add_action:
-                            self.save_state()  # Save state for undo
-                            shape.insert_vertex(idx, pt, is_inner)
-                            self.update()
-                            print(f"✅ Inserted new curve point via context menu")
-                        return
-
-                # Fallback to direct ctrl point click
-                handle = self.get_resize_handle_at_pos(event.pos(), shape)
-                if handle and (handle.startswith('ctrl_') or handle.startswith('ctrl_inner_')):
-                    self.save_state()  # Save before modifying
-                    if hasattr(shape, 'insert_vertex_at_ctrl'):
-                        inserted = shape.insert_vertex_at_ctrl(handle)
-                        if inserted:
-                            print(f"✅ Inserted new vertex at {handle} via right-click")
-                            self.update()
+                # Handle right click vertex insertion for bezier polygons
+                if shape and getattr(shape, 'type', '') == 'bezier_polygon':
+                    image_x, image_y = self.widget_to_image(event.pos())
+                    if hasattr(shape, 'get_closest_edge'):
+                        # Check if hovering near boundary (10 pixels threshold scaled)
+                        edge_info = shape.get_closest_edge(image_x, image_y, 10.0 / self.scale)
+                        if edge_info:
+                            idx, pt, is_inner = edge_info
+                            menu = QMenu(self)
+                            add_action = menu.addAction("Add Curve Point Here")
+                            action = menu.exec_(self.mapToGlobal(event.pos()))
+                            if action == add_action:
+                                self.save_state()  # Save state for undo
+                                shape.insert_vertex(idx, pt, is_inner)
+                                self.update()
+                                print(f"✅ Inserted new curve point via context menu")
                             return
 
-            if shape and getattr(shape, 'hollow_role', None) != 'inner':
-                # Need to select it if not selected
-                if not shape.selected:
-                    self.select_shape(event.pos())
-                    
-                self._invoke_context_menu(event.globalPos(), event.pos())
-                return
-            else:
-                self._invoke_context_menu(event.globalPos(), event.pos())
-                return
-            
-        elif event.button() == Qt.LeftButton and not self.pan_mode:
-            if self.pixmap and not self.pixmap.isNull():
-                
-                # Check if we have a selected class
-                current_class = self.class_manager.get_current_class() if self.class_manager else None
-                
-                # Check modifier keys
-                modifiers = QApplication.keyboardModifiers()
-                ctrl_pressed = bool(modifiers & Qt.ControlModifier)
-                shift_pressed = bool(modifiers & Qt.ShiftModifier)
-                
-                # ── MULTI-SELECT: Shift+click toggles a single shape ──
-                if shift_pressed and (not self.current_shape_type or self.current_shape_type == 'none'):
-                    image_x, image_y = self.widget_to_image(event.pos())
-                    clicked = None
-                    for shape in reversed(self.shapes):
-                        if getattr(shape, 'hollow_role', None) == 'inner':
-                            continue
-                        if hasattr(shape, 'contains_point') and shape.contains_point(image_x, image_y):
-                            clicked = shape
-                            break
-                    if clicked:
-                        if clicked in self.selected_shapes:
-                            self.selected_shapes.remove(clicked)
-                            clicked.selected = False
-                        else:
-                            self.selected_shapes.append(clicked)
-                            clicked.selected = True
-                        self.selected_shape = self.selected_shapes[-1] if self.selected_shapes else None
-                        self.update()
-                    return
-                
-                # Check if we are actively mid-draw (polygon/bezier points exist)
-                is_active_poly = len(self.polygon_points) > 0 or len(self.bezier_points) > 0
-                is_actively_drawing = is_active_poly or self.drawing_inner_cutout or self.drawing or self.stamping
-                
-                # FIRST: Check if we're over a resize handle of selected shape (only single-select)
-                if self.selected_shape and len(self.selected_shapes) <= 1 and not is_actively_drawing:
-                    handle = self.get_resize_handle_at_pos(event.pos(), self.selected_shape)
-                    if handle:
-                        # Start resizing
-                        self.resizing = True
-                        self.resizing_handle = handle
-                        self.resize_start_pos = self.widget_to_image_unclamped(event.pos())
-                        
-                        # Call begin_resize on the shape
-                        if hasattr(self.selected_shape, 'begin_resize'):
-                            import inspect
-                            sig = inspect.signature(self.selected_shape.begin_resize)
-                            if len(sig.parameters) > 0:
-                                self.selected_shape.begin_resize(handle)
-                            else:
-                                self.selected_shape.begin_resize()
-                        
-                        return
-                
-                # SECOND: Check if we're clicking on a shape (for moving or selecting)
-                image_x, image_y = self.widget_to_image(event.pos())
-                clicked_shape = None
-                
-                if not is_actively_drawing:
-                    for shape in reversed(self.shapes):
-                        if getattr(shape, 'hollow_role', None) == 'inner':
-                            continue
-                        if hasattr(shape, 'contains_point') and shape.contains_point(image_x, image_y):
-                            clicked_shape = shape
-                            break
-                
-                if clicked_shape:
-                    # If Ctrl is pressed, start drag-copy (single or group)
-                    if ctrl_pressed:
-                        if len(self.selected_shapes) > 1 and clicked_shape in self.selected_shapes:
-                            self.start_multi_drag_copy(event.pos())
-                        else:
-                            self.start_drag_copy(clicked_shape, event.pos())
-                        return
-                    
-                    # If the clicked shape is already selected, start moving it (single or group)
-                    if clicked_shape.selected:
-                        if len(self.selected_shapes) > 1 and clicked_shape in self.selected_shapes:
-                            self.start_multi_move(event.pos())
-                        else:
-                            self.start_move(clicked_shape, event.pos())
-                        return
-                    else:
-                        # Just select the shape (clears multi-select)
-                        self.select_shape(event.pos())
-                        return
-                
-                # THIRD: Handle inner cutout drawing (priority over tool selection)
-                if self.drawing_inner_cutout:
-                    self.start_polygon_drawing(event.pos())
-                    return
-                
-                # FOURTH: Handle drawing based on current tool
-                if self.current_shape_type and self.current_shape_type != 'none':
-                    if self.current_shape_type == 'polygon':
-                        self.start_polygon_drawing(event.pos())
-                    elif self.current_shape_type == 'circle':
-                        self.start_circle_drawing(event.pos())
-                    elif self.current_shape_type == 'ellipse':
-                        self.start_ellipse_drawing(event.pos())
-                    elif self.current_shape_type == 'box':
-                        self.start_drawing(event.pos())
-                    elif self.current_shape_type == 'frame':
-                        self.start_frame_drawing(event.pos())
-                    elif self.current_shape_type == 'donut':
-                        self.start_donut_drawing(event.pos())
-                    elif self.current_shape_type == 'hollow_ellipse':
-                        self.start_hollow_ellipse_drawing(event.pos())
-                    elif self.current_shape_type == 'template':
-                        self.start_polygon_drawing(event.pos())  # reuse polygon flow
-                    elif self.current_shape_type == 'bezier_polygon':
-                        self.start_bezier_drawing(event.pos())
-                    elif self.current_shape_type == 'stamp':
-                        self.start_stamp(event.pos())
-                else:
-                    # No tool selected — click on empty area starts rubber band
-                    self._clear_multi_selection()
-                    self.rubber_band_active = True
-                    self.rubber_band_start = event.pos()
-                    self.rubber_band_end = event.pos()
-                    self.update()
+                    # Fallback to direct ctrl point click
+                    handle = self.get_resize_handle_at_pos(event.pos(), shape)
+                    if handle and (handle.startswith('ctrl_') or handle.startswith('ctrl_inner_')):
+                        self.save_state()  # Save before modifying
+                        if hasattr(shape, 'insert_vertex_at_ctrl'):
+                            inserted = shape.insert_vertex_at_ctrl(handle)
+                            if inserted:
+                                print(f"✅ Inserted new vertex at {handle} via right-click")
+                                self.update()
+                                return
 
+                if shape and getattr(shape, 'hollow_role', None) != 'inner':
+                    # Need to select it if not selected
+                    if not shape.selected:
+                        self.select_shape(event.pos())
+                    
+                    self._invoke_context_menu(event.globalPos(), event.pos())
+                    return
+                else:
+                    self._invoke_context_menu(event.globalPos(), event.pos())
+                    return
+            
+            elif event.button() == Qt.LeftButton and not self.pan_mode:
+                if self.pixmap and not self.pixmap.isNull():
+                
+                    # Check if we have a selected class
+                    current_class = self.class_manager.get_current_class() if self.class_manager else None
+                
+                    # Check modifier keys
+                    modifiers = QApplication.keyboardModifiers()
+                    ctrl_pressed = bool(modifiers & Qt.ControlModifier)
+                    shift_pressed = bool(modifiers & Qt.ShiftModifier)
+                
+                    # ── MULTI-SELECT: Shift+click toggles a single shape ──
+                    if shift_pressed and (not self.current_shape_type or self.current_shape_type == 'none'):
+                        image_x, image_y = self.widget_to_image(event.pos())
+                        clicked = None
+                        for shape in reversed(self.shapes):
+                            if getattr(shape, 'hollow_role', None) == 'inner':
+                                continue
+                            if hasattr(shape, 'contains_point') and shape.contains_point(image_x, image_y):
+                                clicked = shape
+                                break
+                        if clicked:
+                            if clicked in self.selected_shapes:
+                                self.selected_shapes.remove(clicked)
+                                clicked.selected = False
+                            else:
+                                self.selected_shapes.append(clicked)
+                                clicked.selected = True
+                            self.selected_shape = self.selected_shapes[-1] if self.selected_shapes else None
+                            self.update()
+                        return
+                
+                    # Check if we are actively mid-draw (polygon/bezier points exist)
+                    is_active_poly = len(self.polygon_points) > 0 or len(self.bezier_points) > 0
+                    is_actively_drawing = is_active_poly or self.drawing_inner_cutout or self.drawing or self.stamping
+                
+                    # FIRST: Check if we're over a resize handle of selected shape (only single-select)
+                    if self.selected_shape and len(self.selected_shapes) <= 1 and not is_actively_drawing:
+                        handle = self.get_resize_handle_at_pos(event.pos(), self.selected_shape)
+                        if handle:
+                            # Start resizing
+                            self.resizing = True
+                            self.resizing_handle = handle
+                            self.resize_start_pos = self.widget_to_image_unclamped(event.pos())
+                        
+                            # Call begin_resize on the shape
+                            if hasattr(self.selected_shape, 'begin_resize'):
+                                import inspect
+                                sig = inspect.signature(self.selected_shape.begin_resize)
+                                if len(sig.parameters) > 0:
+                                    self.selected_shape.begin_resize(handle)
+                                else:
+                                    self.selected_shape.begin_resize()
+                        
+                            return
+                
+                    # SECOND: Check if we're clicking on a shape (for moving or selecting)
+                    image_x, image_y = self.widget_to_image(event.pos())
+                    clicked_shape = None
+                
+                    if not is_actively_drawing:
+                        for shape in reversed(self.shapes):
+                            if getattr(shape, 'hollow_role', None) == 'inner':
+                                continue
+                            if hasattr(shape, 'contains_point') and shape.contains_point(image_x, image_y):
+                                clicked_shape = shape
+                                break
+                
+                    if clicked_shape:
+                        # If Ctrl is pressed, start drag-copy (single or group)
+                        if ctrl_pressed:
+                            if len(self.selected_shapes) > 1 and clicked_shape in self.selected_shapes:
+                                self.start_multi_drag_copy(event.pos())
+                            else:
+                                self.start_drag_copy(clicked_shape, event.pos())
+                            return
+                    
+                        # If the clicked shape is already selected, start moving it (single or group)
+                        if clicked_shape.selected:
+                            if len(self.selected_shapes) > 1 and clicked_shape in self.selected_shapes:
+                                self.start_multi_move(event.pos())
+                            else:
+                                self.start_move(clicked_shape, event.pos())
+                            return
+                        else:
+                            # Just select the shape (clears multi-select)
+                            self.select_shape(event.pos())
+                            return
+                
+                    # THIRD: Handle inner cutout drawing (priority over tool selection)
+                    if self.drawing_inner_cutout:
+                        self.start_polygon_drawing(event.pos())
+                        return
+                
+                    # FOURTH: Handle drawing based on current tool
+                    if self.current_shape_type and self.current_shape_type != 'none':
+                        if self.current_shape_type == 'polygon':
+                            self.start_polygon_drawing(event.pos())
+                        elif self.current_shape_type == 'circle':
+                            self.start_circle_drawing(event.pos())
+                        elif self.current_shape_type == 'ellipse':
+                            self.start_ellipse_drawing(event.pos())
+                        elif self.current_shape_type == 'box':
+                            self.start_drawing(event.pos())
+                        elif self.current_shape_type == 'frame':
+                            self.start_frame_drawing(event.pos())
+                        elif self.current_shape_type == 'donut':
+                            self.start_donut_drawing(event.pos())
+                        elif self.current_shape_type == 'hollow_ellipse':
+                            self.start_hollow_ellipse_drawing(event.pos())
+                        elif self.current_shape_type == 'template':
+                            self.start_polygon_drawing(event.pos())  # reuse polygon flow
+                        elif self.current_shape_type == 'bezier_polygon':
+                            self.start_bezier_drawing(event.pos())
+                        elif self.current_shape_type == 'stamp':
+                            self.start_stamp(event.pos())
+                    else:
+                        # No tool selected — click on empty area starts rubber band
+                        self._clear_multi_selection()
+                        self.rubber_band_active = True
+                        self.rubber_band_start = event.pos()
+                        self.rubber_band_end = event.pos()
+                        self.update()
+
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def mouseMoveEvent(self, event):
-        """Handle mouse move events"""
-        # Convert widget coordinates to image coordinates
-        image_x, image_y = self.widget_to_image(event.pos())
-        self.current_mouse_pos = event.pos()
+        try:
+            """Handle mouse move events"""
+            # Convert widget coordinates to image coordinates
+            image_x, image_y = self.widget_to_image(event.pos())
+            self.current_mouse_pos = event.pos()
         
-        # Emit position signal
-        self.position_changed.emit(image_x, image_y)
+            # Emit position signal
+            self.position_changed.emit(image_x, image_y)
         
-        # Rubber band update
-        if self.rubber_band_active and self.rubber_band_start:
-            self.rubber_band_end = event.pos()
-            self.update()
-            return
-        
-        # Multi-group move
-        if self.multi_moving:
-            self.update_multi_move(event.pos())
-            return
-        
-        # Multi drag-copy move
-        if self.multi_drag_copy:
-            self.update_multi_move(event.pos())  # selected_shapes already points to copies
-            return
-        
-        # Handle dragging for panning
-        if self.dragging and self.last_mouse_pos:
-            delta = event.pos() - self.last_mouse_pos
-            self.offset_x += delta.x()
-            self.offset_y += delta.y()
-            self.last_mouse_pos = event.pos()
-            self.update()
-            
-        # Handle moving shapes
-        elif self.moving and not self.resizing:
-            self.update_move(event.pos())
-        
-        # Handle drawing
-        elif self.drawing:
-            self.update_drawing(event.pos())
-        
-        # Handle drag-copy
-        elif self.drag_copy and not self.resizing:
-            self.update_drag_copy(event.pos())
-        
-        # Handle circle drawing
-        elif self.current_shape_type == 'circle' and self.circle_center:
-            self.update_circle_drawing(event.pos())
-        
-        # Handle ellipse drawing
-        elif self.current_shape_type == 'ellipse' and hasattr(self, 'ellipse_center') and self.ellipse_center:
-            self.update_ellipse_drawing(event.pos())
-        
-        # Handle donut drawing (preview only)
-        elif self.current_shape_type == 'donut' and hasattr(self, 'donut_center') and self.donut_center:
-            self.update_donut_drawing(event.pos())
-        
-        # Handle hollow ellipse drawing
-        elif self.current_shape_type == 'hollow_ellipse' and hasattr(self, 'hollow_ellipse_center') and self.hollow_ellipse_center:
-            self.update_hollow_ellipse_drawing(event.pos())
-        
-        # Handle stamp placement
-        elif self.stamping and self.stamp_center:
-            self.stamp_current_pos = self.widget_to_image(event.pos())
-            self.update()
-        
-        # Handle resizing - with reduced sensitivity
-        elif self.resizing and self.resizing_handle and self.selected_shape:
-            current_pos = self.widget_to_image_unclamped(event.pos())
-            dx = current_pos[0] - self.resize_start_pos[0]
-            dy = current_pos[1] - self.resize_start_pos[1]
-            
-            # Apply deadzone to prevent tiny movements (less sensitivity)
-            if abs(dx) < 2 and abs(dy) < 2:
-                return
-                
-            if hasattr(self.selected_shape, 'resize_from_handle'):
-                self.selected_shape.resize_from_handle(self.resizing_handle, dx, dy)
+            # Rubber band update
+            if self.rubber_band_active and self.rubber_band_start:
+                self.rubber_band_end = event.pos()
                 self.update()
-    
-    def mouseReleaseEvent(self, event):
-        """Handle mouse release events"""
-        if event.button() == Qt.MiddleButton or (event.button() == Qt.LeftButton and self.dragging):
-            self.dragging = False
-            self.setCursor(Qt.OpenHandCursor if self.pan_mode else Qt.ArrowCursor)
-            
-        elif event.button() == Qt.LeftButton:
-            # Multi-select release handlers
-            if self.rubber_band_active:
-                self._finish_rubber_band_selection()
                 return
+        
+            # Multi-group move
             if self.multi_moving:
-                self.finish_multi_move()
+                self.update_multi_move(event.pos())
                 return
+        
+            # Multi drag-copy move
             if self.multi_drag_copy:
-                self.finish_multi_drag_copy()
+                self.update_multi_move(event.pos())  # selected_shapes already points to copies
                 return
+        
+            # Handle dragging for panning
+            if self.dragging and self.last_mouse_pos:
+                delta = event.pos() - self.last_mouse_pos
+                self.offset_x += delta.x()
+                self.offset_y += delta.y()
+                self.last_mouse_pos = event.pos()
+                self.update()
             
-            was_moving_or_resizing = self.moving or self.resizing  # AUTOSAVE INTEGRATION
-            if self.moving:
-                self.finish_move()
+            # Handle moving shapes
+            elif self.moving and not self.resizing:
+                self.update_move(event.pos())
+        
+            # Handle drawing
             elif self.drawing:
-                self.finish_drawing()
-            elif self.drag_copy:
-                self.finish_drag_copy()
+                self.update_drawing(event.pos())
+        
+            # Handle drag-copy
+            elif self.drag_copy and not self.resizing:
+                self.update_drag_copy(event.pos())
+        
+            # Handle circle drawing
             elif self.current_shape_type == 'circle' and self.circle_center:
-                self.finish_circle()
+                self.update_circle_drawing(event.pos())
+        
+            # Handle ellipse drawing
             elif self.current_shape_type == 'ellipse' and hasattr(self, 'ellipse_center') and self.ellipse_center:
-                self.finish_ellipse()
+                self.update_ellipse_drawing(event.pos())
+        
+            # Handle donut drawing (preview only)
             elif self.current_shape_type == 'donut' and hasattr(self, 'donut_center') and self.donut_center:
-                self.finish_donut()
+                self.update_donut_drawing(event.pos())
+        
+            # Handle hollow ellipse drawing
             elif self.current_shape_type == 'hollow_ellipse' and hasattr(self, 'hollow_ellipse_center') and self.hollow_ellipse_center:
-                self.finish_hollow_ellipse()
+                self.update_hollow_ellipse_drawing(event.pos())
+        
+            # Handle stamp placement
             elif self.stamping and self.stamp_center:
-                self.finish_stamp()
-            elif self.resizing:
-                self.resizing = False
-                self.resizing_handle = None
-                self.resize_start_pos = None
+                self.stamp_current_pos = self.widget_to_image(event.pos())
+                self.update()
+        
+            # Handle resizing - with reduced sensitivity
+            elif self.resizing and self.resizing_handle and self.selected_shape:
+                current_pos = self.widget_to_image_unclamped(event.pos())
+                dx = current_pos[0] - self.resize_start_pos[0]
+                dy = current_pos[1] - self.resize_start_pos[1]
+            
+                # Apply deadzone to prevent tiny movements (less sensitivity)
+                if abs(dx) < 2 and abs(dy) < 2:
+                    return
                 
-                # Clear resize origin
-                if self.selected_shape and hasattr(self.selected_shape, '_resize_origin'):
-                    self.selected_shape._resize_origin = None
+                if hasattr(self.selected_shape, 'resize_from_handle'):
+                    self.selected_shape.resize_from_handle(self.resizing_handle, dx, dy)
+                    self.update()
+    
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
+    def mouseReleaseEvent(self, event):
+        try:
+            """Handle mouse release events"""
+            if event.button() == Qt.MiddleButton or (event.button() == Qt.LeftButton and self.dragging):
+                self.dragging = False
+                self.setCursor(Qt.OpenHandCursor if self.pan_mode else Qt.ArrowCursor)
+            
+            elif event.button() == Qt.LeftButton:
+                # Multi-select release handlers
+                if self.rubber_band_active:
+                    self._finish_rubber_band_selection()
+                    return
+                if self.multi_moving:
+                    self.finish_multi_move()
+                    return
+                if self.multi_drag_copy:
+                    self.finish_multi_drag_copy()
+                    return
+            
+                was_moving_or_resizing = self.moving or self.resizing  # AUTOSAVE INTEGRATION
+                if self.moving:
+                    self.finish_move()
+                elif self.drawing:
+                    self.finish_drawing()
+                elif self.drag_copy:
+                    self.finish_drag_copy()
+                elif self.current_shape_type == 'circle' and self.circle_center:
+                    self.finish_circle()
+                elif self.current_shape_type == 'ellipse' and hasattr(self, 'ellipse_center') and self.ellipse_center:
+                    self.finish_ellipse()
+                elif self.current_shape_type == 'donut' and hasattr(self, 'donut_center') and self.donut_center:
+                    self.finish_donut()
+                elif self.current_shape_type == 'hollow_ellipse' and hasattr(self, 'hollow_ellipse_center') and self.hollow_ellipse_center:
+                    self.finish_hollow_ellipse()
+                elif self.stamping and self.stamp_center:
+                    self.finish_stamp()
+                elif self.resizing:
+                    self.resizing = False
+                    self.resizing_handle = None
+                    self.resize_start_pos = None
                 
-                print("✅ Resizing complete")
+                    # Clear resize origin
+                    if self.selected_shape and hasattr(self.selected_shape, '_resize_origin'):
+                        self.selected_shape._resize_origin = None
+                
+                    print("✅ Resizing complete")
             
-            # Ensure we're not stuck in any special state
-            self.drag_copy = False
-            self.pasting = False
+                # Ensure we're not stuck in any special state
+                self.drag_copy = False
+                self.pasting = False
             
-            if was_moving_or_resizing:  # AUTOSAVE INTEGRATION
-                self.annotation_changed.emit()
+                if was_moving_or_resizing:  # AUTOSAVE INTEGRATION
+                    self.annotation_changed.emit()
             
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def wheelEvent(self, event):
         """Handle mouse wheel for zooming - zooms to cursor position"""
         if not self.pixmap or self.pixmap.isNull():
@@ -2593,204 +2629,213 @@ class AnnotationCanvas(QWidget):
         return super().event(event)
 
     def keyPressEvent(self, event):
-        """Handle keyboard events"""
-        # Get the key and convert to uppercase for comparison
-        key = event.key()
-        key_text = event.text().upper()
+        try:
+            """Handle keyboard events"""
+            # Get the key and convert to uppercase for comparison
+            key = event.key()
+            key_text = event.text().upper()
         
-        # ===== CTRL+A SELECT ALL (must come before bare 'A' handler) =====
-        if key == Qt.Key_A and event.modifiers() == Qt.ControlModifier:
-            self.select_all()
-            return
-        
-        # ===== SHAPE TOOL SHORTCUTS =====
-        elif key_text == 'B':
-            if hasattr(self, 'parent_window') and self.parent_window:
-                self.parent_window.set_shape_type('box')
-            print("🔷 Box tool selected")
-            return
-            
-        elif key_text == 'P':
-            if hasattr(self, 'parent_window') and self.parent_window:
-                self.parent_window.set_shape_type('polygon')
-            print("🔷 Polygon tool selected")
-            return
-            
-        elif key_text == 'C':
-            if hasattr(self, 'parent_window') and self.parent_window:
-                self.parent_window.set_shape_type('circle')
-            print("🔷 Circle tool selected")
-            return
-            
-        elif key_text == 'E':
-            if hasattr(self, 'parent_window') and self.parent_window:
-                self.parent_window.set_shape_type('ellipse')
-            print("🔷 Ellipse tool selected")
-            return
-        
-        elif key_text == 'F':
-            if hasattr(self, 'parent_window') and self.parent_window:
-                self.parent_window.set_shape_type('frame')
-            print("🔷 Frame tool selected")
-            return
-            
-        elif key_text == 'O':
-            if hasattr(self, 'parent_window') and self.parent_window:
-                self.parent_window.set_shape_type('donut')
-            print("🔷 Donut tool selected")
-            return
-        
-        elif key_text == 'N':
-            if hasattr(self, 'parent_window') and self.parent_window:
-                self.parent_window.set_shape_type(None)
-            print("🔷 Selection mode activated")
-            return
-        
-        elif key_text == 'H':
-            if hasattr(self, 'parent_window') and self.parent_window:
-                self.parent_window.set_shape_type('hollow_ellipse')
-            print("🔷 Hollow Ellipse tool selected")
-            return
-        
-        elif key_text == 'T':
-            if hasattr(self, 'parent_window') and self.parent_window:
-                self.parent_window.set_shape_type('template')
-            print("🔷 Template drawing mode")
-            return
-        
-        elif key_text == 'Q':
-            if hasattr(self, 'parent_window') and self.parent_window:
-                self.parent_window.set_shape_type('bezier_polygon')
-            print("🔷 Bezier Polygon tool selected")
-            return
-        
-        # ===== NAVIGATION =====
-        elif key_text == 'A':
-            if hasattr(self, 'parent_window') and self.parent_window:
-                self.parent_window.prev_image()
-            return
-            
-        elif key_text == 'D':
-            if hasattr(self, 'parent_window') and self.parent_window:
-                self.parent_window.next_image()
-            return
-        
-        # ===== PAN MODE =====
-        elif key == Qt.Key_Space:
-            self.pan_mode = not self.pan_mode
-            if self.pan_mode:
-                self.original_cursor = self.cursor()
-                self.setCursor(Qt.OpenHandCursor)
-                print("🖐️ Pan mode activated")
-            else:
-                self.setCursor(self.original_cursor or Qt.ArrowCursor)
-                print("🖐️ Pan mode deactivated")
-            return
-        
-        # ===== ESCAPE =====
-        elif key == Qt.Key_Escape:
-            if self.pan_mode:
-                self.pan_mode = False
-                self.setCursor(self.original_cursor or Qt.ArrowCursor)
-            elif self.multi_drag_copy:
-                self.cancel_multi_drag_copy()
-            elif self.multi_moving:
-                self.finish_multi_move()
-            elif self.rubber_band_active:
-                self.rubber_band_active = False
-                self.rubber_band_start = None
-                self.rubber_band_end = None
-                self.update()
-            elif self.moving:
-                self.cancel_move()
-            elif self.drag_copy:
-                self.cancel_drag_copy()
-            elif self.drawing:
-                self.drawing = False
-                self.current_shape = None
-                self.update()
-            elif self.polygon_points:
-                self.cancel_polygon()
-            elif self.circle_center:
-                self.cancel_circle()
-            elif hasattr(self, 'ellipse_center') and self.ellipse_center:
-                self.cancel_ellipse()
-            elif hasattr(self, 'donut_center') and self.donut_center:
-                self.cancel_donut()
-            elif hasattr(self, 'hollow_ellipse_center') and self.hollow_ellipse_center:
-                self.cancel_hollow_ellipse()
-            elif self.bezier_points:
-                self.cancel_bezier()
-            elif self.selected_shapes:
-                self._clear_multi_selection()
-                self.update()
-            print("❌ Operation cancelled")
-            return
-        
-        # ===== ENTER =====
-        elif key == Qt.Key_Return or key == Qt.Key_Enter:
-            if self.polygon_points:
-                self.finish_polygon()
-            elif self.bezier_points:
-                self.finish_bezier()
-            return
-        
-        # ===== DELETE =====
-        elif key == Qt.Key_Delete or key == Qt.Key_Backspace:
-            if not self.drag_copy and not self.pan_mode and not self.moving:
-                if len(self.selected_shapes) > 1:
-                    self.delete_selected_group()
-                elif event.modifiers() == Qt.ControlModifier and key == Qt.Key_Delete:
-                    self.delete_all()
-                else:
-                    self.delete_selected()
-            return
-        
-        # ===== UNDO/REDO =====
-        elif key == Qt.Key_Z and event.modifiers() == Qt.ControlModifier:
-            if self.polygon_points or self.bezier_points:
-                self.undo_last_point()
-            else:
-                self.undo()
-            return
-        
-        elif key == Qt.Key_Y and event.modifiers() == Qt.ControlModifier:
-            if self.polygon_points or self.bezier_points:
-                self.redo_last_point()
-            else:
-                self.redo()
-            return
-        
-        # ===== COPY/PASTE =====
-        elif key == Qt.Key_C and event.modifiers() == Qt.ControlModifier:
-            if len(self.selected_shapes) > 1:
-                self.copy_selected_group()
-            else:
-                self.copy_selected()
-            return
-        
-        elif key == Qt.Key_V and event.modifiers() == Qt.ControlModifier:
-            cursor_pos = self.mapFromGlobal(self.cursor().pos())
-            if getattr(self, 'clipboard_shapes', None):
-                self.paste_group(cursor_pos=cursor_pos)
-            elif self.clipboard_shape and self.pixmap and not self.pixmap.isNull():
-                self.start_paste(cursor_pos)
-            return
-        
-        # ===== ARROW KEY NUDGE =====
-        elif key in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down):
-            if self.selected_shape or self.selected_shapes:
-                step = self.nudge_step * 10 if event.modifiers() == Qt.ShiftModifier else self.nudge_step
-                dx = dy = 0
-                if key == Qt.Key_Left:  dx = -step
-                if key == Qt.Key_Right: dx =  step
-                if key == Qt.Key_Up:    dy = -step
-                if key == Qt.Key_Down:  dy =  step
-                self.nudge_selected(dx, dy)
+            # ===== CTRL+A SELECT ALL (must come before bare 'A' handler) =====
+            if key == Qt.Key_A and event.modifiers() == Qt.ControlModifier:
+                self.select_all()
                 return
         
-        super().keyPressEvent(event)
+            # ===== SHAPE TOOL SHORTCUTS =====
+            elif key_text == 'B':
+                if hasattr(self, 'parent_window') and self.parent_window:
+                    self.parent_window.set_shape_type('box')
+                print("🔷 Box tool selected")
+                return
+            
+            elif key_text == 'P':
+                if hasattr(self, 'parent_window') and self.parent_window:
+                    self.parent_window.set_shape_type('polygon')
+                print("🔷 Polygon tool selected")
+                return
+            
+            elif key_text == 'C':
+                if hasattr(self, 'parent_window') and self.parent_window:
+                    self.parent_window.set_shape_type('circle')
+                print("🔷 Circle tool selected")
+                return
+            
+            elif key_text == 'E':
+                if hasattr(self, 'parent_window') and self.parent_window:
+                    self.parent_window.set_shape_type('ellipse')
+                print("🔷 Ellipse tool selected")
+                return
+        
+            elif key_text == 'F':
+                if hasattr(self, 'parent_window') and self.parent_window:
+                    self.parent_window.set_shape_type('frame')
+                print("🔷 Frame tool selected")
+                return
+            
+            elif key_text == 'O':
+                if hasattr(self, 'parent_window') and self.parent_window:
+                    self.parent_window.set_shape_type('donut')
+                print("🔷 Donut tool selected")
+                return
+        
+            elif key_text == 'N':
+                if hasattr(self, 'parent_window') and self.parent_window:
+                    self.parent_window.set_shape_type(None)
+                print("🔷 Selection mode activated")
+                return
+        
+            elif key_text == 'H':
+                if hasattr(self, 'parent_window') and self.parent_window:
+                    self.parent_window.set_shape_type('hollow_ellipse')
+                print("🔷 Hollow Ellipse tool selected")
+                return
+        
+            elif key_text == 'T':
+                if hasattr(self, 'parent_window') and self.parent_window:
+                    self.parent_window.set_shape_type('template')
+                print("🔷 Template drawing mode")
+                return
+        
+            elif key_text == 'Q':
+                if hasattr(self, 'parent_window') and self.parent_window:
+                    self.parent_window.set_shape_type('bezier_polygon')
+                print("🔷 Bezier Polygon tool selected")
+                return
+        
+            # ===== NAVIGATION =====
+            elif key_text == 'A':
+                if hasattr(self, 'parent_window') and self.parent_window:
+                    self.parent_window.prev_image()
+                return
+            
+            elif key_text == 'D':
+                if hasattr(self, 'parent_window') and self.parent_window:
+                    self.parent_window.next_image()
+                return
+        
+            # ===== PAN MODE =====
+            elif key == Qt.Key_Space:
+                self.pan_mode = not self.pan_mode
+                if self.pan_mode:
+                    self.original_cursor = self.cursor()
+                    self.setCursor(Qt.OpenHandCursor)
+                    print("🖐️ Pan mode activated")
+                else:
+                    self.setCursor(self.original_cursor or Qt.ArrowCursor)
+                    print("🖐️ Pan mode deactivated")
+                return
+        
+            # ===== ESCAPE =====
+            elif key == Qt.Key_Escape:
+                if self.pan_mode:
+                    self.pan_mode = False
+                    self.setCursor(self.original_cursor or Qt.ArrowCursor)
+                elif self.multi_drag_copy:
+                    self.cancel_multi_drag_copy()
+                elif self.multi_moving:
+                    self.finish_multi_move()
+                elif self.rubber_band_active:
+                    self.rubber_band_active = False
+                    self.rubber_band_start = None
+                    self.rubber_band_end = None
+                    self.update()
+                elif self.moving:
+                    self.cancel_move()
+                elif self.drag_copy:
+                    self.cancel_drag_copy()
+                elif self.drawing:
+                    self.drawing = False
+                    self.current_shape = None
+                    self.update()
+                elif self.polygon_points:
+                    self.cancel_polygon()
+                elif self.circle_center:
+                    self.cancel_circle()
+                elif hasattr(self, 'ellipse_center') and self.ellipse_center:
+                    self.cancel_ellipse()
+                elif hasattr(self, 'donut_center') and self.donut_center:
+                    self.cancel_donut()
+                elif hasattr(self, 'hollow_ellipse_center') and self.hollow_ellipse_center:
+                    self.cancel_hollow_ellipse()
+                elif self.bezier_points:
+                    self.cancel_bezier()
+                elif self.selected_shapes:
+                    self._clear_multi_selection()
+                    self.update()
+                print("❌ Operation cancelled")
+                return
+        
+            # ===== ENTER =====
+            elif key == Qt.Key_Return or key == Qt.Key_Enter:
+                if self.polygon_points:
+                    self.finish_polygon()
+                elif self.bezier_points:
+                    self.finish_bezier()
+                return
+        
+            # ===== DELETE =====
+            elif key == Qt.Key_Delete or key == Qt.Key_Backspace:
+                if not self.drag_copy and not self.pan_mode and not self.moving:
+                    if len(self.selected_shapes) > 1:
+                        self.delete_selected_group()
+                    elif event.modifiers() == Qt.ControlModifier and key == Qt.Key_Delete:
+                        self.delete_all()
+                    else:
+                        self.delete_selected()
+                return
+        
+            # ===== UNDO/REDO =====
+            elif key == Qt.Key_Z and event.modifiers() == Qt.ControlModifier:
+                if self.polygon_points or self.bezier_points:
+                    self.undo_last_point()
+                else:
+                    self.undo()
+                return
+        
+            elif key == Qt.Key_Y and event.modifiers() == Qt.ControlModifier:
+                if self.polygon_points or self.bezier_points:
+                    self.redo_last_point()
+                else:
+                    self.redo()
+                return
+        
+            # ===== COPY/PASTE =====
+            elif key == Qt.Key_C and event.modifiers() == Qt.ControlModifier:
+                if len(self.selected_shapes) > 1:
+                    self.copy_selected_group()
+                else:
+                    self.copy_selected()
+                return
+        
+            elif key == Qt.Key_V and event.modifiers() == Qt.ControlModifier:
+                cursor_pos = self.mapFromGlobal(self.cursor().pos())
+                if getattr(self, 'clipboard_shapes', None):
+                    self.paste_group(cursor_pos=cursor_pos)
+                elif self.clipboard_shape and self.pixmap and not self.pixmap.isNull():
+                    self.start_paste(cursor_pos)
+                return
+        
+            # ===== ARROW KEY NUDGE =====
+            elif key in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down):
+                if self.selected_shape or self.selected_shapes:
+                    step = self.nudge_step * 10 if event.modifiers() == Qt.ShiftModifier else self.nudge_step
+                    dx = dy = 0
+                    if key == Qt.Key_Left:  dx = -step
+                    if key == Qt.Key_Right: dx =  step
+                    if key == Qt.Key_Up:    dy = -step
+                    if key == Qt.Key_Down:  dy =  step
+                    self.nudge_selected(dx, dy)
+                    return
+        
+            super().keyPressEvent(event)
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def reset_all_states(self):
         """Reset all drawing and interaction states"""
         self.drawing = False

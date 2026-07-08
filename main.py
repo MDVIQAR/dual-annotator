@@ -138,10 +138,42 @@ if __name__ == "__main__":
     from PyQt5.QtWidgets import QApplication
     from gui.main_window import MainWindow
 
+    def _setup_exception_handler(app):
+        """Catch any unhandled exception app-wide, log it, show a friendly
+        popup, and keep the app running instead of crashing to desktop."""
+        import traceback
+        import logging
+        from PyQt5.QtWidgets import QMessageBox
+
+        log_path = os.path.join(os.path.expanduser("~"), "AppData", "Local",
+                                "DualAnnotator", "crash.log")
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        logging.basicConfig(filename=log_path, level=logging.ERROR,
+                            format="%(asctime)s\n%(message)s\n")
+
+        def handle_exception(exc_type, exc_value, exc_tb):
+            # Don't intercept KeyboardInterrupt
+            if issubclass(exc_type, KeyboardInterrupt):
+                sys.__excepthook__(exc_type, exc_value, exc_tb)
+                return
+
+            tb_str = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+            logging.error(tb_str)
+
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Warning)
+            msg.setWindowTitle("Something went wrong")
+            msg.setText("An unexpected error occurred. The app will continue running.")
+            msg.setDetailedText(tb_str)
+            msg.exec_()
+
+        sys.excepthook = handle_exception
+
     def main():
         app = QApplication(sys.argv)
         app.setApplicationName("Dual Annotator")
         app.setApplicationVersion("1.0.0")
+        _setup_exception_handler(app)
         window = MainWindow()
         window.show()
         sys.exit(app.exec_())

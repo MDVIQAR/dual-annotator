@@ -55,7 +55,7 @@ def main():
             pt_path   = os.path.join(version_folder, "best.pt")
 
             if os.path.isfile(ckpt_path):
-                model = SegModel.load_from_checkpoint(ckpt_path)
+                model = SegModel.load_from_checkpoint(ckpt_path, map_location="cpu")
             elif os.path.isfile(pt_path):
                 # Reconstruct from config, then load state dict
                 enc_weights = hp.get("encoder_weights", "imagenet")

@@ -22,6 +22,8 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QFont, QPixmap, QImage
+import logging
+import traceback
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CV2 pipeline constants
@@ -613,66 +615,111 @@ class CoinRotatorTab(QWidget):
     # ── File ops ──────────────────────────────────────────────────────────────
 
     def _browse_input(self):
-        d = QFileDialog.getExistingDirectory(self, "Select input folder",
-                                             self._input_edit.text())
-        if d:
-            self._input_edit.setText(d)
-            self._out_edit.setText(os.path.join(d, "coins_rotated"))
+        try:
+            d = QFileDialog.getExistingDirectory(self, "Select input folder",
+                                                 self._input_edit.text())
+            if d:
+                self._input_edit.setText(d)
+                self._out_edit.setText(os.path.join(d, "coins_rotated"))
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _browse_output(self):
-        d = QFileDialog.getExistingDirectory(self, "Select output folder",
-                                             self._out_edit.text())
-        if d:
-            self._out_edit.setText(d)
+        try:
+            d = QFileDialog.getExistingDirectory(self, "Select output folder",
+                                                 self._out_edit.text())
+            if d:
+                self._out_edit.setText(d)
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _load_coins(self):
-        inp = self._input_edit.text().strip()
-        if not os.path.isdir(inp):
-            QMessageBox.warning(self, "Error", "Invalid input folder.")
-            return
-        exts = ["*.bmp", "*.png", "*.jpg", "*.jpeg", "*.tiff", "*.tif"]
-        files = []
-        for e in exts:
-            files += glob.glob(os.path.join(inp, e))
-            files += glob.glob(os.path.join(inp, e.upper()))
-        files = sorted(set(
-            f for f in files
-            if "coins_rotated" not in f
-            and "reference_aligned" not in os.path.basename(f)
-        ))
-        if not files:
-            QMessageBox.warning(self, "No images", "No images found in that folder.")
-            return
-        self._coin_files = files
-        self._coin_idx   = 0
-        self._rotation   = 0.0
-        self._slider.setValue(0)
-        self._show_current_coin()
-        self._status_lbl.setText(
-            f"Loaded {len(files)} images.  Rotate so year faces ↑, then Confirm.")
+        try:
+            inp = self._input_edit.text().strip()
+            if not os.path.isdir(inp):
+                QMessageBox.warning(self, "Error", "Invalid input folder.")
+                return
+            exts = ["*.bmp", "*.png", "*.jpg", "*.jpeg", "*.tiff", "*.tif"]
+            files = []
+            for e in exts:
+                files += glob.glob(os.path.join(inp, e))
+                files += glob.glob(os.path.join(inp, e.upper()))
+            files = sorted(set(
+                f for f in files
+                if "coins_rotated" not in f
+                and "reference_aligned" not in os.path.basename(f)
+            ))
+            if not files:
+                QMessageBox.warning(self, "No images", "No images found in that folder.")
+                return
+            self._coin_files = files
+            self._coin_idx   = 0
+            self._rotation   = 0.0
+            self._slider.setValue(0)
+            self._show_current_coin()
+            self._status_lbl.setText(
+                f"Loaded {len(files)} images.  Rotate so year faces ↑, then Confirm.")
 
-    # ── Coin navigation ────────────────────────────────────────────────────────
+        # ── Coin navigation ────────────────────────────────────────────────────────
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _prev_coin(self):
-        if not self._coin_files:
-            return
-        self._coin_idx = (self._coin_idx - 1) % len(self._coin_files)
-        self._rotation = 0.0
-        self._slider.blockSignals(True)
-        self._slider.setValue(0)
-        self._slider.blockSignals(False)
-        self._show_current_coin()
+        try:
+            if not self._coin_files:
+                return
+            self._coin_idx = (self._coin_idx - 1) % len(self._coin_files)
+            self._rotation = 0.0
+            self._slider.blockSignals(True)
+            self._slider.setValue(0)
+            self._slider.blockSignals(False)
+            self._show_current_coin()
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _next_coin(self):
-        if not self._coin_files:
-            return
-        self._coin_idx = (self._coin_idx + 1) % len(self._coin_files)
-        self._rotation = 0.0
-        self._slider.blockSignals(True)
-        self._slider.setValue(0)
-        self._slider.blockSignals(False)
-        self._show_current_coin()
+        try:
+            if not self._coin_files:
+                return
+            self._coin_idx = (self._coin_idx + 1) % len(self._coin_files)
+            self._rotation = 0.0
+            self._slider.blockSignals(True)
+            self._slider.setValue(0)
+            self._slider.blockSignals(False)
+            self._show_current_coin()
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _show_current_coin(self):
         path = self._coin_files[self._coin_idx]
         self._orig_img = cv2.imread(path)
@@ -710,36 +757,45 @@ class CoinRotatorTab(QWidget):
     # ── Confirm reference ──────────────────────────────────────────────────────
 
     def _confirm_reference(self):
-        if self._orig_img is None:
-            QMessageBox.warning(self, "Error", "No coin loaded.")
+        try:
+            if self._orig_img is None:
+                QMessageBox.warning(self, "Error", "No coin loaded.")
+                return
+
+            h, w = self._orig_img.shape[:2]
+            M = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), self._rotation, 1.0)
+            ref_bgr = cv2.warpAffine(self._orig_img, M, (w, h),
+                                      flags=cv2.INTER_LANCZOS4,
+                                      borderMode=cv2.BORDER_CONSTANT,
+                                      borderValue=(0, 0, 0))
+
+            save_path = os.path.join(self._input_edit.text(), "reference_aligned.bmp")
+            cv2.imwrite(save_path, ref_bgr)
+            self._ref_bgr = ref_bgr
+
+            orig_name = os.path.basename(self._coin_files[self._coin_idx])
+            self._log_line(f"Reference saved: reference_aligned.bmp", "ok")
+            self._log_line(f"  from : {orig_name}  rotation = {self._rotation:+.1f}°", "dim")
+            self._log_line(f"  path : {save_path}", "dim")
+
+            # Update reference thumbnail
+            pix = _bgr_to_qpixmap(ref_bgr, 200)
+            self._ref_canvas.setPixmap(pix)
+            self._ref_name_lbl.setText(f"{orig_name}  (rot={self._rotation:+.1f}°)")
+
+            self._status_lbl.setText("Reference confirmed — starting batch…")
+            self._start_batch()
+
+        # ── Batch ─────────────────────────────────────────────────────────────────
+
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
             return
-
-        h, w = self._orig_img.shape[:2]
-        M = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), self._rotation, 1.0)
-        ref_bgr = cv2.warpAffine(self._orig_img, M, (w, h),
-                                  flags=cv2.INTER_LANCZOS4,
-                                  borderMode=cv2.BORDER_CONSTANT,
-                                  borderValue=(0, 0, 0))
-
-        save_path = os.path.join(self._input_edit.text(), "reference_aligned.bmp")
-        cv2.imwrite(save_path, ref_bgr)
-        self._ref_bgr = ref_bgr
-
-        orig_name = os.path.basename(self._coin_files[self._coin_idx])
-        self._log_line(f"Reference saved: reference_aligned.bmp", "ok")
-        self._log_line(f"  from : {orig_name}  rotation = {self._rotation:+.1f}°", "dim")
-        self._log_line(f"  path : {save_path}", "dim")
-
-        # Update reference thumbnail
-        pix = _bgr_to_qpixmap(ref_bgr, 200)
-        self._ref_canvas.setPixmap(pix)
-        self._ref_name_lbl.setText(f"{orig_name}  (rot={self._rotation:+.1f}°)")
-
-        self._status_lbl.setText("Reference confirmed — starting batch…")
-        self._start_batch()
-
-    # ── Batch ─────────────────────────────────────────────────────────────────
-
     def _start_batch(self):
         if self._worker and self._worker.isRunning():
             return

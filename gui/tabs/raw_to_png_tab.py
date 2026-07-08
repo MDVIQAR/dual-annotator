@@ -11,6 +11,8 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QFont, QPainter, QPen, QColor, QImage, QPixmap, QIcon
+import logging
+import traceback
 
 CAMERA_MODELS = {
     "Auto-Detect": (0, 0),
@@ -44,9 +46,18 @@ class ExtensionSelector(QPushButton):
         self._update_label()
 
     def _on_toggled(self, _checked):
-        self._update_label()
-        self.selectionChanged.emit()
+        try:
+            self._update_label()
+            self.selectionChanged.emit()
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _update_label(self):
         checked = self.checked_extensions()
         if not checked:
@@ -1012,10 +1023,19 @@ class RawToPngTab(QWidget):
         pass
 
     def _browse_gallery_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select PNG Folder")
-        if folder:
-            self.load_png_folder(folder)
+        try:
+            folder = QFileDialog.getExistingDirectory(self, "Select PNG Folder")
+            if folder:
+                self.load_png_folder(folder)
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def load_png_folder(self, folder):
         """Populate the gallery with all .png files from *folder*."""
         self._gallery_folder = folder
@@ -1076,29 +1096,56 @@ class RawToPngTab(QWidget):
         self.roi_status.setText(f"📌 {os.path.basename(path)}")
 
     def _open_gallery_in_annotate(self):
-        """Emit the conversion_completed signal to load the gallery folder in the Annotate tab."""
-        if self._gallery_folder and os.path.isdir(self._gallery_folder):
-            self.conversion_completed.emit(self._gallery_folder)
+        try:
+            """Emit the conversion_completed signal to load the gallery folder in the Annotate tab."""
+            if self._gallery_folder and os.path.isdir(self._gallery_folder):
+                self.conversion_completed.emit(self._gallery_folder)
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _browse_input(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Thermal RAW Image Folder")
-        if folder:
-            self.in_dir_input.setText(folder)
-            out = os.path.join(folder, "converted_pngs")
-            self.out_dir_input.setText(out)
-            # Clear gallery so the raw conversion preview is shown
-            self.gallery_list.clear()
-            self.gallery_count_label.setText("0 images")
-            self.btn_open_annotate.setEnabled(False)
-            self._gallery_folder = None
-            self.roi_status.setText("Region of Interest: Full Image (Right-click to reset)")
-            self._load_first_image_preview(folder)
+        try:
+            folder = QFileDialog.getExistingDirectory(self, "Select Thermal RAW Image Folder")
+            if folder:
+                self.in_dir_input.setText(folder)
+                out = os.path.join(folder, "converted_pngs")
+                self.out_dir_input.setText(out)
+                # Clear gallery so the raw conversion preview is shown
+                self.gallery_list.clear()
+                self.gallery_count_label.setText("0 images")
+                self.btn_open_annotate.setEnabled(False)
+                self._gallery_folder = None
+                self.roi_status.setText("Region of Interest: Full Image (Right-click to reset)")
+                self._load_first_image_preview(folder)
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _browse_output(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Output Folder")
-        if folder:
-            self.out_dir_input.setText(folder)
+        try:
+            folder = QFileDialog.getExistingDirectory(self, "Select Output Folder")
+            if folder:
+                self.out_dir_input.setText(folder)
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _load_first_image_preview(self, folder):
         exts = self.ext_selector.checked_extensions()
         files = []
@@ -1113,28 +1160,37 @@ class RawToPngTab(QWidget):
             self.log_message("⚠️ No files found for preview.")
 
     def _refresh_preview(self):
-        if not self.preview_file:
-            return
-            
         try:
-            # We construct a mock worker just to process one frame
-            temp_worker = ConverterWorker(
-                input_dir="", output_dir="", file_exts=[], 
-                colormap=self.cmap_combo.currentText(),
-                norm_mode=self.norm_combo.currentText(),
-                downscale=False, # Don't downscale preview to allow accurate drawing
-                camera_model=self.cam_combo.currentText(),
-                roi=None # load full image initially to draw crop
-            )
+            if not self.preview_file:
+                return
             
-            result_img = temp_worker.process_single_file(self.preview_file)
-            # result_img is BGR, convert to RGB for QImage
-            result_img_rgb = cv2.cvtColor(result_img, cv2.COLOR_BGR2RGB)
-            self.preview_canvas.set_image(result_img_rgb)
-            self.log_message(f"👁️ Preview loaded: {os.path.basename(self.preview_file)}")
-        except Exception as e:
-            self.log_message(f"❌ Failed to load preview: {str(e)}")
+            try:
+                # We construct a mock worker just to process one frame
+                temp_worker = ConverterWorker(
+                    input_dir="", output_dir="", file_exts=[], 
+                    colormap=self.cmap_combo.currentText(),
+                    norm_mode=self.norm_combo.currentText(),
+                    downscale=False, # Don't downscale preview to allow accurate drawing
+                    camera_model=self.cam_combo.currentText(),
+                    roi=None # load full image initially to draw crop
+                )
+            
+                result_img = temp_worker.process_single_file(self.preview_file)
+                # result_img is BGR, convert to RGB for QImage
+                result_img_rgb = cv2.cvtColor(result_img, cv2.COLOR_BGR2RGB)
+                self.preview_canvas.set_image(result_img_rgb)
+                self.log_message(f"👁️ Preview loaded: {os.path.basename(self.preview_file)}")
+            except Exception as e:
+                self.log_message(f"❌ Failed to load preview: {str(e)}")
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _on_roi_changed(self, roi):
         self.current_roi = roi
         if roi:
@@ -1168,52 +1224,70 @@ class RawToPngTab(QWidget):
         self.roi_status.setText(f"Region of Interest: x={x}, y={y}, w={w}, h={h} (Right-click to reset)")
 
     def _start_conversion(self):
-        in_dir = self.in_dir_input.text().strip()
-        out_dir = self.out_dir_input.text().strip()
+        try:
+            in_dir = self.in_dir_input.text().strip()
+            out_dir = self.out_dir_input.text().strip()
         
-        if not in_dir or not out_dir:
-            self.log_message("⚠️ Please select input and output directories.")
-            return
-            
-        exts = self.ext_selector.checked_extensions()
-        if not exts:
-            self.log_message("⚠️ Please select at least one file extension.")
-            return
-        cmap = self.cmap_combo.currentText()
-        norm = self.norm_combo.currentText()
-        downscale = self.chk_downscale.isChecked()
-        cam = self.cam_combo.currentText()
-
-        # If output folder already has PNGs, ask what to do
-        if os.path.isdir(out_dir) and glob.glob(os.path.join(out_dir, "*.png")):
-            new_out = self._ask_output_folder_action(out_dir)
-            if new_out is None:
+            if not in_dir or not out_dir:
+                self.log_message("⚠️ Please select input and output directories.")
                 return
-            out_dir = new_out
-            self.out_dir_input.setText(out_dir)
+            
+            exts = self.ext_selector.checked_extensions()
+            if not exts:
+                self.log_message("⚠️ Please select at least one file extension.")
+                return
+            cmap = self.cmap_combo.currentText()
+            norm = self.norm_combo.currentText()
+            downscale = self.chk_downscale.isChecked()
+            cam = self.cam_combo.currentText()
 
-        self.btn_run.setEnabled(False)
-        self.btn_cancel.setEnabled(True)
-        self.progress_bar.setValue(0)
-        self.console.clear()
+            # If output folder already has PNGs, ask what to do
+            if os.path.isdir(out_dir) and glob.glob(os.path.join(out_dir, "*.png")):
+                new_out = self._ask_output_folder_action(out_dir)
+                if new_out is None:
+                    return
+                out_dir = new_out
+                self.out_dir_input.setText(out_dir)
 
-        # If the ROI is exactly the full image boundaries, set it to None to save processing
-        roi_to_use = self.current_roi
-        if roi_to_use and self.preview_canvas.img_w > 0:
-            if roi_to_use[0] == 0 and roi_to_use[1] == 0 and roi_to_use[2] == self.preview_canvas.img_w and roi_to_use[3] == self.preview_canvas.img_h:
-                roi_to_use = None
+            self.btn_run.setEnabled(False)
+            self.btn_cancel.setEnabled(True)
+            self.progress_bar.setValue(0)
+            self.console.clear()
 
-        self.worker = ConverterWorker(in_dir, out_dir, exts, cmap, norm, downscale, cam, roi_to_use)
-        self.worker.progress.connect(self._update_progress)
-        self.worker.log.connect(self.log_message)
-        self.worker.finished_batch.connect(self._conversion_finished)
-        self.worker.start()
+            # If the ROI is exactly the full image boundaries, set it to None to save processing
+            roi_to_use = self.current_roi
+            if roi_to_use and self.preview_canvas.img_w > 0:
+                if roi_to_use[0] == 0 and roi_to_use[1] == 0 and roi_to_use[2] == self.preview_canvas.img_w and roi_to_use[3] == self.preview_canvas.img_h:
+                    roi_to_use = None
 
+            self.worker = ConverterWorker(in_dir, out_dir, exts, cmap, norm, downscale, cam, roi_to_use)
+            self.worker.progress.connect(self._update_progress)
+            self.worker.log.connect(self.log_message)
+            self.worker.finished_batch.connect(self._conversion_finished)
+            self.worker.start()
+
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _cancel_conversion(self):
-        if self.worker:
-            self.worker.stop()
-            self.btn_cancel.setEnabled(False)
+        try:
+            if self.worker:
+                self.worker.stop()
+                self.btn_cancel.setEnabled(False)
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _update_progress(self, val):
         self.progress_bar.setValue(val)
 
@@ -1243,47 +1317,74 @@ class RawToPngTab(QWidget):
             self.conversion_completed.emit(out_dir)
 
     def _clear_all(self):
-        if self.worker and self.worker.isRunning():
-            self.worker.stop()
-            self.worker.wait()
-            self.worker = None
-        self.in_dir_input.clear()
-        self.out_dir_input.clear()
-        self.preview_file = None
-        self.current_roi = None
-        self._gallery_folder = None
-        self.preview_canvas.image_pixmap = None
-        self.preview_canvas.roi = None
-        self.preview_canvas._img_array = None
-        self.preview_canvas.update()
-        self.gallery_list.clear()
-        self.gallery_count_label.setText("0 images")
-        self.btn_open_annotate.setEnabled(False)
-        self.console.clear()
-        self.console.append("System ready. Select a directory containing .raw or .tif files.")
-        self.progress_bar.setValue(0)
-        self.roi_status.setText("Region of Interest: Full Image (Right-click to reset)")
-        self._updating_roi_spins = True
         try:
-            self.roi_x_spin.setValue(0)
-            self.roi_y_spin.setValue(0)
-            self.roi_w_spin.setValue(0)
-            self.roi_h_spin.setValue(0)
-        finally:
-            self._updating_roi_spins = False
-        self.btn_run.setEnabled(True)
-        self.btn_cancel.setEnabled(False)
-
-    def _clear_console(self):
-        self.console.clear()
-        self.progress_bar.setValue(0)
-
-    def _reset_roi(self):
-        if self.preview_canvas.image_pixmap:
-            self.preview_canvas.roi = (0, 0, self.preview_canvas.img_w, self.preview_canvas.img_h)
-            self.preview_canvas.roi_changed.emit(self.preview_canvas.roi)
+            if self.worker and self.worker.isRunning():
+                self.worker.stop()
+                self.worker.wait()
+                self.worker = None
+            self.in_dir_input.clear()
+            self.out_dir_input.clear()
+            self.preview_file = None
+            self.current_roi = None
+            self._gallery_folder = None
+            self.preview_canvas.image_pixmap = None
+            self.preview_canvas.roi = None
+            self.preview_canvas._img_array = None
             self.preview_canvas.update()
+            self.gallery_list.clear()
+            self.gallery_count_label.setText("0 images")
+            self.btn_open_annotate.setEnabled(False)
+            self.console.clear()
+            self.console.append("System ready. Select a directory containing .raw or .tif files.")
+            self.progress_bar.setValue(0)
+            self.roi_status.setText("Region of Interest: Full Image (Right-click to reset)")
+            self._updating_roi_spins = True
+            try:
+                self.roi_x_spin.setValue(0)
+                self.roi_y_spin.setValue(0)
+                self.roi_w_spin.setValue(0)
+                self.roi_h_spin.setValue(0)
+            finally:
+                self._updating_roi_spins = False
+            self.btn_run.setEnabled(True)
+            self.btn_cancel.setEnabled(False)
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
+    def _clear_console(self):
+        try:
+            self.console.clear()
+            self.progress_bar.setValue(0)
+
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
+    def _reset_roi(self):
+        try:
+            if self.preview_canvas.image_pixmap:
+                self.preview_canvas.roi = (0, 0, self.preview_canvas.img_w, self.preview_canvas.img_h)
+                self.preview_canvas.roi_changed.emit(self.preview_canvas.roi)
+                self.preview_canvas.update()
+
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _ask_output_folder_action(self, current_out_dir):
         msg = QMessageBox(self)
         msg.setWindowTitle("Output Folder Already Has Files")

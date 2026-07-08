@@ -43,6 +43,8 @@ class _NoScrollCombo(QComboBox):
 from mlops.data_prep.prep_worker import DataPrepWorker
 from mlops.data_prep.preparator import DataPreparator
 from mlops.registry import RegistrySettings, projects_config
+import logging
+import traceback
 
 
 # ---------------------------------------------------------------------------
@@ -753,44 +755,89 @@ class DataPrepTab(QWidget):
         self._refresh_split_preview()
 
     def _autosave(self):
-        self._settings["task_type"]     = "yolo" if self._radio_yolo.isChecked() else "unet"
-        self._settings["project_name"]  = self._project_name_cb.currentText().strip()
-        self._settings["project_id"]    = self._project_id_cb.currentText().strip()
-        self._settings["variant"]       = self._variant_cb.currentText().strip()
-        self._settings["camera"]        = self._camera_cb.currentText().strip()
-        self._settings["images_folder"] = self._images_edit.text()
-        self._settings["labels_folder"] = self._labels_edit.text()
-        self._settings["test_folder"]   = self._test_edit.text()
-        self._settings["class_names"]   = self._class_edit.text()
-        self._settings["train_pct"]     = self._slider.value()
-        _save_settings(self._settings)
-        self._refresh_split_preview()
+        try:
+            self._settings["task_type"]     = "yolo" if self._radio_yolo.isChecked() else "unet"
+            self._settings["project_name"]  = self._project_name_cb.currentText().strip()
+            self._settings["project_id"]    = self._project_id_cb.currentText().strip()
+            self._settings["variant"]       = self._variant_cb.currentText().strip()
+            self._settings["camera"]        = self._camera_cb.currentText().strip()
+            self._settings["images_folder"] = self._images_edit.text()
+            self._settings["labels_folder"] = self._labels_edit.text()
+            self._settings["test_folder"]   = self._test_edit.text()
+            self._settings["class_names"]   = self._class_edit.text()
+            self._settings["train_pct"]     = self._slider.value()
+            _save_settings(self._settings)
+            self._refresh_split_preview()
 
-    # ------------------------------------------------------------------
-    # Signal handlers
-    # ------------------------------------------------------------------
+        # ------------------------------------------------------------------
+        # Signal handlers
+        # ------------------------------------------------------------------
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _on_task_changed(self):
-        is_yolo = self._radio_yolo.isChecked()
-        self._class_section.setVisible(is_yolo)
-        self._refresh_project_names()
-        self._autosave()
+        try:
+            is_yolo = self._radio_yolo.isChecked()
+            self._class_section.setVisible(is_yolo)
+            self._refresh_project_names()
+            self._autosave()
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _on_project_name_changed(self):
-        self._refresh_project_ids()
-        self._refresh_variants()
-        self._refresh_cameras()
-        self._autosave()
+        try:
+            self._refresh_project_ids()
+            self._refresh_variants()
+            self._refresh_cameras()
+            self._autosave()
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _on_project_id_changed(self):
-        self._refresh_variants()
-        self._refresh_cameras()
-        self._autosave()
+        try:
+            self._refresh_variants()
+            self._refresh_cameras()
+            self._autosave()
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _on_variant_changed(self):
-        self._refresh_cameras()
-        self._autosave()
+        try:
+            self._refresh_cameras()
+            self._autosave()
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _on_slider_changed(self, value: int):
         if self._total_pairs > 0:
             n = self._total_pairs
@@ -830,234 +877,279 @@ class DataPrepTab(QWidget):
     # ------------------------------------------------------------------
 
     def _on_imp_task_changed(self):
-        is_yolo = self._imp_radio_yolo.isChecked()
-        self._imp_class_section.setVisible(is_yolo)
-        if is_yolo:
-            self._imp_gen_btn.setText("  Generate dataset_info.json + data.yaml")
-        else:
-            self._imp_gen_btn.setText("  Generate dataset_info.json")
+        try:
+            is_yolo = self._imp_radio_yolo.isChecked()
+            self._imp_class_section.setVisible(is_yolo)
+            if is_yolo:
+                self._imp_gen_btn.setText("  Generate dataset_info.json + data.yaml")
+            else:
+                self._imp_gen_btn.setText("  Generate dataset_info.json")
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _on_import_browse(self):
-        folder = QFileDialog.getExistingDirectory(
-            self, "Select Dataset Root Folder",
-            self._imp_root_edit.text() or "")
-        if not folder:
-            return
-        self._imp_root_edit.setText(folder)
-        self._on_import_scan()
-
-    def _on_import_scan(self):
-        root = self._imp_root_edit.text().strip()
-        if not root:
-            return
-
-        result = DataPreparator.scan_existing_presplit(root)
-
-        if result["task_type"] == "yolo":
-            self._imp_radio_yolo.setChecked(True)
-        elif result["task_type"] == "unet":
-            self._imp_radio_unet.setChecked(True)
-
-        if result["class_names"]:
-            self._imp_class_edit.setText(", ".join(result["class_names"]))
-
-        layout_map = {
-            "trainval_images": "Layout: train/images/ + val/images/",
-            "images_trainval": "Layout: images/train/ + images/val/",
-            "flat":            "Layout: flat images/ + labels/ (no split yet — use Prepare above)",
-            "unknown":         "Layout: unknown",
-        }
-        self._imp_layout_lbl.setText(layout_map.get(result["layout"], ""))
-        self._imp_layout_lbl.show()
-
-        if result["errors"]:
-            self._imp_warn_lbl.setText("  " + "\n".join(result["errors"]))
-            self._imp_warn_lbl.show()
-            self._imp_counts_lbl.hide()
-            self._imp_gen_btn.setEnabled(False)
-            return
-
-        self._imp_warn_lbl.hide()
-
-        flags = []
-        if result["has_dataset_info"]:
-            flags.append("dataset_info.json exists")
-        if result["has_data_yaml"]:
-            flags.append("data.yaml exists")
-
-        counts_txt = (f"Train: {result['train_count']}  Val: {result['val_count']}  "
-                      f"Test: {result['test_count']}")
-        if flags:
-            counts_txt += f"  ({', '.join(flags)})"
-        self._imp_counts_lbl.setText(counts_txt)
-        self._imp_counts_lbl.show()
-
-        can_generate = result["layout"] in ("trainval_images", "images_trainval")
-        self._imp_gen_btn.setEnabled(can_generate)
-
-        if result["layout"] == "flat":
-            self._imp_warn_lbl.setText(
-                "  Flat layout detected — use the Prepare Dataset section above "
-                "to split this dataset into train/val first.")
-            self._imp_warn_lbl.show()
-            self._imp_gen_btn.setEnabled(False)
-
-    def _on_import_generate(self):
-        root      = self._imp_root_edit.text().strip()
-        task_type = "yolo" if self._imp_radio_yolo.isChecked() else "unet"
-
-        if not os.path.isdir(root):
-            QMessageBox.warning(self, "Import", "Dataset root folder not found.")
-            return
-
-        result = DataPreparator.scan_existing_presplit(root)
-        if result["layout"] not in ("trainval_images", "images_trainval"):
-            QMessageBox.warning(self, "Import", "Could not detect a valid pre-split layout.")
-            return
-
-        class_names = []
-        if task_type == "yolo":
-            raw = self._imp_class_edit.text().strip()
-            if not raw:
-                QMessageBox.warning(self, "Import", "Class Names are required for YOLO.")
+        try:
+            folder = QFileDialog.getExistingDirectory(
+                self, "Select Dataset Root Folder",
+                self._imp_root_edit.text() or "")
+            if not folder:
                 return
-            class_names = [c.strip() for c in raw.split(",") if c.strip()]
+            self._imp_root_edit.setText(folder)
+            self._on_import_scan()
 
-        try:
-            DataPreparator.generate_presplit_metadata(
-                root, task_type, class_names, result["layout"])
-        except Exception as exc:
-            QMessageBox.critical(self, "Import Failed", str(exc))
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
             return
-
-        # Read the just-written dataset_info.json so we can populate the result card
-        info_path = os.path.join(root, "dataset_info.json")
+    def _on_import_scan(self):
         try:
-            with open(info_path, "r", encoding="utf-8") as fh:
-                dataset_info = json.load(fh)
-        except Exception:
-            dataset_info = {
-                "train_count": result["train_count"],
-                "val_count":   result["val_count"],
-                "test_count":  result["test_count"],
-                "sha256":      "",
+            root = self._imp_root_edit.text().strip()
+            if not root:
+                return
+
+            result = DataPreparator.scan_existing_presplit(root)
+
+            if result["task_type"] == "yolo":
+                self._imp_radio_yolo.setChecked(True)
+            elif result["task_type"] == "unet":
+                self._imp_radio_unet.setChecked(True)
+
+            if result["class_names"]:
+                self._imp_class_edit.setText(", ".join(result["class_names"]))
+
+            layout_map = {
+                "trainval_images": "Layout: train/images/ + val/images/",
+                "images_trainval": "Layout: images/train/ + images/val/",
+                "flat":            "Layout: flat images/ + labels/ (no split yet — use Prepare above)",
+                "unknown":         "Layout: unknown",
+            }
+            self._imp_layout_lbl.setText(layout_map.get(result["layout"], ""))
+            self._imp_layout_lbl.show()
+
+            if result["errors"]:
+                self._imp_warn_lbl.setText("  " + "\n".join(result["errors"]))
+                self._imp_warn_lbl.show()
+                self._imp_counts_lbl.hide()
+                self._imp_gen_btn.setEnabled(False)
+                return
+
+            self._imp_warn_lbl.hide()
+
+            flags = []
+            if result["has_dataset_info"]:
+                flags.append("dataset_info.json exists")
+            if result["has_data_yaml"]:
+                flags.append("data.yaml exists")
+
+            counts_txt = (f"Train: {result['train_count']}  Val: {result['val_count']}  "
+                          f"Test: {result['test_count']}")
+            if flags:
+                counts_txt += f"  ({', '.join(flags)})"
+            self._imp_counts_lbl.setText(counts_txt)
+            self._imp_counts_lbl.show()
+
+            can_generate = result["layout"] in ("trainval_images", "images_trainval")
+            self._imp_gen_btn.setEnabled(can_generate)
+
+            if result["layout"] == "flat":
+                self._imp_warn_lbl.setText(
+                    "  Flat layout detected — use the Prepare Dataset section above "
+                    "to split this dataset into train/val first.")
+                self._imp_warn_lbl.show()
+                self._imp_gen_btn.setEnabled(False)
+
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
+    def _on_import_generate(self):
+        try:
+            root      = self._imp_root_edit.text().strip()
+            task_type = "yolo" if self._imp_radio_yolo.isChecked() else "unet"
+
+            if not os.path.isdir(root):
+                QMessageBox.warning(self, "Import", "Dataset root folder not found.")
+                return
+
+            result = DataPreparator.scan_existing_presplit(root)
+            if result["layout"] not in ("trainval_images", "images_trainval"):
+                QMessageBox.warning(self, "Import", "Could not detect a valid pre-split layout.")
+                return
+
+            class_names = []
+            if task_type == "yolo":
+                raw = self._imp_class_edit.text().strip()
+                if not raw:
+                    QMessageBox.warning(self, "Import", "Class Names are required for YOLO.")
+                    return
+                class_names = [c.strip() for c in raw.split(",") if c.strip()]
+
+            try:
+                DataPreparator.generate_presplit_metadata(
+                    root, task_type, class_names, result["layout"])
+            except Exception as exc:
+                QMessageBox.critical(self, "Import Failed", str(exc))
+                return
+
+            # Read the just-written dataset_info.json so we can populate the result card
+            info_path = os.path.join(root, "dataset_info.json")
+            try:
+                with open(info_path, "r", encoding="utf-8") as fh:
+                    dataset_info = json.load(fh)
+            except Exception:
+                dataset_info = {
+                    "train_count": result["train_count"],
+                    "val_count":   result["val_count"],
+                    "test_count":  result["test_count"],
+                    "sha256":      "",
+                }
+
+            # Use hierarchy fields from the top-level form if filled in, else empty
+            project_name = self._project_name_cb.currentText().strip()
+            project_id   = self._project_id_cb.currentText().strip()
+            variant      = self._variant_cb.currentText().strip()
+            camera       = self._camera_cb.currentText().strip()
+
+            staged_info = {
+                "path":         root,
+                "model_type":   task_type,
+                "project_name": project_name,
+                "project_id":   project_id,
+                "variant":      variant,
+                "camera":       camera,
+                "dataset_info": dataset_info,
+            }
+            RegistrySettings().set_staged_dataset(staged_info)
+            self._last_staged_info = staged_info
+            projects_config.ensure_hierarchy(task_type, project_name, project_id, variant, camera)
+            self._refresh_project_names()
+
+            # Populate and show result card (same as after Prepare Dataset)
+            train_n = dataset_info.get("train_count", 0)
+            val_n   = dataset_info.get("val_count", 0)
+            test_n  = dataset_info.get("test_count", 0)
+            sha     = dataset_info.get("sha256", "")
+
+            self._rc_title.setText("✓ Dataset imported!")
+            self._rc_counts.setText(f"Train: {train_n}   Val: {val_n}   Test: {test_n}")
+
+            max_path = 60
+            disp_path = root if len(root) <= max_path else "..." + root[-(max_path - 3):]
+            self._rc_path.setText(f"Root: {disp_path}")
+            self._rc_hash.setText(f"SHA-256: {sha[:16]}..." if sha else "")
+
+            hierarchy = f"{task_type} / {project_name} / {project_id} / {variant} / {camera}"
+            self._rc_hierarchy.setText(f"→ {hierarchy}")
+
+            self._result_card.show()
+            self._console.append(f"[OK] dataset_info.json written to: {root}")
+            if task_type == "yolo":
+                self._console.append(f"[OK] data.yaml written.")
+            self._console.append("  Ready to use in the Training tab.")
+
+            self._on_import_scan()
+
+        # ------------------------------------------------------------------
+        # Prepare action
+        # ------------------------------------------------------------------
+
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
+    def _on_prepare_clicked(self):
+        try:
+            task         = "yolo" if self._radio_yolo.isChecked() else "unet"
+            project_name = self._project_name_cb.currentText().strip()
+            project_id   = self._project_id_cb.currentText().strip()
+            variant      = self._variant_cb.currentText().strip()
+            camera       = self._camera_cb.currentText().strip()
+            images       = self._images_edit.text().strip()
+            labels       = self._labels_edit.text().strip()
+
+            if not project_name:
+                QMessageBox.warning(self, "Validation", "Project Name is required.")
+                return
+            if not project_id:
+                QMessageBox.warning(self, "Validation", "Project ID is required.")
+                return
+            if not variant:
+                QMessageBox.warning(self, "Validation", "Variant is required.")
+                return
+            if not camera:
+                QMessageBox.warning(self, "Validation", "Camera is required.")
+                return
+            if not os.path.isdir(images):
+                QMessageBox.warning(self, "Validation", "Images Folder does not exist or is not set.")
+                return
+            if not os.path.isdir(labels):
+                QMessageBox.warning(self, "Validation", "Labels / Masks Folder does not exist or is not set.")
+                return
+
+            class_names = []
+            if task == "yolo":
+                raw = self._class_edit.text().strip()
+                if not raw:
+                    QMessageBox.warning(self, "Validation", "Class Names are required for YOLO.")
+                    return
+                class_names = [c.strip() for c in raw.split(",") if c.strip()]
+
+            config = {
+                "task_type":     task,
+                "model_type":    task,
+                "project_name":  project_name,
+                "project_id":    project_id,
+                "variant":       variant,
+                "camera":        camera,
+                "images_folder": images,
+                "labels_folder": labels,
+                "test_folder":   self._test_edit.text().strip(),
+                "train_pct":     self._slider.value(),
+                "class_names":   class_names,
             }
 
-        # Use hierarchy fields from the top-level form if filled in, else empty
-        project_name = self._project_name_cb.currentText().strip()
-        project_id   = self._project_id_cb.currentText().strip()
-        variant      = self._variant_cb.currentText().strip()
-        camera       = self._camera_cb.currentText().strip()
+            self._worker = DataPrepWorker(config, parent=self)
+            self._worker.log.connect(self._append_log)
+            self._worker.progress.connect(self._progress_bar.setValue)
+            self._worker.hash_progress.connect(self._on_hash_progress)
+            self._worker.finished.connect(self._on_finished)
 
-        staged_info = {
-            "path":         root,
-            "model_type":   task_type,
-            "project_name": project_name,
-            "project_id":   project_id,
-            "variant":      variant,
-            "camera":       camera,
-            "dataset_info": dataset_info,
-        }
-        RegistrySettings().set_staged_dataset(staged_info)
-        self._last_staged_info = staged_info
-        projects_config.ensure_hierarchy(task_type, project_name, project_id, variant, camera)
-        self._refresh_project_names()
+            self._result_card.hide()
+            self._progress_area.show()
+            self._hash_label.hide()
+            self._progress_bar.setValue(0)
+            self._prepare_btn.setText("Preparing...")
+            self._prepare_btn.setStyleSheet(_PREPARE_RUNNING_STYLE)
+            self._prepare_btn.setEnabled(False)
+            self._console.clear()
 
-        # Populate and show result card (same as after Prepare Dataset)
-        train_n = dataset_info.get("train_count", 0)
-        val_n   = dataset_info.get("val_count", 0)
-        test_n  = dataset_info.get("test_count", 0)
-        sha     = dataset_info.get("sha256", "")
-
-        self._rc_title.setText("✓ Dataset imported!")
-        self._rc_counts.setText(f"Train: {train_n}   Val: {val_n}   Test: {test_n}")
-
-        max_path = 60
-        disp_path = root if len(root) <= max_path else "..." + root[-(max_path - 3):]
-        self._rc_path.setText(f"Root: {disp_path}")
-        self._rc_hash.setText(f"SHA-256: {sha[:16]}..." if sha else "")
-
-        hierarchy = f"{task_type} / {project_name} / {project_id} / {variant} / {camera}"
-        self._rc_hierarchy.setText(f"→ {hierarchy}")
-
-        self._result_card.show()
-        self._console.append(f"[OK] dataset_info.json written to: {root}")
-        if task_type == "yolo":
-            self._console.append(f"[OK] data.yaml written.")
-        self._console.append("  Ready to use in the Training tab.")
-
-        self._on_import_scan()
-
-    # ------------------------------------------------------------------
-    # Prepare action
-    # ------------------------------------------------------------------
-
-    def _on_prepare_clicked(self):
-        task         = "yolo" if self._radio_yolo.isChecked() else "unet"
-        project_name = self._project_name_cb.currentText().strip()
-        project_id   = self._project_id_cb.currentText().strip()
-        variant      = self._variant_cb.currentText().strip()
-        camera       = self._camera_cb.currentText().strip()
-        images       = self._images_edit.text().strip()
-        labels       = self._labels_edit.text().strip()
-
-        if not project_name:
-            QMessageBox.warning(self, "Validation", "Project Name is required.")
+            self._worker.start()
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
             return
-        if not project_id:
-            QMessageBox.warning(self, "Validation", "Project ID is required.")
-            return
-        if not variant:
-            QMessageBox.warning(self, "Validation", "Variant is required.")
-            return
-        if not camera:
-            QMessageBox.warning(self, "Validation", "Camera is required.")
-            return
-        if not os.path.isdir(images):
-            QMessageBox.warning(self, "Validation", "Images Folder does not exist or is not set.")
-            return
-        if not os.path.isdir(labels):
-            QMessageBox.warning(self, "Validation", "Labels / Masks Folder does not exist or is not set.")
-            return
-
-        class_names = []
-        if task == "yolo":
-            raw = self._class_edit.text().strip()
-            if not raw:
-                QMessageBox.warning(self, "Validation", "Class Names are required for YOLO.")
-                return
-            class_names = [c.strip() for c in raw.split(",") if c.strip()]
-
-        config = {
-            "task_type":     task,
-            "model_type":    task,
-            "project_name":  project_name,
-            "project_id":    project_id,
-            "variant":       variant,
-            "camera":        camera,
-            "images_folder": images,
-            "labels_folder": labels,
-            "test_folder":   self._test_edit.text().strip(),
-            "train_pct":     self._slider.value(),
-            "class_names":   class_names,
-        }
-
-        self._worker = DataPrepWorker(config, parent=self)
-        self._worker.log.connect(self._append_log)
-        self._worker.progress.connect(self._progress_bar.setValue)
-        self._worker.hash_progress.connect(self._on_hash_progress)
-        self._worker.finished.connect(self._on_finished)
-
-        self._result_card.hide()
-        self._progress_area.show()
-        self._hash_label.hide()
-        self._progress_bar.setValue(0)
-        self._prepare_btn.setText("Preparing...")
-        self._prepare_btn.setStyleSheet(_PREPARE_RUNNING_STYLE)
-        self._prepare_btn.setEnabled(False)
-        self._console.clear()
-
-        self._worker.start()
 
     # ------------------------------------------------------------------
     # Worker callbacks
@@ -1120,115 +1212,142 @@ class DataPrepTab(QWidget):
 
     @pyqtSlot()
     def _on_open_training_clicked(self):
-        if self._last_staged_info:
-            self.open_in_training.emit(self._last_staged_info)
+        try:
+            if self._last_staged_info:
+                self.open_in_training.emit(self._last_staged_info)
 
-    # ------------------------------------------------------------------
-    # Folder structure help
-    # ------------------------------------------------------------------
+        # ------------------------------------------------------------------
+        # Folder structure help
+        # ------------------------------------------------------------------
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _show_import_folder_help(self):
-        """Help for the Import Existing Dataset section — reads the import task radio."""
-        is_yolo = self._imp_radio_yolo.isChecked()
-        if is_yolo:
-            text = (
-                "<b>YOLO — Expected pre-split folder structure:</b><br><br>"
-                "<pre>"
-                "dataset_root/\n"
-                "  train/\n"
-                "    images/   ← training images\n"
-                "    labels/   ← .txt YOLO labels\n"
-                "  val/\n"
-                "    images/\n"
-                "    labels/\n"
-                "  test/       (optional)\n"
-                "    images/"
-                "</pre>"
-                "<br><b>Also accepted:</b><br>"
-                "<pre>"
-                "dataset_root/\n"
-                "  images/\n"
-                "    train/\n"
-                "    val/\n"
-                "  labels/\n"
-                "    train/\n"
-                "    val/"
-                "</pre>"
-                "<br>Class names will be auto-read from <code>classes.txt</code> or "
-                "<code>data.yaml</code> if present.<br>"
-                "Otherwise enter them manually below."
-            )
-        else:
-            text = (
-                "<b>UNet — Expected pre-split folder structure:</b><br><br>"
-                "<pre>"
-                "dataset_root/\n"
-                "  train/\n"
-                "    images/   ← training images\n"
-                "    masks/    ← binary/grayscale .png masks\n"
-                "  val/\n"
-                "    images/\n"
-                "    masks/\n"
-                "  test/       (optional)\n"
-                "    images/"
-                "</pre>"
-                "<br>No <code>data.yaml</code> is created for UNet datasets.<br>"
-                "Only <code>dataset_info.json</code> will be generated."
-            )
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Import — Folder Structure Help")
-        msg.setTextFormat(Qt.RichText)
-        msg.setText(text)
-        msg.setIcon(QMessageBox.Information)
-        msg.exec_()
+        try:
+            """Help for the Import Existing Dataset section — reads the import task radio."""
+            is_yolo = self._imp_radio_yolo.isChecked()
+            if is_yolo:
+                text = (
+                    "<b>YOLO — Expected pre-split folder structure:</b><br><br>"
+                    "<pre>"
+                    "dataset_root/\n"
+                    "  train/\n"
+                    "    images/   ← training images\n"
+                    "    labels/   ← .txt YOLO labels\n"
+                    "  val/\n"
+                    "    images/\n"
+                    "    labels/\n"
+                    "  test/       (optional)\n"
+                    "    images/"
+                    "</pre>"
+                    "<br><b>Also accepted:</b><br>"
+                    "<pre>"
+                    "dataset_root/\n"
+                    "  images/\n"
+                    "    train/\n"
+                    "    val/\n"
+                    "  labels/\n"
+                    "    train/\n"
+                    "    val/"
+                    "</pre>"
+                    "<br>Class names will be auto-read from <code>classes.txt</code> or "
+                    "<code>data.yaml</code> if present.<br>"
+                    "Otherwise enter them manually below."
+                )
+            else:
+                text = (
+                    "<b>UNet — Expected pre-split folder structure:</b><br><br>"
+                    "<pre>"
+                    "dataset_root/\n"
+                    "  train/\n"
+                    "    images/   ← training images\n"
+                    "    masks/    ← binary/grayscale .png masks\n"
+                    "  val/\n"
+                    "    images/\n"
+                    "    masks/\n"
+                    "  test/       (optional)\n"
+                    "    images/"
+                    "</pre>"
+                    "<br>No <code>data.yaml</code> is created for UNet datasets.<br>"
+                    "Only <code>dataset_info.json</code> will be generated."
+                )
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Import — Folder Structure Help")
+            msg.setTextFormat(Qt.RichText)
+            msg.setText(text)
+            msg.setIcon(QMessageBox.Information)
+            msg.exec_()
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _show_folder_structure_help(self):
-        is_yolo = self._radio_yolo.isChecked()
-        if is_yolo:
-            text = (
-                "<b>YOLO — Required folder structure:</b><br><br>"
-                "<pre>"
-                "Images Folder/\n"
-                "  image1.jpg\n"
-                "  image2.jpg\n"
-                "  ...\n"
-                "\n"
-                "Labels Folder/\n"
-                "  image1.txt   ← YOLO format (.txt)\n"
-                "  image2.txt\n"
-                "  ...\n"
-                "\n"
-                "Test Folder/   (optional)\n"
-                "  test1.jpg\n"
-                "  ..."
-                "</pre>"
-                "<br>Label files must have the same stem name as their image.<br>"
-                "Each .txt has one row per object: <code>class x y w h</code>"
+        try:
+            is_yolo = self._radio_yolo.isChecked()
+            if is_yolo:
+                text = (
+                    "<b>YOLO — Required folder structure:</b><br><br>"
+                    "<pre>"
+                    "Images Folder/\n"
+                    "  image1.jpg\n"
+                    "  image2.jpg\n"
+                    "  ...\n"
+                    "\n"
+                    "Labels Folder/\n"
+                    "  image1.txt   ← YOLO format (.txt)\n"
+                    "  image2.txt\n"
+                    "  ...\n"
+                    "\n"
+                    "Test Folder/   (optional)\n"
+                    "  test1.jpg\n"
+                    "  ..."
+                    "</pre>"
+                    "<br>Label files must have the same stem name as their image.<br>"
+                    "Each .txt has one row per object: <code>class x y w h</code>"
+                )
+            else:
+                text = (
+                    "<b>UNet — Required folder structure:</b><br><br>"
+                    "<pre>"
+                    "Images Folder/\n"
+                    "  image1.png\n"
+                    "  image2.png\n"
+                    "  ...\n"
+                    "\n"
+                    "Masks Folder/\n"
+                    "  image1.png   ← binary/grayscale mask (.png)\n"
+                    "  image2.png\n"
+                    "  ...\n"
+                    "\n"
+                    "Test Folder/   (optional)\n"
+                    "  test1.png\n"
+                    "  ..."
+                    "</pre>"
+                    "<br>Mask files must have the same stem name as their image.<br>"
+                    "No data.yaml is generated for UNet datasets."
+                )
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Folder Structure Help")
+            msg.setTextFormat(Qt.RichText)
+            msg.setText(text)
+            msg.setIcon(QMessageBox.Information)
+            msg.exec_()
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
             )
-        else:
-            text = (
-                "<b>UNet — Required folder structure:</b><br><br>"
-                "<pre>"
-                "Images Folder/\n"
-                "  image1.png\n"
-                "  image2.png\n"
-                "  ...\n"
-                "\n"
-                "Masks Folder/\n"
-                "  image1.png   ← binary/grayscale mask (.png)\n"
-                "  image2.png\n"
-                "  ...\n"
-                "\n"
-                "Test Folder/   (optional)\n"
-                "  test1.png\n"
-                "  ..."
-                "</pre>"
-                "<br>Mask files must have the same stem name as their image.<br>"
-                "No data.yaml is generated for UNet datasets."
-            )
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Folder Structure Help")
-        msg.setTextFormat(Qt.RichText)
-        msg.setText(text)
-        msg.setIcon(QMessageBox.Information)
-        msg.exec_()
+            return

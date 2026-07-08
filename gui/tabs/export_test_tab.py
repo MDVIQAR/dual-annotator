@@ -25,6 +25,8 @@ from PyQt5.QtCore import Qt, pyqtSlot
 from PyQt5.QtGui import QPixmap, QDragEnterEvent, QDropEvent
 
 from mlops.engine_manager import needs_setup
+import logging
+import traceback
 
 
 class _NoScrollDoubleSpinBox(QDoubleSpinBox):
@@ -579,13 +581,31 @@ class ExportTestTab(QWidget):
     # ── Zoom ──────────────────────────────────────────────────────────────────
 
     def _zoom_in(self):
-        self._zoom_h = min(self._zoom_h + _ZOOM_STEP, _ZOOM_MAX)
-        self._apply_zoom()
+        try:
+            self._zoom_h = min(self._zoom_h + _ZOOM_STEP, _ZOOM_MAX)
+            self._apply_zoom()
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _zoom_out(self):
-        self._zoom_h = max(self._zoom_h - _ZOOM_STEP, _ZOOM_MIN)
-        self._apply_zoom()
+        try:
+            self._zoom_h = max(self._zoom_h - _ZOOM_STEP, _ZOOM_MIN)
+            self._apply_zoom()
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _apply_zoom(self):
         pct = int(self._zoom_h / _ZOOM_BASE * 100)
         self._zoom_lbl.setText(f"{pct}%")
@@ -606,86 +626,104 @@ class ExportTestTab(QWidget):
     # ── Browse actions ────────────────────────────────────────────────────────
 
     def _browse_folder(self):
-        path = QFileDialog.getExistingDirectory(self, "Select Version Folder", "")
-        if path:
-            self._load_version_folder(path)
+        try:
+            path = QFileDialog.getExistingDirectory(self, "Select Version Folder", "")
+            if path:
+                self._load_version_folder(path)
 
-    def _browse_onnx(self):
-        current = self._onnx_edit.text().strip()
-        start_dir = os.path.dirname(current) if current and os.path.exists(os.path.dirname(current)) else ""
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select Model", start_dir,
-            "Model files (*.pt *.onnx);;PyTorch (*.pt);;ONNX (*.onnx)"
-        )
-        if not path:
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
             return
-        self._onnx_edit.setText(path)
-        folder = os.path.dirname(path)
-        config_path = os.path.join(folder, "config.json")
-        if os.path.isfile(config_path):
-            try:
-                with open(config_path, "r", encoding="utf-8") as fh:
-                    cfg = json.load(fh)
-                hp = cfg.get("hyperparams", {})
-                mt = cfg.get("model_type", "unet")
-                self._folder_info = {
-                    "model_type":  mt,
-                    "arch":        hp.get("architecture", "?"),
-                    "in_ch":       hp.get("in_channels", 3),
-                    "w":           hp.get("image_width", 320),
-                    "h":           hp.get("image_height", 240),
-                    "has_onnx":    True,
-                    "config_path": config_path,
-                    "onnx_path":   path,
-                }
-                self._conf_widget.setVisible(mt == "yolo")
-            except Exception:
-                pass
-        elif path.lower().endswith('.onnx'):
-            # No sidecar config.json — try to read the shape directly from the
-            # ONNX graph and write a synthetic config.json so infer_unet.py
-            # (which requires --config and reads cfg["hyperparams"]) still works
-            # unmodified. Only populate the fields it actually consumes:
-            # in_channels, image_width, image_height, out_classes.
-            synthetic_config = self._build_synthetic_unet_config(path)
-            if synthetic_config:
-                self._folder_info = {
-                    "model_type":  "unet",
-                    "arch":        "?",
-                    "in_ch":       synthetic_config["hyperparams"]["in_channels"],
-                    "w":           synthetic_config["hyperparams"]["image_width"],
-                    "h":           synthetic_config["hyperparams"]["image_height"],
-                    "has_onnx":    True,
-                    "config_path": synthetic_config["_path"],
-                    "onnx_path":   path,
-                }
-                self._conf_widget.setVisible(False)
+    def _browse_onnx(self):
+        try:
+            current = self._onnx_edit.text().strip()
+            start_dir = os.path.dirname(current) if current and os.path.exists(os.path.dirname(current)) else ""
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Select Model", start_dir,
+                "Model files (*.pt *.onnx);;PyTorch (*.pt);;ONNX (*.onnx)"
+            )
+            if not path:
+                return
+            self._onnx_edit.setText(path)
+            folder = os.path.dirname(path)
+            config_path = os.path.join(folder, "config.json")
+            if os.path.isfile(config_path):
+                try:
+                    with open(config_path, "r", encoding="utf-8") as fh:
+                        cfg = json.load(fh)
+                    hp = cfg.get("hyperparams", {})
+                    mt = cfg.get("model_type", "unet")
+                    self._folder_info = {
+                        "model_type":  mt,
+                        "arch":        hp.get("architecture", "?"),
+                        "in_ch":       hp.get("in_channels", 3),
+                        "w":           hp.get("image_width", 320),
+                        "h":           hp.get("image_height", 240),
+                        "has_onnx":    True,
+                        "config_path": config_path,
+                        "onnx_path":   path,
+                    }
+                    self._conf_widget.setVisible(mt == "yolo")
+                except Exception:
+                    pass
+            elif path.lower().endswith('.onnx'):
+                # No sidecar config.json — try to read the shape directly from the
+                # ONNX graph and write a synthetic config.json so infer_unet.py
+                # (which requires --config and reads cfg["hyperparams"]) still works
+                # unmodified. Only populate the fields it actually consumes:
+                # in_channels, image_width, image_height, out_classes.
+                synthetic_config = self._build_synthetic_unet_config(path)
+                if synthetic_config:
+                    self._folder_info = {
+                        "model_type":  "unet",
+                        "arch":        "?",
+                        "in_ch":       synthetic_config["hyperparams"]["in_channels"],
+                        "w":           synthetic_config["hyperparams"]["image_width"],
+                        "h":           synthetic_config["hyperparams"]["image_height"],
+                        "has_onnx":    True,
+                        "config_path": synthetic_config["_path"],
+                        "onnx_path":   path,
+                    }
+                    self._conf_widget.setVisible(False)
+                else:
+                    self._folder_info = None
+                    QMessageBox.warning(
+                        self,
+                        "Config Not Found",
+                        "No config.json found next to this model, and its input/output "
+                        "shape could not be read directly from the ONNX file (the model "
+                        "may use dynamic dimensions, or the 'onnx' package may not be "
+                        "installed).\n\n"
+                        "Inference cannot proceed without knowing the model's expected "
+                        "image size and channel count."
+                    )
             else:
+                # .pt without config — architecture can't be reconstructed
                 self._folder_info = None
                 QMessageBox.warning(
                     self,
                     "Config Not Found",
-                    "No config.json found next to this model, and its input/output "
-                    "shape could not be read directly from the ONNX file (the model "
-                    "may use dynamic dimensions, or the 'onnx' package may not be "
-                    "installed).\n\n"
-                    "Inference cannot proceed without knowing the model's expected "
-                    "image size and channel count."
+                    "No config.json found next to this model.\n\n"
+                    "For .pt models, a config.json is required to reconstruct "
+                    "the model architecture.\n\n"
+                    "If you have an .onnx file instead, browse to that — its shape "
+                    "can often be read directly from the file."
                 )
-        else:
-            # .pt without config — architecture can't be reconstructed
-            self._folder_info = None
+            self._update_infer_btn()
+
+        except Exception as e:
+            logging.error(traceback.format_exc())
             QMessageBox.warning(
                 self,
-                "Config Not Found",
-                "No config.json found next to this model.\n\n"
-                "For .pt models, a config.json is required to reconstruct "
-                "the model architecture.\n\n"
-                "If you have an .onnx file instead, browse to that — its shape "
-                "can often be read directly from the file."
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
             )
-        self._update_infer_btn()
-
+            return
     def _build_synthetic_unet_config(self, onnx_path: str) -> dict | None:
         """Read input/output tensor shape from an ONNX file and build a minimal
         config dict + write it to a temp config.json. Returns None if the shape
@@ -728,20 +766,38 @@ class ExportTestTab(QWidget):
             return None
 
     def _browse_test(self):
-        path = QFileDialog.getExistingDirectory(self, "Select Test Images Folder", "")
-        if path:
-            self._test_edit.setText(path)
-            if not self._out_edit.text():
-                self._out_edit.setText(os.path.join(path, "results"))
-            self._update_infer_btn()
+        try:
+            path = QFileDialog.getExistingDirectory(self, "Select Test Images Folder", "")
+            if path:
+                self._test_edit.setText(path)
+                if not self._out_edit.text():
+                    self._out_edit.setText(os.path.join(path, "results"))
+                self._update_infer_btn()
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _browse_out(self):
-        path = QFileDialog.getExistingDirectory(self, "Select Output Folder", "")
-        if path:
-            self._out_edit.setText(path)
+        try:
+            path = QFileDialog.getExistingDirectory(self, "Select Output Folder", "")
+            if path:
+                self._out_edit.setText(path)
 
-    # ── Version folder loading ─────────────────────────────────────────────────
+        # ── Version folder loading ─────────────────────────────────────────────────
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def prefill_from_version(self, path: str):
         if not path or not os.path.isdir(path):
             return
@@ -785,29 +841,38 @@ class ExportTestTab(QWidget):
     # ── Export ────────────────────────────────────────────────────────────────
 
     def _run_export(self):
-        if not self._version_folder:
-            return
+        try:
+            if not self._version_folder:
+                return
 
-        if needs_setup():
+            if needs_setup():
+                QMessageBox.warning(
+                    self,
+                    "AI Engine Not Found",
+                    "This feature requires the AI Engine.\n\n"
+                    "Go to the Train tab and click 'Start Training' to install it.",
+                )
+                return
+
+            from mlops.export.onnx_worker import OnnxWorker
+            self._export_worker = OnnxWorker(self._version_folder, _SCRIPTS_DIR, parent=self)
+            self._export_worker.log.connect(self._on_export_log)
+            self._export_worker.progress.connect(self._export_progress.setValue)
+            self._export_worker.finished.connect(self._on_export_done)
+
+            self._export_btn.setEnabled(False)
+            self._export_btn.setText("Exporting...")
+            self._export_log.clear()
+            self._export_progress.setValue(0)
+            self._export_worker.start()
+        except Exception as e:
+            logging.error(traceback.format_exc())
             QMessageBox.warning(
                 self,
-                "AI Engine Not Found",
-                "This feature requires the AI Engine.\n\n"
-                "Go to the Train tab and click 'Start Training' to install it.",
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
             )
             return
-
-        from mlops.export.onnx_worker import OnnxWorker
-        self._export_worker = OnnxWorker(self._version_folder, _SCRIPTS_DIR, parent=self)
-        self._export_worker.log.connect(self._on_export_log)
-        self._export_worker.progress.connect(self._export_progress.setValue)
-        self._export_worker.finished.connect(self._on_export_done)
-
-        self._export_btn.setEnabled(False)
-        self._export_btn.setText("Exporting...")
-        self._export_log.clear()
-        self._export_progress.setValue(0)
-        self._export_worker.start()
 
     @pyqtSlot(str)
     def _on_export_log(self, line: str):
@@ -839,52 +904,61 @@ class ExportTestTab(QWidget):
         self._infer_btn.setEnabled(has_model and has_test and has_config)
 
     def _run_infer(self):
-        model_path  = self._onnx_edit.text().strip()
-        test_folder = self._test_edit.text().strip()
-        out_folder  = self._out_edit.text().strip() or os.path.join(test_folder, "results")
-        config_path = self._folder_info["config_path"]
-        model_type  = self._folder_info["model_type"]
+        try:
+            model_path  = self._onnx_edit.text().strip()
+            test_folder = self._test_edit.text().strip()
+            out_folder  = self._out_edit.text().strip() or os.path.join(test_folder, "results")
+            config_path = self._folder_info["config_path"]
+            model_type  = self._folder_info["model_type"]
 
-        if not os.path.isfile(model_path):
-            QMessageBox.warning(self, "Missing Model", f"Model file not found:\n{model_path}")
-            return
-        if not os.path.isdir(test_folder):
-            QMessageBox.warning(self, "Missing Folder", f"Test folder not found:\n{test_folder}")
-            return
+            if not os.path.isfile(model_path):
+                QMessageBox.warning(self, "Missing Model", f"Model file not found:\n{model_path}")
+                return
+            if not os.path.isdir(test_folder):
+                QMessageBox.warning(self, "Missing Folder", f"Test folder not found:\n{test_folder}")
+                return
 
-        if needs_setup():
+            if needs_setup():
+                QMessageBox.warning(
+                    self,
+                    "AI Engine Not Found",
+                    "This feature requires the AI Engine.\n\n"
+                    "Go to the Train tab and click 'Start Training' to install it.",
+                )
+                return
+
+            os.makedirs(out_folder, exist_ok=True)
+            self._out_edit.setText(out_folder)
+
+            from mlops.export.infer_worker import InferWorker
+            self._infer_worker = InferWorker(
+                model_type  = model_type,
+                onnx_path   = model_path,
+                config_path = config_path,
+                test_folder = test_folder,
+                out_folder  = out_folder,
+                scripts_dir = _SCRIPTS_DIR,
+                conf        = self._conf_sp.value(),
+                parent      = self,
+            )
+            self._infer_worker.log.connect(self._on_infer_log)
+            self._infer_worker.progress.connect(self._infer_progress.setValue)
+            self._infer_worker.result.connect(self._on_infer_result)
+            self._infer_worker.finished.connect(self._on_infer_done)
+
+            self._infer_btn.setEnabled(False)
+            self._infer_btn.setText("Running...")
+            self._infer_log.clear()
+            self._infer_progress.setValue(0)
+            self._infer_worker.start()
+        except Exception as e:
+            logging.error(traceback.format_exc())
             QMessageBox.warning(
                 self,
-                "AI Engine Not Found",
-                "This feature requires the AI Engine.\n\n"
-                "Go to the Train tab and click 'Start Training' to install it.",
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
             )
             return
-
-        os.makedirs(out_folder, exist_ok=True)
-        self._out_edit.setText(out_folder)
-
-        from mlops.export.infer_worker import InferWorker
-        self._infer_worker = InferWorker(
-            model_type  = model_type,
-            onnx_path   = model_path,
-            config_path = config_path,
-            test_folder = test_folder,
-            out_folder  = out_folder,
-            scripts_dir = _SCRIPTS_DIR,
-            conf        = self._conf_sp.value(),
-            parent      = self,
-        )
-        self._infer_worker.log.connect(self._on_infer_log)
-        self._infer_worker.progress.connect(self._infer_progress.setValue)
-        self._infer_worker.result.connect(self._on_infer_result)
-        self._infer_worker.finished.connect(self._on_infer_done)
-
-        self._infer_btn.setEnabled(False)
-        self._infer_btn.setText("Running...")
-        self._infer_log.clear()
-        self._infer_progress.setValue(0)
-        self._infer_worker.start()
 
     @pyqtSlot(str)
     def _on_infer_log(self, line: str):
@@ -920,19 +994,37 @@ class ExportTestTab(QWidget):
     # ── Inference field clear ─────────────────────────────────────────────────
 
     def _clear_infer_fields(self):
-        self._onnx_edit.clear()
-        self._test_edit.clear()
-        self._out_edit.clear()
-        self._folder_info = None
-        self._conf_widget.setVisible(False)
-        self._update_infer_btn()
-        self._infer_log.clear()
+        try:
+            self._onnx_edit.clear()
+            self._test_edit.clear()
+            self._out_edit.clear()
+            self._folder_info = None
+            self._conf_widget.setVisible(False)
+            self._update_infer_btn()
+            self._infer_log.clear()
 
-    # ── Gallery ───────────────────────────────────────────────────────────────
+        # ── Gallery ───────────────────────────────────────────────────────────────
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _clear_gallery(self):
-        for item in self._gallery_items:
-            self._gallery_layout.removeWidget(item)
-            item.deleteLater()
-        self._gallery_items.clear()
-        self._gallery_count_lbl.setText("0 images")
+        try:
+            for item in self._gallery_items:
+                self._gallery_layout.removeWidget(item)
+                item.deleteLater()
+            self._gallery_items.clear()
+            self._gallery_count_lbl.setText("0 images")
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return

@@ -364,27 +364,45 @@ class CollabTab(QWidget):
     # ── Actions: Host ─────────────────────────────────────────────────────────
 
     def _browse_host_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Image Folder")
-        if folder:
-            self._host_folder_edit.setText(folder)
+        try:
+            folder = QFileDialog.getExistingDirectory(self, "Select Image Folder")
+            if folder:
+                self._host_folder_edit.setText(folder)
 
-    def _start_hosting(self):
-        folder = self._host_folder_edit.text().strip()
-        if not folder or not os.path.isdir(folder):
-            QMessageBox.warning(self, "No Folder", "Please select a valid image folder first.")
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
             return
+    def _start_hosting(self):
+        try:
+            folder = self._host_folder_edit.text().strip()
+            if not folder or not os.path.isdir(folder):
+                QMessageBox.warning(self, "No Folder", "Please select a valid image folder first.")
+                return
 
-        # Load the folder into main window's project manager
-        mw = self.main_window
-        mw.open_image_folder(folder_path=folder)
+            # Load the folder into main window's project manager
+            mw = self.main_window
+            mw.open_image_folder(folder_path=folder)
 
-        from core.collab_server import CollabServer, encode_project_id, get_local_ip
-        port = self._port_spin.value()
-        self._server = CollabServer(mw.project_manager, port=port)
-        self._server.started_ok.connect(self._on_server_started)
-        self._server.start_error.connect(self._on_server_error)
-        self._server.start()
+            from core.collab_server import CollabServer, encode_project_id, get_local_ip
+            port = self._port_spin.value()
+            self._server = CollabServer(mw.project_manager, port=port)
+            self._server.started_ok.connect(self._on_server_started)
+            self._server.start_error.connect(self._on_server_error)
+            self._server.start()
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _on_server_started(self, ip: str, port: int):
         from core.collab_server import encode_project_id
         pid = encode_project_id(ip, port)
@@ -401,84 +419,120 @@ class CollabTab(QWidget):
         QMessageBox.critical(self, "Server Error", f"Failed to start server:\n{msg}")
 
     def _copy_project_id(self):
-        from PyQt5.QtWidgets import QApplication
-        QApplication.clipboard().setText(self._project_id_display.text())
-        self.main_window.status_bar.showMessage("Project ID copied to clipboard!", 2000)
+        try:
+            from PyQt5.QtWidgets import QApplication
+            QApplication.clipboard().setText(self._project_id_display.text())
+            self.main_window.status_bar.showMessage("Project ID copied to clipboard!", 2000)
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _stop_hosting(self):
-        self._sync_timer.stop()
-        if self._server:
-            self._server.stop()
-            self._server = None
-        self._mode = "offline"
-        self._status_dot.setText("⚫ Offline")
-        self._status_dot.setStyleSheet("color:#64748b; font-size:12px; background:transparent; border:none;")
-        self._page_hosting.hide()
-        self._page_offline.show()
-        self._users_list.clear()
-        self._activity_log.clear()
-        self.session_stopped.emit()
+        try:
+            self._sync_timer.stop()
+            if self._server:
+                self._server.stop()
+                self._server = None
+            self._mode = "offline"
+            self._status_dot.setText("⚫ Offline")
+            self._status_dot.setStyleSheet("color:#64748b; font-size:12px; background:transparent; border:none;")
+            self._page_hosting.hide()
+            self._page_offline.show()
+            self._users_list.clear()
+            self._activity_log.clear()
+            self.session_stopped.emit()
 
-    # ── Actions: Join ─────────────────────────────────────────────────────────
+        # ── Actions: Join ─────────────────────────────────────────────────────────
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _join_session(self):
-        pid      = self._project_id_edit.text().strip()
-        username = self._username_edit.text().strip()
-        if not pid:
-            QMessageBox.warning(self, "Missing Info", "Please enter the Project ID.")
+        try:
+            pid      = self._project_id_edit.text().strip()
+            username = self._username_edit.text().strip()
+            if not pid:
+                QMessageBox.warning(self, "Missing Info", "Please enter the Project ID.")
+                return
+            if not username:
+                QMessageBox.warning(self, "Missing Info", "Please enter your name.")
+                return
+
+            self._join_btn.setEnabled(False)
+            self._join_btn.setText("Connecting…")
+
+            from core.collab_client import CollabClient
+            client = CollabClient()
+            ok, result = client.connect(pid, username)
+
+            self._join_btn.setEnabled(True)
+            self._join_btn.setText("🔗  Connect to Session")
+
+            if not ok:
+                QMessageBox.critical(self, "Connection Failed", str(result))
+                return
+
+            self._client = client
+            self._mode   = "client"
+            project_data = result
+
+            info = f"Connected as  {username}  ·  Server: {client.base_url}"
+            self._client_info_label.setText(info)
+            self._status_dot.setText(f"🟣  Connected as {username}")
+            self._status_dot.setStyleSheet("color:#c084fc; font-size:12px; background:transparent; border:none;")
+
+            self._page_offline.hide()
+            self._page_client.show()
+
+            # Start background polling
+            client.start_sync_poller(self._on_client_sync)
+
+            # Tell main window to enter client mode
+            self.session_joined.emit(project_data, client)
+
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
             return
-        if not username:
-            QMessageBox.warning(self, "Missing Info", "Please enter your name.")
-            return
-
-        self._join_btn.setEnabled(False)
-        self._join_btn.setText("Connecting…")
-
-        from core.collab_client import CollabClient
-        client = CollabClient()
-        ok, result = client.connect(pid, username)
-
-        self._join_btn.setEnabled(True)
-        self._join_btn.setText("🔗  Connect to Session")
-
-        if not ok:
-            QMessageBox.critical(self, "Connection Failed", str(result))
-            return
-
-        self._client = client
-        self._mode   = "client"
-        project_data = result
-
-        info = f"Connected as  {username}  ·  Server: {client.base_url}"
-        self._client_info_label.setText(info)
-        self._status_dot.setText(f"🟣  Connected as {username}")
-        self._status_dot.setStyleSheet("color:#c084fc; font-size:12px; background:transparent; border:none;")
-
-        self._page_offline.hide()
-        self._page_client.show()
-
-        # Start background polling
-        client.start_sync_poller(self._on_client_sync)
-
-        # Tell main window to enter client mode
-        self.session_joined.emit(project_data, client)
-
     def _disconnect(self):
-        if self._client:
-            self._client.disconnect()
-            self._client.clean_cache()
-            self._client = None
-        self._mode = "offline"
-        self._status_dot.setText("⚫ Offline")
-        self._status_dot.setStyleSheet("color:#64748b; font-size:12px; background:transparent; border:none;")
-        self._page_client.hide()
-        self._page_offline.show()
-        self._client_users_list.clear()
-        self._locks_list.clear()
-        self.session_stopped.emit()
+        try:
+            if self._client:
+                self._client.disconnect()
+                self._client.clean_cache()
+                self._client = None
+            self._mode = "offline"
+            self._status_dot.setText("⚫ Offline")
+            self._status_dot.setStyleSheet("color:#64748b; font-size:12px; background:transparent; border:none;")
+            self._page_client.hide()
+            self._page_offline.show()
+            self._client_users_list.clear()
+            self._locks_list.clear()
+            self.session_stopped.emit()
 
-    # ── Sync callbacks ────────────────────────────────────────────────────────
+        # ── Sync callbacks ────────────────────────────────────────────────────────
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _poll_sync(self):
         """Called by QTimer when hosting — refreshes users and activity log."""
         if self._mode != "host" or not self._server:
@@ -532,3 +586,5 @@ class CollabTab(QWidget):
 
 
 import os
+import logging
+import traceback

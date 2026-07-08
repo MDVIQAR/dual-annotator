@@ -12,6 +12,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 
 from mlops.registry import RegistrySettings
+import logging
+import traceback
 
 _BG       = "#1e1e1e"
 _PANEL_BG = "#252525"
@@ -285,10 +287,19 @@ class SettingsTab(QWidget):
 
     # GDrive handlers
     def _browse_gdrive(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Google Drive Root", self._gdrive_edit.text() or "")
-        if folder:
-            self._gdrive_edit.setText(folder)
+        try:
+            folder = QFileDialog.getExistingDirectory(self, "Select Google Drive Root", self._gdrive_edit.text() or "")
+            if folder:
+                self._gdrive_edit.setText(folder)
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _on_gdrive_changed(self, text):
         self._settings.set_gdrive_root(text.strip())
         self._update_gdrive_status()
@@ -310,10 +321,19 @@ class SettingsTab(QWidget):
 
     # Local root handlers
     def _browse_local(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Local Registry Root", self._local_edit.text() or "")
-        if folder:
-            self._local_edit.setText(folder)
+        try:
+            folder = QFileDialog.getExistingDirectory(self, "Select Local Registry Root", self._local_edit.text() or "")
+            if folder:
+                self._local_edit.setText(folder)
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _on_local_changed(self, text):
         self._settings.set_local_root(text.strip())
         self._update_local_status()
@@ -346,16 +366,25 @@ class SettingsTab(QWidget):
                 self._ann_rows_lay.addWidget(row)
 
     def _add_annotator(self):
-        name     = self._new_name_edit.text().strip()
-        initials = self._new_initials_edit.text().strip()
-        if not name or not initials:
-            QMessageBox.warning(self, "Validation", "Both Name and Initials are required.")
-            return
-        self._settings.add_annotator(name, initials)
-        self._new_name_edit.clear()
-        self._new_initials_edit.clear()
-        self._rebuild_annotator_rows()
+        try:
+            name     = self._new_name_edit.text().strip()
+            initials = self._new_initials_edit.text().strip()
+            if not name or not initials:
+                QMessageBox.warning(self, "Validation", "Both Name and Initials are required.")
+                return
+            self._settings.add_annotator(name, initials)
+            self._new_name_edit.clear()
+            self._new_initials_edit.clear()
+            self._rebuild_annotator_rows()
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _remove_annotator(self, initials: str):
         self._settings.remove_annotator(initials)
         self._rebuild_annotator_rows()

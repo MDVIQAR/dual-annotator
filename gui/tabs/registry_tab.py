@@ -17,6 +17,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 
 from mlops.registry import RegistrySettings, RegistryScanner
+import logging
+import traceback
 
 _SCRIPTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "mlops", "scripts")
@@ -669,34 +671,43 @@ class RegistryTab(QWidget):
 
     # ── Refresh & Cascading Filter ─────────────────────────────────────────────
     def _refresh(self):
-        self._registry_root = RegistrySettings().get_registry_root()
-        if not self._registry_root or not os.path.isdir(self._registry_root):
-            self._warning_lbl.show()
+        try:
+            self._registry_root = RegistrySettings().get_registry_root()
+            if not self._registry_root or not os.path.isdir(self._registry_root):
+                self._warning_lbl.show()
+                return
+            self._warning_lbl.hide()
+            self.refresh_csv()
+
+            # Reset model type if current type no longer exists
+            scanner = RegistryScanner(self._registry_root)
+            available = scanner.get_model_types()
+            if self._active_model_type and self._active_model_type not in available:
+                self._active_model_type = ""
+
+            # Update toggle button states to match available types and active selection
+            self._btn_unet.setStyleSheet(
+                _TOGGLE_ON if self._active_model_type == "unet" else _TOGGLE_OFF
+            )
+            self._btn_yolo.setStyleSheet(
+                _TOGGLE_ON if self._active_model_type == "yolo" else _TOGGLE_OFF
+            )
+
+            if self._active_model_type:
+                self._repopulate_projects(self._active_model_type)
+            else:
+                self._clear_all_dropdowns()
+                self._clear_cards()
+                self._show_empty()
+
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
             return
-        self._warning_lbl.hide()
-        self.refresh_csv()
-
-        # Reset model type if current type no longer exists
-        scanner = RegistryScanner(self._registry_root)
-        available = scanner.get_model_types()
-        if self._active_model_type and self._active_model_type not in available:
-            self._active_model_type = ""
-
-        # Update toggle button states to match available types and active selection
-        self._btn_unet.setStyleSheet(
-            _TOGGLE_ON if self._active_model_type == "unet" else _TOGGLE_OFF
-        )
-        self._btn_yolo.setStyleSheet(
-            _TOGGLE_ON if self._active_model_type == "yolo" else _TOGGLE_OFF
-        )
-
-        if self._active_model_type:
-            self._repopulate_projects(self._active_model_type)
-        else:
-            self._clear_all_dropdowns()
-            self._clear_cards()
-            self._show_empty()
-
     def _on_model_type_btn(self, mt: str):
         if self._active_model_type == mt:
             # Deselect
@@ -726,102 +737,138 @@ class RegistryTab(QWidget):
         self._show_empty()
 
     def _on_project_changed(self, pn: str):
-        self._clear_dropdowns_from_id()
-        self._clear_cards()
-        self._show_empty()
-        if not pn or pn == "— select —":
-            return
-        scanner = RegistryScanner(self._registry_root)
-        pids = scanner.get_project_ids(self._active_model_type, pn)
-        self._id_cb.blockSignals(True)
-        self._id_cb.clear()
-        if len(pids) == 1:
-            self._id_cb.addItem(pids[0])
-            self._id_cb.blockSignals(False)
-            self._on_id_changed(pids[0])
-        else:
-            self._id_cb.addItem("— select —")
-            for pid in pids:
-                self._id_cb.addItem(pid)
-            self._id_cb.blockSignals(False)
+        try:
+            self._clear_dropdowns_from_id()
+            self._clear_cards()
+            self._show_empty()
+            if not pn or pn == "— select —":
+                return
+            scanner = RegistryScanner(self._registry_root)
+            pids = scanner.get_project_ids(self._active_model_type, pn)
+            self._id_cb.blockSignals(True)
+            self._id_cb.clear()
+            if len(pids) == 1:
+                self._id_cb.addItem(pids[0])
+                self._id_cb.blockSignals(False)
+                self._on_id_changed(pids[0])
+            else:
+                self._id_cb.addItem("— select —")
+                for pid in pids:
+                    self._id_cb.addItem(pid)
+                self._id_cb.blockSignals(False)
 
-    def _on_id_changed(self, pid: str):
-        self._clear_dropdowns_from_variant()
-        self._clear_cards()
-        self._show_empty()
-        if not pid or pid == "— select —":
-            return
-        scanner  = RegistryScanner(self._registry_root)
-        pn       = self._project_cb.currentText()
-        variants = scanner.get_variants(self._active_model_type, pn, pid)
-        self._variant_cb.blockSignals(True)
-        self._variant_cb.clear()
-        if len(variants) == 1:
-            self._variant_cb.addItem(variants[0])
-            self._variant_cb.blockSignals(False)
-            self._on_variant_changed(variants[0])
-        else:
-            self._variant_cb.addItem("— select —")
-            for v in variants:
-                self._variant_cb.addItem(v)
-            self._variant_cb.blockSignals(False)
-
-    def _on_variant_changed(self, variant: str):
-        self._clear_dropdowns_from_camera()
-        self._clear_cards()
-        self._show_empty()
-        if not variant or variant == "— select —":
-            return
-        scanner = RegistryScanner(self._registry_root)
-        pn  = self._project_cb.currentText()
-        pid = self._id_cb.currentText()
-        cameras = scanner.get_cameras(self._active_model_type, pn, pid, variant)
-        self._camera_cb.blockSignals(True)
-        self._camera_cb.clear()
-        if len(cameras) == 1:
-            self._camera_cb.addItem(cameras[0])
-            self._camera_cb.blockSignals(False)
-            self._on_camera_changed(cameras[0])
-        else:
-            self._camera_cb.addItem("— select —")
-            for c in cameras:
-                self._camera_cb.addItem(c)
-            self._camera_cb.blockSignals(False)
-
-    def _on_camera_changed(self, camera: str):
-        self._clear_cards()
-        self._show_empty()
-        if not camera or camera == "— select —":
-            return
-        pn      = self._project_cb.currentText()
-        pid     = self._id_cb.currentText()
-        variant = self._variant_cb.currentText()
-        if any(x == "— select —" or not x for x in (pn, pid, variant)):
-            return
-        project = f"{self._active_model_type}/{pn}/{pid}/{variant}/{camera}"
-        scanner  = RegistryScanner(self._registry_root)
-        versions = scanner.get_versions(project)
-        for summary in versions:
-            card = VersionCard(summary, self._on_card_clicked)
-            self._cards.append(card)
-            self._cards_layout.insertWidget(self._cards_layout.count() - 1, card)
-        storage = scanner.get_storage_stats(project)
-        self._storage_lbl.setText(
-            f"Storage: {_fmt_bytes(storage.get('total_bytes', 0))}"
-        )
-        conflicts = scanner.detect_conflict_files(project)
-        if conflicts:
-            names = [os.path.basename(c) for c in conflicts[:3]]
-            extra = f" (+{len(conflicts)-3} more)" if len(conflicts) > 3 else ""
-            self._conflict_lbl.setText(
-                f"⚠ {len(conflicts)} GDrive conflict file(s) detected:\n"
-                + "\n".join(names) + extra
-                + "\nDelete them manually in Explorer."
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
             )
-            self._conflict_lbl.show()
-        else:
-            self._conflict_lbl.hide()
+            return
+    def _on_id_changed(self, pid: str):
+        try:
+            self._clear_dropdowns_from_variant()
+            self._clear_cards()
+            self._show_empty()
+            if not pid or pid == "— select —":
+                return
+            scanner  = RegistryScanner(self._registry_root)
+            pn       = self._project_cb.currentText()
+            variants = scanner.get_variants(self._active_model_type, pn, pid)
+            self._variant_cb.blockSignals(True)
+            self._variant_cb.clear()
+            if len(variants) == 1:
+                self._variant_cb.addItem(variants[0])
+                self._variant_cb.blockSignals(False)
+                self._on_variant_changed(variants[0])
+            else:
+                self._variant_cb.addItem("— select —")
+                for v in variants:
+                    self._variant_cb.addItem(v)
+                self._variant_cb.blockSignals(False)
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
+    def _on_variant_changed(self, variant: str):
+        try:
+            self._clear_dropdowns_from_camera()
+            self._clear_cards()
+            self._show_empty()
+            if not variant or variant == "— select —":
+                return
+            scanner = RegistryScanner(self._registry_root)
+            pn  = self._project_cb.currentText()
+            pid = self._id_cb.currentText()
+            cameras = scanner.get_cameras(self._active_model_type, pn, pid, variant)
+            self._camera_cb.blockSignals(True)
+            self._camera_cb.clear()
+            if len(cameras) == 1:
+                self._camera_cb.addItem(cameras[0])
+                self._camera_cb.blockSignals(False)
+                self._on_camera_changed(cameras[0])
+            else:
+                self._camera_cb.addItem("— select —")
+                for c in cameras:
+                    self._camera_cb.addItem(c)
+                self._camera_cb.blockSignals(False)
+
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
+    def _on_camera_changed(self, camera: str):
+        try:
+            self._clear_cards()
+            self._show_empty()
+            if not camera or camera == "— select —":
+                return
+            pn      = self._project_cb.currentText()
+            pid     = self._id_cb.currentText()
+            variant = self._variant_cb.currentText()
+            if any(x == "— select —" or not x for x in (pn, pid, variant)):
+                return
+            project = f"{self._active_model_type}/{pn}/{pid}/{variant}/{camera}"
+            scanner  = RegistryScanner(self._registry_root)
+            versions = scanner.get_versions(project)
+            for summary in versions:
+                card = VersionCard(summary, self._on_card_clicked)
+                self._cards.append(card)
+                self._cards_layout.insertWidget(self._cards_layout.count() - 1, card)
+            storage = scanner.get_storage_stats(project)
+            self._storage_lbl.setText(
+                f"Storage: {_fmt_bytes(storage.get('total_bytes', 0))}"
+            )
+            conflicts = scanner.detect_conflict_files(project)
+            if conflicts:
+                names = [os.path.basename(c) for c in conflicts[:3]]
+                extra = f" (+{len(conflicts)-3} more)" if len(conflicts) > 3 else ""
+                self._conflict_lbl.setText(
+                    f"⚠ {len(conflicts)} GDrive conflict file(s) detected:\n"
+                    + "\n".join(names) + extra
+                    + "\nDelete them manually in Explorer."
+                )
+                self._conflict_lbl.show()
+            else:
+                self._conflict_lbl.hide()
+
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _current_project_key(self) -> str:
         pn      = self._project_cb.currentText()
         pid     = self._id_cb.currentText()
@@ -859,17 +906,26 @@ class RegistryTab(QWidget):
 
     # ── Compare mode ───────────────────────────────────────────────────────────
     def _toggle_compare(self):
-        self._compare_mode = self._compare_btn.isChecked()
-        self._compare_btn.setStyleSheet(_CMP_ON if self._compare_mode else _CMP_OFF)
-        self._compare_hint.setVisible(self._compare_mode)
-        if not self._compare_mode:
-            self._compare_a = None
-            self._compare_b = None
-            self._last_slot = 'b'
-            for card in self._cards:
-                card.set_selected(None)
-            self._show_empty()
+        try:
+            self._compare_mode = self._compare_btn.isChecked()
+            self._compare_btn.setStyleSheet(_CMP_ON if self._compare_mode else _CMP_OFF)
+            self._compare_hint.setVisible(self._compare_mode)
+            if not self._compare_mode:
+                self._compare_a = None
+                self._compare_b = None
+                self._last_slot = 'b'
+                for card in self._cards:
+                    card.set_selected(None)
+                self._show_empty()
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _on_card_clicked(self, summary: dict):
         if self._compare_mode:
             self._handle_compare_click(summary)
@@ -1061,66 +1117,111 @@ class RegistryTab(QWidget):
 
     # ── Action handlers ────────────────────────────────────────────────────────
     def _on_retrain_clicked(self):
-        if not self._current_summary: return
-        vf = self._current_summary.get("version_folder", "")
-        if not vf: return
-        proj    = self._current_project_key()
-        scanner = RegistryScanner(self._registry_root)
-        manifest = scanner.get_version(proj, self._current_summary.get("version_id", ""))
-        if not manifest: return
-        manifest["version_folder"] = vf
-        self.retrain_requested.emit(manifest)
-
-    def _open_folder(self):
-        if not self._current_summary: return
-        vf = self._current_summary.get("version_folder", "")
-        if sys.platform == "win32" and os.path.isdir(vf):
-            try: os.startfile(vf)
-            except Exception: pass
-
-    def _open_dataset_folder(self):
-        if not self._current_summary: return
-        vf = self._current_summary.get("version_folder", "")
-        if not vf: return
-        from mlops.registry.manifest import ManifestReader
-        ds_path = ManifestReader(vf).get_dataset_path()
-        if ds_path and os.path.isdir(ds_path) and sys.platform == "win32":
-            try: os.startfile(ds_path)
-            except Exception: pass
-
-    def _copy_weights_path(self):
-        if not self._current_summary: return
-        vf = self._current_summary.get("version_folder", "")
-        w  = "best.pt"
         try:
-            proj = self._current_project_key()
-            m    = RegistryScanner(self._registry_root).get_version(
-                proj, self._current_summary.get("version_id", "")
+            if not self._current_summary: return
+            vf = self._current_summary.get("version_folder", "")
+            if not vf: return
+            proj    = self._current_project_key()
+            scanner = RegistryScanner(self._registry_root)
+            manifest = scanner.get_version(proj, self._current_summary.get("version_id", ""))
+            if not manifest: return
+            manifest["version_folder"] = vf
+            self.retrain_requested.emit(manifest)
+
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
             )
-            w = m.get("artifacts", {}).get("weights") or w
-        except Exception:
-            pass
-        QApplication.clipboard().setText(os.path.join(vf, w))
-        self._copy_status_lbl.setText("✓ Copied")
+            return
+    def _open_folder(self):
+        try:
+            if not self._current_summary: return
+            vf = self._current_summary.get("version_folder", "")
+            if sys.platform == "win32" and os.path.isdir(vf):
+                try: os.startfile(vf)
+                except Exception: pass
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
+    def _open_dataset_folder(self):
+        try:
+            if not self._current_summary: return
+            vf = self._current_summary.get("version_folder", "")
+            if not vf: return
+            from mlops.registry.manifest import ManifestReader
+            ds_path = ManifestReader(vf).get_dataset_path()
+            if ds_path and os.path.isdir(ds_path) and sys.platform == "win32":
+                try: os.startfile(ds_path)
+                except Exception: pass
+
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
+    def _copy_weights_path(self):
+        try:
+            if not self._current_summary: return
+            vf = self._current_summary.get("version_folder", "")
+            w  = "best.pt"
+            try:
+                proj = self._current_project_key()
+                m    = RegistryScanner(self._registry_root).get_version(
+                    proj, self._current_summary.get("version_id", "")
+                )
+                w = m.get("artifacts", {}).get("weights") or w
+            except Exception:
+                pass
+            QApplication.clipboard().setText(os.path.join(vf, w))
+            self._copy_status_lbl.setText("✓ Copied")
+
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _on_export_onnx(self):
-        if not self._current_summary: return
-        vf = self._current_summary.get("version_folder", "")
-        if not vf or not os.path.isdir(vf): return
-        from mlops.export import OnnxWorker
-        self._export_btn.setEnabled(False)
-        self._export_btn.setText("Exporting...")
-        self._export_progress.setValue(0)
-        self._export_progress.show()
-        self._copy_status_lbl.setText("")
-        self._onnx_worker = OnnxWorker(
-            version_folder=vf, scripts_dir=_SCRIPTS_DIR, parent=self
-        )
-        self._onnx_worker.log.connect(lambda msg: self._copy_status_lbl.setText(msg[-60:]))
-        self._onnx_worker.progress.connect(self._export_progress.setValue)
-        self._onnx_worker.finished.connect(self._on_export_finished)
-        self._onnx_worker.start()
+        try:
+            if not self._current_summary: return
+            vf = self._current_summary.get("version_folder", "")
+            if not vf or not os.path.isdir(vf): return
+            from mlops.export import OnnxWorker
+            self._export_btn.setEnabled(False)
+            self._export_btn.setText("Exporting...")
+            self._export_progress.setValue(0)
+            self._export_progress.show()
+            self._copy_status_lbl.setText("")
+            self._onnx_worker = OnnxWorker(
+                version_folder=vf, scripts_dir=_SCRIPTS_DIR, parent=self
+            )
+            self._onnx_worker.log.connect(lambda msg: self._copy_status_lbl.setText(msg[-60:]))
+            self._onnx_worker.progress.connect(self._export_progress.setValue)
+            self._onnx_worker.finished.connect(self._on_export_finished)
+            self._onnx_worker.start()
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def _on_export_finished(self, success: bool):
         self._export_progress.hide()
         if success:
@@ -1138,8 +1239,17 @@ class RegistryTab(QWidget):
             self._copy_status_lbl.setText("✗ Export failed — see log")
 
     def _export_csv(self):
-        self.refresh_csv(notify=True)
+        try:
+            self.refresh_csv(notify=True)
 
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            QMessageBox.warning(
+                self,
+                "Operation Failed",
+                f"This operation couldn't complete.\n\n{str(e)}"
+            )
+            return
     def refresh_csv(self, notify: bool = False):
         if not self._registry_root or not os.path.isdir(self._registry_root):
             if notify:
