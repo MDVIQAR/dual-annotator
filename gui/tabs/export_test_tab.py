@@ -206,6 +206,10 @@ class _DropZone(QLabel):
             f"Input : {info['in_ch']}ch  ×  {info['w']}×{info['h']}",
             f"ONNX  : {'✓ ready' if info['has_onnx'] else '✗ not yet exported'}",
         ]
+        if info["model_type"] == "yolo":
+            lines.append(
+                f"TorchScript : {'✓ ready' if info['has_torchscript'] else '✗ not yet exported'}"
+            )
         self.setText("\n".join(lines))
 
 
@@ -223,14 +227,16 @@ def _validate_folder(path: str) -> dict | None:
             cfg = json.load(fh)
         hp = cfg.get("hyperparams", {})
         return {
-            "model_type":  cfg.get("model_type", "unet"),
-            "arch":        hp.get("architecture", "?"),
-            "in_ch":       hp.get("in_channels", 3),
-            "w":           hp.get("image_width", 320),
-            "h":           hp.get("image_height", 240),
-            "has_onnx":    os.path.isfile(os.path.join(path, "best.onnx")),
-            "config_path": config_path,
-            "onnx_path":   os.path.join(path, "best.onnx"),
+            "model_type":       cfg.get("model_type", "unet"),
+            "arch":             hp.get("architecture", "?"),
+            "in_ch":            hp.get("in_channels", 3),
+            "w":                hp.get("image_width", 320),
+            "h":                hp.get("image_height", 240),
+            "has_onnx":         os.path.isfile(os.path.join(path, "best.onnx")),
+            "has_torchscript":  os.path.isfile(os.path.join(path, "best.torchscript")),
+            "config_path":      config_path,
+            "onnx_path":        os.path.join(path, "best.onnx"),
+            "torchscript_path": os.path.join(path, "best.torchscript"),
         }
     except Exception:
         return None
@@ -372,7 +378,7 @@ class ExportTestTab(QWidget):
         lay.setContentsMargins(12, 12, 12, 12)
         lay.setSpacing(8)
 
-        lay.addWidget(_header("  Export to ONNX"))
+        lay.addWidget(_header("  Export Model"))
         lay.addWidget(_sep())
 
         browse_row = QHBoxLayout()
@@ -424,11 +430,11 @@ class ExportTestTab(QWidget):
         lay.addWidget(_header("  Run Inference"))
         lay.addWidget(_sep())
 
-        lay.addWidget(_lbl("Model  (.pt or .onnx)"))
+        lay.addWidget(_lbl("Model  (.pt, .onnx, or .torchscript)"))
         onnx_row = QHBoxLayout()
         onnx_row.setSpacing(6)
         self._onnx_edit = QLineEdit()
-        self._onnx_edit.setPlaceholderText("best.pt or best.onnx")
+        self._onnx_edit.setPlaceholderText("best.pt, best.onnx, or best.torchscript")
         self._onnx_edit.setStyleSheet(_INPUT)
         self._onnx_edit.textChanged.connect(self._update_infer_btn)
         onnx_row.addWidget(self._onnx_edit)
@@ -645,7 +651,8 @@ class ExportTestTab(QWidget):
             start_dir = os.path.dirname(current) if current and os.path.exists(os.path.dirname(current)) else ""
             path, _ = QFileDialog.getOpenFileName(
                 self, "Select Model", start_dir,
-                "Model files (*.pt *.onnx);;PyTorch (*.pt);;ONNX (*.onnx)"
+                "Model files (*.pt *.onnx *.torchscript);;PyTorch (*.pt);;"
+                "ONNX (*.onnx);;TorchScript (*.torchscript)"
             )
             if not path:
                 return
@@ -828,13 +835,20 @@ class ExportTestTab(QWidget):
         pt_path = os.path.join(path, "best.pt")
         self._onnx_edit.setText(pt_path)
 
-        if info["has_onnx"]:
+        if info["model_type"] == "yolo":
+            fully_exported = info["has_onnx"] and info["has_torchscript"]
+            export_label = "Export to ONNX + TorchScript"
+        else:
+            fully_exported = info["has_onnx"]
+            export_label = "Export to ONNX"
+
+        if fully_exported:
             self._export_btn.setEnabled(False)
-            self._export_btn.setText("✓  ONNX already exported")
-            self._export_log.append("[INFO] best.onnx already exists — skipping export.")
+            self._export_btn.setText("✓  Export already complete")
+            self._export_log.append("[INFO] Export already complete — skipping.")
         else:
             self._export_btn.setEnabled(True)
-            self._export_btn.setText("Export to ONNX")
+            self._export_btn.setText(export_label)
 
         self._update_infer_btn()
 
@@ -885,13 +899,19 @@ class ExportTestTab(QWidget):
             pt_path   = os.path.join(self._version_folder, "best.pt")
             onnx_path = os.path.join(self._version_folder, "best.onnx")
             self._onnx_edit.setText(pt_path if os.path.isfile(pt_path) else onnx_path)
-            self._export_log.append("[DONE] best.onnx saved.  Using best.pt for inference.")
+            ts_saved = os.path.isfile(os.path.join(self._version_folder, "best.torchscript"))
+            done_msg = "[DONE] best.onnx"
+            if ts_saved:
+                done_msg += " and best.torchscript"
+            done_msg += " saved.  Using best.pt for inference."
+            self._export_log.append(done_msg)
             if self._folder_info:
                 self._folder_info["has_onnx"] = True
+                self._folder_info["has_torchscript"] = ts_saved
                 self._drop_zone._apply(self._version_folder)
         else:
             self._export_btn.setEnabled(True)
-            self._export_btn.setText("Export to ONNX")
+            self._export_btn.setText("Export Model")
             self._export_log.append("[ERROR] Export failed — check console above.")
         self._update_infer_btn()
 

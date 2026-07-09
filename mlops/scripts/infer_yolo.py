@@ -2,7 +2,8 @@
 mlops/scripts/infer_yolo.py
 
 Inference entrypoint for YOLO detection/segmentation.
-Prefers best.pt over ONNX (more reliable for seg models).
+Accepts a .pt, .onnx, or .torchscript model path via --onnx.
+Prefers best.pt over exported formats (more reliable for seg models).
 
 Stdout protocol:
   PROGRESS N
@@ -60,15 +61,16 @@ def main():
 
         from ultralytics import YOLO
 
-        # Prefer .pt over .onnx — ONNX segmentation inference can silently produce
-        # near-zero confidence scores due to output format differences.
+        # Prefer .pt over exported formats — exported seg models can silently
+        # produce near-zero confidence scores due to output format differences.
+        # Ultralytics' YOLO() auto-detects .onnx vs .torchscript from the extension.
         pt_candidate = os.path.splitext(args.onnx)[0] + ".pt"
         if os.path.isfile(pt_candidate):
             model = YOLO(pt_candidate)
             print(f"[INFO] Using .pt model: {pt_candidate}", flush=True)
         else:
             model = YOLO(args.onnx, task=yolo_task)
-            print(f"[INFO] Using ONNX model: {args.onnx}", flush=True)
+            print(f"[INFO] Using exported model: {args.onnx}", flush=True)
 
         print(f"[INFO] Task: {yolo_task}  arch: {arch}  imgsz: {image_width}  conf: {args.conf}", flush=True)
         total = len(images)

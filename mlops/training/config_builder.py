@@ -7,9 +7,14 @@ for the training pipeline.
 """
 
 import os
+import sys
 import json
+import subprocess
 
 from mlops.registry.utils import sanitize_path_component
+from mlops.utils import find_python
+
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +356,7 @@ def run_preflight(config: dict, registry_root: str, scripts_dir: str) -> list:
             "msg": "No pairs found",
         })
 
-    # 2. Registry configured
+    # 2. Registry configured — either Google Drive or a local root is enough
     if registry_root and os.path.isdir(registry_root):
         results.append({
             "name": "Registry configured",
@@ -364,7 +369,7 @@ def run_preflight(config: dict, registry_root: str, scripts_dir: str) -> list:
             "name": "Registry configured",
             "ok": False,
             "warn": False,
-            "msg": "GDrive root not set or not found",
+            "msg": "No registry root configured — set a Google Drive or Local root in Settings",
         })
 
     # 3. Training script found
@@ -387,28 +392,46 @@ def run_preflight(config: dict, registry_root: str, scripts_dir: str) -> list:
         })
 
     # 4. GPU available
+    # Checked via the same Python interpreter training actually runs under
+    # (the external AI Engine venv in a frozen exe, or sys.executable when
+    # running from source) — not the main app process, which never has
+    # torch installed in a packaged build.
     try:
-        import torch
-        if torch.cuda.is_available():
+        python_exe = find_python()
+        result = subprocess.run(
+            [python_exe, "-c", "import torch; print(torch.cuda.is_available())"],
+            capture_output=True, text=True, timeout=30,
+            creationflags=_NO_WINDOW,
+        )
+        if result.returncode == 0 and "True" in result.stdout:
             results.append({
                 "name": "GPU available",
                 "ok": True,
                 "warn": False,
                 "msg": "CUDA available",
             })
-        else:
+        elif result.returncode == 0 and "False" in result.stdout:
             results.append({
                 "name": "GPU available",
                 "ok": False,
                 "warn": True,
                 "msg": "No CUDA — will train on CPU",
             })
-    except Exception:
+        else:
+            error_detail = (result.stderr or result.stdout).strip().splitlines()
+            msg = error_detail[-1] if error_detail else "unknown error"
+            results.append({
+                "name": "GPU available",
+                "ok": False,
+                "warn": True,
+                "msg": f"torch not installed or broken: {msg}",
+            })
+    except Exception as e:
         results.append({
             "name": "GPU available",
             "ok": False,
             "warn": True,
-            "msg": "torch not installed or broken",
+            "msg": f"torch not installed or broken: {e}",
         })
 
     # 5. YOLO label validation (YOLO only)

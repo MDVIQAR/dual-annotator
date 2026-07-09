@@ -653,7 +653,6 @@ class TrainingTab(QWidget):
         self._val_losses           = []
         self._train_ious           = []
         self._val_ious             = []
-        self._registry_root        = RegistrySettings().get_registry_root()
         self._last_version_folder  = ""
         self._onnx_worker          = None
         self._aug_widgets          = {}   # key → {"enabled", "params", "params_widget"}
@@ -2468,7 +2467,8 @@ class TrainingTab(QWidget):
             try:
                 from mlops.training import build_training_config
                 cfg = build_training_config(self._get_form_dict())
-                results = run_preflight(cfg, self._registry_root, _SCRIPTS_DIR)
+                registry_root = RegistrySettings().get_effective_root()
+                results = run_preflight(cfg, registry_root, _SCRIPTS_DIR)
             except Exception as e:
                 lbl = QLabel(f"✗ Configuration error: {e}")
                 lbl.setStyleSheet("color: #f87171; font-size: 11px;")
@@ -2513,7 +2513,7 @@ class TrainingTab(QWidget):
                 f"OS         : {platform.platform()}",
                 f"Python     : {sys.version}",
                 f"Scripts dir: {_SCRIPTS_DIR}",
-                f"Registry   : {self._registry_root}",
+                f"Registry   : {RegistrySettings().get_effective_root()}",
                 "",
                 "--- Pre-flight Results ---",
             ]
@@ -2546,6 +2546,16 @@ class TrainingTab(QWidget):
 
             if not self._run_checks(show_dialog_on_failure=True):
                 return
+
+            # ── Notify if this run will save locally only (no Google Drive) ──
+            settings = RegistrySettings()
+            if not settings.get_registry_root() and settings.get_local_root():
+                QMessageBox.information(
+                    self,
+                    "Local Registry Only",
+                    "Google Drive isn't configured — this run will save to "
+                    "your local registry only.\n\nTraining will proceed.",
+                )
 
             # ── Check if AI Engine needs setup ──
             if needs_setup():
@@ -2604,7 +2614,8 @@ class TrainingTab(QWidget):
             self._start_btn.setText("■  Stop Training")
             self._start_btn.setStyleSheet(_STOP_STYLE)
 
-            self._worker = TrainWorker(cfg, self._registry_root, _SCRIPTS_DIR, parent=self)
+            registry_root = RegistrySettings().get_effective_root()
+            self._worker = TrainWorker(cfg, registry_root, _SCRIPTS_DIR, parent=self)
             self._worker.log.connect(self._append_log)
             self._worker.progress.connect(self._progress_bar.setValue)
             self._worker.metric.connect(self._on_metric)
@@ -2729,7 +2740,12 @@ class TrainingTab(QWidget):
             has_weights = os.path.isfile(os.path.join(self._last_version_folder, "best.pt"))
             if has_weights:
                 self._rc_onnx_btn.setEnabled(True)
-                self._rc_onnx_btn.setText("⚙  Export to ONNX")
+                export_label = (
+                    "⚙  Export to ONNX + TorchScript"
+                    if self._current_train_model_type() == "yolo"
+                    else "⚙  Export to ONNX"
+                )
+                self._rc_onnx_btn.setText(export_label)
                 self._rc_onnx_btn.show()
             self._rc_onnx_status.hide()
             self._result_card.show()
@@ -2751,7 +2767,10 @@ class TrainingTab(QWidget):
                 return
             self._rc_onnx_btn.setEnabled(False)
             self._rc_onnx_btn.setText("Exporting...")
-            self._rc_onnx_status.setText("Converting best.pt → ONNX...")
+            export_desc = (
+                "ONNX + TorchScript" if self._current_train_model_type() == "yolo" else "ONNX"
+            )
+            self._rc_onnx_status.setText(f"Converting best.pt → {export_desc}...")
             self._rc_onnx_status.setStyleSheet("color: #4fc3f7; font-size: 11px;")
             self._rc_onnx_status.show()
             self._prog_frame.show()
@@ -2776,16 +2795,23 @@ class TrainingTab(QWidget):
         self._prog_frame.hide()
         self._onnx_worker = None
         if success:
-            self._rc_onnx_btn.setText("✓  ONNX Exported")
+            is_yolo = self._current_train_model_type() == "yolo"
+            self._rc_onnx_btn.setText("✓  Export Complete")
             self._rc_onnx_btn.setEnabled(False)
-            self._rc_onnx_status.setText(f"best.onnx saved to: {self._last_version_folder}")
+            saved_desc = "best.onnx and best.torchscript" if is_yolo else "best.onnx"
+            self._rc_onnx_status.setText(f"{saved_desc} saved to: {self._last_version_folder}")
             self._rc_onnx_status.setStyleSheet("color: #4caf50; font-size: 11px;")
             if self._last_version_folder:
                 self.onnx_exported.emit(self._last_version_folder)
         else:
-            self._rc_onnx_btn.setText("⚙  Export to ONNX")
+            export_label = (
+                "⚙  Export to ONNX + TorchScript"
+                if self._current_train_model_type() == "yolo"
+                else "⚙  Export to ONNX"
+            )
+            self._rc_onnx_btn.setText(export_label)
             self._rc_onnx_btn.setEnabled(True)
-            self._rc_onnx_status.setText("✗ ONNX export failed — see console.")
+            self._rc_onnx_status.setText("✗ Export failed — see console.")
             self._rc_onnx_status.setStyleSheet("color: #f87171; font-size: 11px;")
         self._rc_onnx_status.show()
 

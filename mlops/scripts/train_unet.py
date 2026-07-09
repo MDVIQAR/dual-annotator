@@ -26,6 +26,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 
 from seg_model import SegModel
 from dataloader_unet import UNetDataModule
+from mlops.utils import resolve_device
 
 
 class MetricCallback(pl.Callback):
@@ -211,7 +212,7 @@ def main():
             verbose  = False,
         )
 
-        device      = hp.get("device", "cpu")
+        device      = resolve_device(hp.get("device", "cpu"))
         accelerator = "gpu" if device.startswith("cuda") else "cpu"
 
         grad_clip = float(hp.get("gradient_clip", 0.0))

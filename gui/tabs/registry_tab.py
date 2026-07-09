@@ -375,6 +375,8 @@ class ComparePanel(QScrollArea):
         art_b = manifest_b.get("artifacts", {})
         ox_a  = manifest_a.get("onnx_config", {})
         ox_b  = manifest_b.get("onnx_config", {})
+        ts_a  = manifest_a.get("torchscript_config", {})
+        ts_b  = manifest_b.get("torchscript_config", {})
         _add_row(
             f"Weights: {'best.pt ✓' if art_a.get('weights') else '—'}",
             f"Weights: {'best.pt ✓' if art_b.get('weights') else '—'}",
@@ -383,6 +385,11 @@ class ComparePanel(QScrollArea):
             f"ONNX: {'exported ✓' if ox_a.get('exported') else 'not exported'}",
             f"ONNX: {'exported ✓' if ox_b.get('exported') else 'not exported'}",
         )
+        if manifest_a.get("model_type") == "yolo" or manifest_b.get("model_type") == "yolo":
+            _add_row(
+                f"TorchScript: {'exported ✓' if ts_a.get('exported') else 'not exported'}",
+                f"TorchScript: {'exported ✓' if ts_b.get('exported') else 'not exported'}",
+            )
 
         grid.setRowStretch(self._row, 1)
         wrapper = QWidget()
@@ -397,7 +404,7 @@ class RegistryTab(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._registry_root    = RegistrySettings().get_registry_root()
+        self._registry_root    = RegistrySettings().get_effective_root()
         self._current_summary  = None
         self._cards            = []
 
@@ -493,7 +500,7 @@ class RegistryTab(QWidget):
         self._camera_cb.currentTextChanged.connect(self._on_camera_changed)
 
         # Warnings
-        self._warning_lbl = QLabel("⚠ Registry not configured.\nSet GDrive root in Settings.")
+        self._warning_lbl = QLabel("⚠ Registry not configured.\nSet a Google Drive or Local root in Settings.")
         self._warning_lbl.setAlignment(Qt.AlignCenter)
         self._warning_lbl.setStyleSheet(f"color:{_MUTED};")
         self._warning_lbl.hide()
@@ -621,8 +628,9 @@ class RegistryTab(QWidget):
         self._d_mx_final = QLabel(); dl.addWidget(self._d_mx_final)
 
         dl.addWidget(_section_header("Artifacts"))
-        self._d_art_weights = QLabel(); dl.addWidget(self._d_art_weights)
-        self._d_art_onnx    = QLabel(); dl.addWidget(self._d_art_onnx)
+        self._d_art_weights     = QLabel(); dl.addWidget(self._d_art_weights)
+        self._d_art_onnx        = QLabel(); dl.addWidget(self._d_art_onnx)
+        self._d_art_torchscript = QLabel(); dl.addWidget(self._d_art_torchscript)
 
         self._crash_header    = _section_header("Crash Info")
         self._d_crash_reason  = QLabel(); self._d_crash_reason.setWordWrap(True)
@@ -637,7 +645,7 @@ class RegistryTab(QWidget):
         self._open_btn    = QPushButton("📂  Open Folder");       self._open_btn.setStyleSheet(_BTN_STYLE)
         self._open_ds_btn = QPushButton("🗄  Open Dataset Folder"); self._open_ds_btn.setStyleSheet(_BTN_STYLE)
         self._copy_btn    = QPushButton("📋  Copy Weights Path");  self._copy_btn.setStyleSheet(_BTN_STYLE)
-        self._export_btn  = QPushButton("⚙  Export ONNX");        self._export_btn.setStyleSheet(_BTN_STYLE)
+        self._export_btn  = QPushButton("⚙  Export Model");       self._export_btn.setStyleSheet(_BTN_STYLE)
         self._retrain_btn = QPushButton("🔁  Clone & Re-train");   self._retrain_btn.setStyleSheet(_BTN_STYLE)
         self._copy_status_lbl = QLabel("")
         self._copy_status_lbl.setStyleSheet(f"color:#4caf50;font-size:10px;")
@@ -672,7 +680,7 @@ class RegistryTab(QWidget):
     # ── Refresh & Cascading Filter ─────────────────────────────────────────────
     def _refresh(self):
         try:
-            self._registry_root = RegistrySettings().get_registry_root()
+            self._registry_root = RegistrySettings().get_effective_root()
             if not self._registry_root or not os.path.isdir(self._registry_root):
                 self._warning_lbl.show()
                 return
@@ -984,7 +992,7 @@ class RegistryTab(QWidget):
     def _show_empty(self):
         self._right_stack.setCurrentIndex(0)
         self._export_btn.setEnabled(False)
-        self._export_btn.setText("⚙  Export ONNX")
+        self._export_btn.setText("⚙  Export Model")
         self._open_ds_btn.setEnabled(False)
         self._retrain_btn.setEnabled(False)
 
@@ -1084,6 +1092,8 @@ class RegistryTab(QWidget):
             if os.path.isfile(wp): w_tick = "  ✓"
         self._d_art_weights.setText(f"Weights: {weights or '—'}{w_tick}")
 
+        model_type = manifest.get("model_type", "")
+
         ox = manifest.get("onnx_config", {})
         if ox.get("exported"):
             self._d_art_onnx.setText(
@@ -1091,6 +1101,18 @@ class RegistryTab(QWidget):
             )
         else:
             self._d_art_onnx.setText("ONNX: not exported")
+
+        ts = manifest.get("torchscript_config", {})
+        if model_type == "yolo":
+            self._d_art_torchscript.show()
+            if ts.get("exported"):
+                self._d_art_torchscript.setText(
+                    f"TorchScript: exported ({_fmt_date(ts.get('exported_at',''))})"
+                )
+            else:
+                self._d_art_torchscript.setText("TorchScript: not exported")
+        else:
+            self._d_art_torchscript.hide()
 
         cinfo = manifest.get("crash_info")
         if manifest.get("status") == "crashed" and cinfo:
@@ -1102,14 +1124,19 @@ class RegistryTab(QWidget):
             self._crash_header.hide()
             self._d_crash_reason.hide(); self._d_crash_hint.hide()
 
+        if model_type == "yolo":
+            already_exported = ox.get("exported", False) and ts.get("exported", False)
+        else:
+            already_exported = ox.get("exported", False)
+
         can_export = (
             manifest.get("status") == "completed"
             and bool(art.get("weights"))
-            and not ox.get("exported", False)
+            and not already_exported
         )
         self._export_btn.setEnabled(can_export)
         self._export_btn.setText(
-            "✓ ONNX Ready" if ox.get("exported") else "⚙  Export ONNX"
+            "✓ Export Ready" if already_exported else "⚙  Export Model"
         )
         self._retrain_btn.setEnabled(
             manifest.get("status") in ("completed", "crashed", "cancelled", "partial")
@@ -1225,7 +1252,7 @@ class RegistryTab(QWidget):
     def _on_export_finished(self, success: bool):
         self._export_progress.hide()
         if success:
-            self._copy_status_lbl.setText("✓ ONNX exported")
+            self._copy_status_lbl.setText("✓ Export complete")
             if self._current_summary:
                 proj     = self._current_project_key()
                 scanner  = RegistryScanner(self._registry_root)
@@ -1235,7 +1262,7 @@ class RegistryTab(QWidget):
                 self._show_detail(manifest)
         else:
             self._export_btn.setEnabled(True)
-            self._export_btn.setText("⚙  Export ONNX")
+            self._export_btn.setText("⚙  Export Model")
             self._copy_status_lbl.setText("✗ Export failed — see log")
 
     def _export_csv(self):
@@ -1254,7 +1281,7 @@ class RegistryTab(QWidget):
         if not self._registry_root or not os.path.isdir(self._registry_root):
             if notify:
                 QMessageBox.warning(self, "Registry Not Configured",
-                                    "Set the GDrive registry root before exporting.")
+                                    "Set a Google Drive or Local root in Settings before exporting.")
             return
         count = refresh_registry_csv(self._registry_root)
         if notify:

@@ -46,3 +46,26 @@ def find_python() -> str:
 
     # 3. Fallback — frozen exe (training will likely fail, but surfaces the error)
     return sys.executable
+
+
+def resolve_device(requested: str) -> str:
+    """Return a usable device string for training.
+
+    Falls back to CPU with a warning if a CUDA device was requested but
+    isn't actually available on this machine (e.g. no NVIDIA GPU/driver).
+    Import of torch is deliberately lazy — this module is also imported
+    from the main app process, which may not have torch installed.
+    """
+    if not requested.startswith("cuda"):
+        return requested
+
+    import torch
+    if torch.cuda.is_available():
+        return requested
+
+    print(
+        f"[WARN] Device '{requested}' requested but CUDA is not available "
+        "on this machine — falling back to CPU.",
+        flush=True,
+    )
+    return "cpu"

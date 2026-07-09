@@ -166,9 +166,9 @@ class SettingsTab(QWidget):
 
         # Explanation note
         note_lbl = QLabel(
-            "Set both paths to save every trained version in two places.\n"
-            "Training runs in the Local path (fast); the version folder is also\n"
-            "copied to Google Drive automatically when training completes."
+            "At least one of these must be set. Set only Local to keep everything\n"
+            "on this machine, or set both to also mirror every trained version to\n"
+            "Google Drive automatically when training completes."
         )
         note_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 11px; background: transparent; border: none;")
         note_lbl.setWordWrap(True)
@@ -303,11 +303,15 @@ class SettingsTab(QWidget):
     def _on_gdrive_changed(self, text):
         self._settings.set_gdrive_root(text.strip())
         self._update_gdrive_status()
+        self._update_local_status()
 
     def _update_gdrive_status(self):
         root = self._settings.get_registry_root()
         if not root:
-            self._gdrive_status.setText(f"<span style='color:{_RED}'>&#9888; Google Drive root is not set.</span>")
+            if self._settings.get_local_root():
+                self._gdrive_status.setText(f"<span style='color:{_MUTED}'>Not set — using Local root only.</span>")
+            else:
+                self._gdrive_status.setText(f"<span style='color:{_RED}'>&#9888; Neither Google Drive nor Local root is set.</span>")
         elif os.path.isdir(root):
             self._gdrive_status.setText(f"<span style='color:{_GREEN}'>&#10003; {root}</span>")
         else:
@@ -337,11 +341,15 @@ class SettingsTab(QWidget):
     def _on_local_changed(self, text):
         self._settings.set_local_root(text.strip())
         self._update_local_status()
+        self._update_gdrive_status()
 
     def _update_local_status(self):
         root = self._settings.get_local_root()
         if not root:
-            self._local_status.setText(f"<span style='color:{_MUTED}'>Not set — training will only save to Google Drive.</span>")
+            if self._settings.get_registry_root():
+                self._local_status.setText(f"<span style='color:{_MUTED}'>Not set — training will save to Google Drive only.</span>")
+            else:
+                self._local_status.setText(f"<span style='color:{_RED}'>&#9888; Neither Google Drive nor Local root is set.</span>")
         elif os.path.isdir(root):
             self._local_status.setText(f"<span style='color:{_GREEN}'>&#10003; {root}</span>")
         else:

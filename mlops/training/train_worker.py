@@ -461,12 +461,23 @@ class TrainWorker(QThread):
     # ------------------------------------------------------------------
 
     def _mirror_to_local(self, project: str, version_id: str):
-        """Copy the completed version folder to local_root (if configured)."""
+        """Copy the completed version folder to local_root (if configured).
+
+        Only runs when Google Drive is the primary registry root and a
+        distinct local_root is also configured — if Drive isn't set,
+        self._registry_root already *is* local_root (see get_effective_root),
+        so mirroring would just copy the folder into itself.
+        """
         try:
-            local_root = RegistrySettings().get_local_root()
+            settings = RegistrySettings()
+            gdrive_root = settings.get_registry_root()
+            local_root  = settings.get_local_root()
         except Exception:
             return
-        if not local_root:
+        if not gdrive_root or not local_root:
+            return
+        if os.path.normcase(os.path.abspath(local_root)) == \
+           os.path.normcase(os.path.abspath(self._registry_root)):
             return
         # Resolve the destination path using the same hierarchy as the source
         parts = project.replace("\\", "/").split("/")

@@ -22,6 +22,8 @@ import argparse
 import json
 import shutil
 
+from mlops.utils import resolve_device
+
 
 # ── Label validator ────────────────────────────────────────────────────────────
 
@@ -160,7 +162,7 @@ def main():
         epochs = int(hp["epochs"])
         batch  = int(hp["batch_size"])
         img_w  = int(hp["image_width"])
-        device = str(hp.get("device", "cpu"))
+        device = resolve_device(str(hp.get("device", "cpu")))
         is_seg = arch.endswith("-seg")
 
         yaml_path = os.path.join(cfg["dataset_folder"], "data.yaml")

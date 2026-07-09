@@ -122,6 +122,20 @@ def main():
                 raise RuntimeError(f"ONNX export produced no file. Expected: {result_path}")
 
             input_shape = [1, 3, image_width, image_width]
+            print("PROGRESS 70", flush=True)
+
+            print("STATUS Exporting to TorchScript...", flush=True)
+            ts_out_path = os.path.join(version_folder, "best.torchscript")
+            ts_result_path = yolo_model.export(format="torchscript", imgsz=image_width)
+
+            if ts_result_path and os.path.isfile(str(ts_result_path)):
+                src = os.path.realpath(str(ts_result_path))
+                dst = os.path.realpath(ts_out_path)
+                if src != dst:
+                    shutil.copy2(src, dst)
+            elif not os.path.isfile(ts_out_path):
+                raise RuntimeError(f"TorchScript export produced no file. Expected: {ts_result_path}")
+
             print("PROGRESS 80", flush=True)
 
         else:
@@ -142,6 +156,8 @@ def main():
         print("STATUS Updating manifest...", flush=True)
         writer = ManifestWriter(version_folder)
         writer.update_onnx(input_shape=input_shape, opset_version=11)
+        if model_type == "yolo":
+            writer.update_torchscript(input_shape=input_shape)
 
         try:
             from mlops.registry.utils import write_project_csv

@@ -96,6 +96,7 @@ def _build_default_manifest() -> dict:
         "artifacts": {
             "weights": None,
             "onnx": None,
+            "torchscript": None,
             "curves_plot": None,
             "sample_preds": None,
         },
@@ -103,6 +104,12 @@ def _build_default_manifest() -> dict:
         "onnx_config": {
             "exported": False,
             "opset_version": 11,
+            "input_shape": None,
+            "exported_at": None,
+        },
+
+        "torchscript_config": {
+            "exported": False,
             "input_shape": None,
             "exported_at": None,
         },
@@ -214,6 +221,16 @@ class ManifestWriter:
         data["onnx_config"]["input_shape"] = input_shape
         data["onnx_config"]["exported_at"] = datetime.now().isoformat(timespec="seconds")
         data["artifacts"]["onnx"] = "best.onnx"
+        self._write(data)
+
+    def update_torchscript(self, input_shape: list):
+        """Mark TorchScript export as complete in the manifest."""
+        data = self._read()
+        data.setdefault("torchscript_config", {})
+        data["torchscript_config"]["exported"] = True
+        data["torchscript_config"]["input_shape"] = input_shape
+        data["torchscript_config"]["exported_at"] = datetime.now().isoformat(timespec="seconds")
+        data["artifacts"]["torchscript"] = "best.torchscript"
         self._write(data)
 
     # ------------------------------------------------------------------
@@ -371,6 +388,21 @@ class ManifestReader:
         candidate = os.path.join(self._folder, "best.onnx")
         return candidate if os.path.isfile(candidate) else ""
 
+    def get_torchscript_path(self) -> str:
+        """
+        Return the absolute path to best.torchscript if TorchScript export is
+        marked complete and the file actually exists on disk. Otherwise return ''.
+        """
+        data = self.read()
+        if data is None:
+            return ""
+
+        if not data.get("torchscript_config", {}).get("exported", False):
+            return ""
+
+        candidate = os.path.join(self._folder, "best.torchscript")
+        return candidate if os.path.isfile(candidate) else ""
+
     def get_weights_path(self) -> str:
         """
         Return the full path to the weights file if artifacts.weights is set
@@ -398,6 +430,7 @@ class ManifestReader:
         hyperparams = data.get("hyperparams", {})
         metrics = data.get("metrics", {})
         onnx_cfg = data.get("onnx_config", {})
+        torchscript_cfg = data.get("torchscript_config", {})
 
         return {
             "version_id":     data.get("version_id", ""),
@@ -419,6 +452,7 @@ class ManifestReader:
             "best_val_loss":  metrics.get("best_val_loss", None),
             "best_epoch":     metrics.get("best_epoch", None),
             "has_onnx":       bool(onnx_cfg.get("exported", False)),
+            "has_torchscript": bool(torchscript_cfg.get("exported", False)),
             "has_weights":    bool(data.get("artifacts", {}).get("weights", None)),
             "crash_info":     data.get("crash_info", None),
         }

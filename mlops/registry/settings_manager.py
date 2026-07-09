@@ -82,16 +82,30 @@ class RegistrySettings:
         self.save()
 
     # ------------------------------------------------------------------
+    # Effective root — gdrive_root if configured, else local_root.
+    # This is the single source of truth for where the registry actually
+    # lives; Google Drive is preferred when both are set (for the mirror
+    # copy behavior in TrainWorker), but local-only setups work the same
+    # way everywhere that reads the registry.
+    # ------------------------------------------------------------------
+
+    def get_effective_root(self) -> str:
+        gdrive = self._data.get("gdrive_root", "")
+        if gdrive:
+            return gdrive
+        return self._data.get("local_root", "")
+
+    # ------------------------------------------------------------------
     # Hierarchy path builders
     # ------------------------------------------------------------------
 
     def get_camera_path(self, model_type: str, project_name: str,
                         project_id: str, variant: str, camera: str) -> str:
         """Return absolute path to the camera-level folder (parent of all versions)."""
-        gdrive = self._data.get("gdrive_root", "")
-        if not gdrive:
+        root = self.get_effective_root()
+        if not root:
             return ""
-        return os.path.join(gdrive, model_type, project_name, project_id, variant, camera)
+        return os.path.join(root, model_type, project_name, project_id, variant, camera)
 
     def build_project_key(self, model_type: str, project_name: str,
                           project_id: str, variant: str, camera: str) -> str:
@@ -130,26 +144,26 @@ class RegistrySettings:
             return []
 
     def scan_model_types(self) -> list:
-        gdrive = self._data.get("gdrive_root", "")
-        return self._list_subdirs(gdrive)
+        root = self.get_effective_root()
+        return self._list_subdirs(root)
 
     def scan_project_names(self, model_type: str) -> list:
-        gdrive = self._data.get("gdrive_root", "")
-        return self._list_subdirs(os.path.join(gdrive, model_type))
+        root = self.get_effective_root()
+        return self._list_subdirs(os.path.join(root, model_type))
 
     def scan_project_ids(self, model_type: str, project_name: str) -> list:
-        gdrive = self._data.get("gdrive_root", "")
-        return self._list_subdirs(os.path.join(gdrive, model_type, project_name))
+        root = self.get_effective_root()
+        return self._list_subdirs(os.path.join(root, model_type, project_name))
 
     def scan_variants(self, model_type: str, project_name: str, project_id: str) -> list:
-        gdrive = self._data.get("gdrive_root", "")
-        return self._list_subdirs(os.path.join(gdrive, model_type, project_name, project_id))
+        root = self.get_effective_root()
+        return self._list_subdirs(os.path.join(root, model_type, project_name, project_id))
 
     def scan_cameras(self, model_type: str, project_name: str,
                      project_id: str, variant: str) -> list:
-        gdrive = self._data.get("gdrive_root", "")
+        root = self.get_effective_root()
         return self._list_subdirs(
-            os.path.join(gdrive, model_type, project_name, project_id, variant))
+            os.path.join(root, model_type, project_name, project_id, variant))
 
     # ------------------------------------------------------------------
     # Annotator management
@@ -176,9 +190,9 @@ class RegistrySettings:
     # ------------------------------------------------------------------
 
     def is_configured(self) -> dict:
-        gdrive = self._data.get("gdrive_root", "")
+        root = self.get_effective_root()
         return {
-            "gdrive": bool(gdrive) and os.path.isdir(gdrive),
+            "gdrive": bool(root) and os.path.isdir(root),
         }
 
     # ------------------------------------------------------------------
@@ -190,11 +204,11 @@ class RegistrySettings:
 
     def get_projects(self) -> list:
         """Legacy: return top-level dirs of all model types combined."""
-        gdrive = self._data.get("gdrive_root", "")
-        if not gdrive or not os.path.isdir(gdrive):
+        root = self.get_effective_root()
+        if not root or not os.path.isdir(root):
             return []
         projects = set()
-        for mt in self._list_subdirs(gdrive):
-            for pn in self._list_subdirs(os.path.join(gdrive, mt)):
+        for mt in self._list_subdirs(root):
+            for pn in self._list_subdirs(os.path.join(root, mt)):
                 projects.add(pn)
         return sorted(projects)
